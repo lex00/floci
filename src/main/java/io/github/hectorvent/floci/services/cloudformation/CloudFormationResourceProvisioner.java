@@ -343,6 +343,8 @@ public class CloudFormationResourceProvisioner {
                         provisionVpcGatewayAttachment(resource, properties, engine, region);
                 case "AWS::EC2::LaunchTemplate" ->
                         provisionLaunchTemplate(resource, properties, engine, region, stackName);
+                case "AWS::EC2::VPCEndpoint" ->
+                        provisionVpcEndpoint(resource, properties, engine, region);
                 case "AWS::EC2::RouteTable" -> provisionRouteTable(resource, properties, engine, region);
                 case "AWS::EC2::SubnetRouteTableAssociation" ->
                         provisionSubnetRouteTableAssociation(resource, properties, engine, region);
@@ -468,6 +470,7 @@ public class CloudFormationResourceProvisioner {
             case "AWS::EC2::SecurityGroup" -> ec2Service.deleteSecurityGroup(region, physicalId);
             case "AWS::EC2::VPCGatewayAttachment" -> detachVpcGatewayAttachmentSafe(physicalId, region);
             case "AWS::EC2::LaunchTemplate" -> ec2Service.deleteLaunchTemplate(region, physicalId, null);
+            case "AWS::EC2::VPCEndpoint" -> ec2Service.deleteVpcEndpoints(region, List.of(physicalId));
             case "AWS::EC2::Instance" -> ec2Service.terminateInstances(region, List.of(physicalId));
             case "AWS::RDS::DBInstance" -> rdsService.deleteDbInstance(physicalId);
             case "AWS::RDS::DBCluster" -> rdsService.deleteDbCluster(physicalId);
@@ -674,6 +677,34 @@ public class CloudFormationResourceProvisioner {
                 ? rules.get(0).getSecurityGroupRuleId()
                 : r.getLogicalId();
         r.setPhysicalId(physicalId);
+    }
+
+    private void provisionVpcEndpoint(StackResource r, JsonNode props,
+                                      CloudFormationTemplateEngine engine, String region) {
+        String vpcId = resolveOptional(props, "VpcId", engine);
+        String serviceName = resolveOptional(props, "ServiceName", engine);
+        String endpointType = resolveOptional(props, "VpcEndpointType", engine);
+        var endpoint = ec2Service.createVpcEndpoint(region, vpcId, serviceName,
+                endpointType != null ? endpointType : "Gateway",
+                resolveIdList(props, "RouteTableIds", engine),
+                resolveIdList(props, "SubnetIds", engine),
+                resolveIdList(props, "SecurityGroupIds", engine),
+                props != null && props.path("PrivateDnsEnabled").asBoolean(false),
+                List.of());
+        r.setPhysicalId(endpoint.getVpcEndpointId());
+        r.getAttributes().put("Id", endpoint.getVpcEndpointId());
+    }
+
+    /** Resolve an array property of Ref/GetAtt entries into plain id strings. */
+    private List<String> resolveIdList(JsonNode props, String field, CloudFormationTemplateEngine engine) {
+        List<String> ids = new ArrayList<>();
+        if (props != null && props.has(field) && props.get(field).isArray()) {
+            for (JsonNode entry : props.get(field)) {
+                String id = engine.resolve(entry);
+                if (id != null && !id.isBlank()) ids.add(id);
+            }
+        }
+        return ids;
     }
 
     private void provisionInternetGateway(StackResource r, String region) {
