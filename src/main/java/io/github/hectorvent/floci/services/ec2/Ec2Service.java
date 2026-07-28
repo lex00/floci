@@ -2720,10 +2720,6 @@ public class Ec2Service implements ContainerTeardown {
                 case "vpc-id" -> matchesValue(values, subnet.getVpcId());
                 case "state" -> matchesValue(values, subnet.getState());
                 case "availabilityZone", "availability-zone" -> matchesValue(values, subnet.getAvailabilityZone());
-                // #1667: cidr-block was ignored (fell to default:true), so a
-                // cidr-scoped DescribeSubnets returned every subnet in the VPC —
-                // breaking subnet idempotency for EC2/ALB/NAT lookups.
-                case "cidr-block", "cidr", "cidrBlock" -> matchesValue(values, subnet.getCidrBlock());
                 default -> true;
             };
         }
