@@ -2447,6 +2447,14 @@ class Ec2IntegrationTest {
             .body("Response.Errors.Error.Code", equalTo("InvalidParameterValue"));
     }
 
+    /** Text between two markers, or {@code fallback} when either is absent. */
+    private static String between(String haystack, String open, String close, String fallback) {
+        int i = haystack.indexOf(open);
+        int j = i < 0 ? -1 : haystack.indexOf(close, i + open.length());
+        if (i < 0 || j < 0) return fallback;
+        return haystack.substring(i + open.length(), j);
+    }
+
     /** ENIs visible to the account right now; other test classes share this emulator. */
     private static int countNetworkInterfaces() {
         String body = given()
@@ -2558,23 +2566,33 @@ class Ec2IntegrationTest {
 
         assert nextToken != null && !nextToken.isEmpty() : "Expected non-empty nextToken on truncated page";
 
-        // ── Page 2: use NextToken, expect remaining ENIs, no nextToken ──
-        String body = given()
-            .formParam("Action", "DescribeNetworkInterfaces")
-            .formParam("MaxResults", "5")
-            .formParam("NextToken", nextToken)
-            .header("Authorization", AUTH_HEADER)
-        .when()
-            .post("/")
-        .then()
-            .statusCode(200)
-            .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item.size()",
-                    org.hamcrest.Matchers.greaterThanOrEqualTo(1))
-        .extract().body().asString();
+        // ── Follow the token to the end: every page but the last carries one ──
+        // How many ENIs the account holds depends on what else has run in this JVM, so the
+        // page count is not fixed. Walk to exhaustion and assert the contract instead:
+        // each continuation returns at least one interface, and only the last omits the token.
+        String body;
+        int pages = 1;
+        do {
+            body = given()
+                .formParam("Action", "DescribeNetworkInterfaces")
+                .formParam("MaxResults", "5")
+                .formParam("NextToken", nextToken)
+                .header("Authorization", AUTH_HEADER)
+            .when()
+                .post("/")
+            .then()
+                .statusCode(200)
+                .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item.size()",
+                        org.hamcrest.Matchers.greaterThanOrEqualTo(1))
+            .extract().body().asString();
+            pages++;
+            nextToken = between(body, "<nextToken>", "</nextToken>", null);
+        } while (nextToken != null && pages < 50);
 
-        // Final page must NOT contain a nextToken element
-        org.hamcrest.MatcherAssert.assertThat(body,
-                not(containsString("<nextToken>")));
+        org.hamcrest.MatcherAssert.assertThat("paged past the first page", pages,
+                org.hamcrest.Matchers.greaterThanOrEqualTo(2));
+        // The last page is the one without a token — that is what ends the walk.
+        org.hamcrest.MatcherAssert.assertThat(body, not(containsString("<nextToken>")));
 
         // ── Cleanup: terminate the 5 extra instances ──
         for (String id : batchIds) {
