@@ -9,10 +9,15 @@ import java.util.List;
  */
 public final class AwsRegions {
 
+    /**
+     * The 17 commercial regions enabled by default on a new AWS account, so a caller that
+     * enumerates regions and sweeps them sees the same set it would against real AWS.
+     */
     public static final List<String> ALL = List.of(
             "us-east-1", "us-east-2", "us-west-1", "us-west-2",
-            "eu-west-1", "eu-west-2", "eu-west-3", "eu-central-1",
-            "ap-northeast-1", "ap-northeast-2", "ap-southeast-1", "ap-southeast-2",
+            "eu-west-1", "eu-west-2", "eu-west-3", "eu-central-1", "eu-north-1",
+            "ap-northeast-1", "ap-northeast-2", "ap-northeast-3",
+            "ap-southeast-1", "ap-southeast-2",
             "ap-south-1", "sa-east-1", "ca-central-1");
 
     private AwsRegions() {

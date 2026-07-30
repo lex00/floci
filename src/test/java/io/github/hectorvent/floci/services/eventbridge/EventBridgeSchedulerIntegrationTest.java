@@ -295,6 +295,8 @@ class EventBridgeSchedulerIntegrationTest {
             @Override
             public String defaultAccountId() { return ACCOUNT; }
             @Override
+            public Optional<java.util.List<String>> allowedRegions() { return Optional.empty(); }
+            @Override
             public int maxRequestSize() { return 512; }
             @Override
             public String ecrBaseUri() { return ""; }
