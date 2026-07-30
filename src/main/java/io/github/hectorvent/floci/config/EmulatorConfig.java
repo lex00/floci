@@ -51,6 +51,17 @@ public interface EmulatorConfig {
     @WithDefault("000000000000")
     String defaultAccountId();
 
+    /**
+     * Regions this account can reach, the stand-in for a region-restriction SCP. Empty (the
+     * default) means unrestricted. When set, a request signed for any other region is refused
+     * with AccessDenied, which is what an SCP-locked account does and what tooling that
+     * enumerates regions and skips the denied ones expects to see.
+     *
+     * <p>{@code DescribeRegions} still reports every region the emulator knows: AWS reports
+     * regions enabled for the account, and the SCP restricts calls, not the listing.
+     */
+    Optional<List<String>> allowedRegions();
+
     @WithDefault("2048")
     int maxRequestSize();
 

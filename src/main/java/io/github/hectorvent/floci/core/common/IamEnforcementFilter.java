@@ -260,7 +260,12 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
      */
     // Package-private for unit testing.
     static Response accessDeniedResponse(String action, String credentialScope, MediaType requestMediaType) {
-        String message = "User is not authorized to perform: " + action;
+        return deniedResponse("User is not authorized to perform: " + action,
+                credentialScope, requestMediaType);
+    }
+
+    /** The same protocol-shaped denial, with the message supplied verbatim. */
+    static Response deniedResponse(String message, String credentialScope, MediaType requestMediaType) {
         if ("s3".equals(credentialScope)) {
             return s3XmlAccessDenied(message);
         }

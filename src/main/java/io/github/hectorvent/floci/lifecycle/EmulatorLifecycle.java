@@ -37,6 +37,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
 import jakarta.enterprise.event.ObservesAsync;
 import jakarta.inject.Inject;
+import io.github.hectorvent.floci.core.common.AwsRegions;
+import jakarta.enterprise.inject.Instance;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
@@ -148,6 +150,35 @@ public class EmulatorLifecycle {
         this.persistentPathValidator = persistentPathValidator;
     }
 
+    // Field-injected so the existing constructor stays valid for tests.
+    @Inject
+    Instance<io.github.hectorvent.floci.services.ec2.Ec2Service> ec2ServiceInstance;
+
+    /**
+     * Materializes each region's default VPC, subnets, internet gateway and security group at
+     * startup rather than on the first call that touches the region.
+     *
+     * <p>On AWS these exist before anyone looks. Seeding them lazily made a read create them, so a
+     * caller sweeping every region built the estate it then counted, and any "across all regions"
+     * total depended on which regions had been touched first. Runs after {@code loadAll()} so a
+     * region restored from persistent storage is left alone.
+     */
+    private void seedDefaultResourcesForAllRegions() {
+        if (!config.services().ec2().enabled() || ec2ServiceInstance == null
+                || ec2ServiceInstance.isUnsatisfied()) {
+            return;
+        }
+        var ec2Service = ec2ServiceInstance.get();
+        for (String region : AwsRegions.ALL) {
+            try {
+                ec2Service.ensureDefaultResources(region);
+            } catch (RuntimeException e) {
+                LOG.warnv("Could not seed default EC2 resources for {0}: {1}", region, e.getMessage());
+            }
+        }
+        LOG.debugv("Seeded default EC2 resources for {0} regions", AwsRegions.ALL.size());
+    }
+
     void onStart(@Observes StartupEvent ignored) {
         LOG.infof("=== AWS Local Emulator %s Starting ===", appVersion.orElse(""));
         LOG.infof("Endpoint:  http://0.0.0.0:%d", config.port());
@@ -170,6 +201,7 @@ public class EmulatorLifecycle {
 
         serviceRegistry.logEnabledServices();
         storageFactory.loadAll();
+        seedDefaultResourcesForAllRegions();
         schemaCreationWorker.recoverOrphans();
 
         sqsPoller.startPersistedPollers();
