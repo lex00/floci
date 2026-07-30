@@ -40,6 +40,7 @@ import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -500,5 +501,47 @@ class Ec2ContainerManagerTest {
 
             when(logStreamer.generateLogStreamName(anyString())).thenReturn(TEST_LOG_STREAM_NAME);
         }
+    }
+
+    @Test
+    void syntheticPublicIpLooksRoutableAndIsStablePerInstance() {
+        Ec2ContainerManager manager = managerWithEc2Config("54.144", false);
+
+        String first = manager.syntheticPublicIp("i-0123456789abcdef0");
+        String second = manager.syntheticPublicIp("i-0123456789abcdef0");
+
+        // 127.0.0.1 read as loopback to anything reasoning about internet reachability.
+        assertEquals(first, second, "same instance must keep its address across restarts");
+        assertTrue(first.startsWith("54.144."), first);
+        String[] octets = first.split("\\.");
+        assertEquals(4, octets.length, first);
+        int last = Integer.parseInt(octets[3]);
+        assertTrue(last >= 1 && last <= 254, "host octet must skip .0 and .255: " + first);
+        assertNotEquals(first, manager.syntheticPublicIp("i-fedcba9876543210f"));
+    }
+
+    @Test
+    void publicDnsNameIsLocalhostUnlessTheAwsFormIsRequested() {
+        // The AWS form does not resolve, so UserData reading IMDS public-hostname would break.
+        assertEquals("localhost",
+                managerWithEc2Config("54.144", false).publicDnsName("54.144.10.7"));
+        assertEquals("ec2-54-144-10-7.compute-1.amazonaws.com",
+                managerWithEc2Config("54.144", true).publicDnsName("54.144.10.7"));
+    }
+
+    private Ec2ContainerManager managerWithEc2Config(String prefix, boolean awsFaithfulDns) {
+        EmulatorConfig config = mock(EmulatorConfig.class);
+        EmulatorConfig.ServicesConfig services = mock(EmulatorConfig.ServicesConfig.class);
+        EmulatorConfig.Ec2ServiceConfig ec2 = mock(EmulatorConfig.Ec2ServiceConfig.class);
+        when(config.services()).thenReturn(services);
+        when(services.ec2()).thenReturn(ec2);
+        when(ec2.publicIpPrefix()).thenReturn(prefix);
+        when(ec2.awsFaithfulPublicDns()).thenReturn(awsFaithfulDns);
+        return new Ec2ContainerManager(
+                mock(ContainerBuilder.class), mock(ContainerLifecycleManager.class),
+                mock(ContainerLogStreamer.class), mock(ContainerDetector.class),
+                mock(DockerHostResolver.class), mock(DockerClient.class),
+                mock(PortAllocator.class), config, mock(Ec2MetadataServer.class),
+                mock(Ec2PortForwardManager.class));
     }
 }

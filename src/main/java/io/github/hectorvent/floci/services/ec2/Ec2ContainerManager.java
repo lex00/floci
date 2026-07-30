@@ -205,8 +205,9 @@ public class Ec2ContainerManager {
                 configureLinkLocalMetadataEndpoint(containerId, instanceId, flociHost, imdsPort);
 
                 // Set public-facing addresses
-                instance.setPublicIpAddress("127.0.0.1");
-                instance.setPublicDnsName("localhost");
+                String publicIp = syntheticPublicIp(instanceId);
+                instance.setPublicIpAddress(publicIp);
+                instance.setPublicDnsName(publicDnsName(publicIp));
 
                 instance.setState(InstanceState.running());
                 LOG.infov("EC2 instance {0} running in container {1} (SSH host port {2})",
@@ -742,6 +743,31 @@ public class Ec2ContainerManager {
             LOG.warnv("Could not inspect container {0} for bridge IP: {1}", containerId, e.getMessage());
         }
         return null;
+    }
+
+    /**
+     * A stable, routable-looking public address for an instance, derived from its id so it
+     * survives restarts and never collides across instances in practice. Nothing connects to it —
+     * SSH goes to the published host port and IMDS to the container bridge IP — but it is what
+     * DescribeInstances, the IMDS public-ipv4 field and CloudFormation's PublicIp attribute
+     * report, and readers judge internet reachability from it.
+     */
+    String syntheticPublicIp(String instanceId) {
+        int hash = (instanceId == null ? 0 : instanceId.hashCode()) & 0x7fffffff;
+        int third = hash % 256;
+        int fourth = 1 + ((hash / 256) % 254); // skip .0 and .255
+        return config.services().ec2().publicIpPrefix() + "." + third + "." + fourth;
+    }
+
+    /**
+     * "localhost" by default, because the AWS form does not resolve and UserData that reads the
+     * IMDS public-hostname and dials it would break. Opt in for the AWS-shaped name.
+     */
+    String publicDnsName(String publicIp) {
+        if (!config.services().ec2().awsFaithfulPublicDns()) {
+            return "localhost";
+        }
+        return "ec2-" + publicIp.replace('.', '-') + ".compute-1.amazonaws.com";
     }
 
     private String waitForContainerBridgeIp(String containerId, String instanceId) throws InterruptedException {
