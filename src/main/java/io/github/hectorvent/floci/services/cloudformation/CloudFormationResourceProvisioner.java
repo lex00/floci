@@ -618,8 +618,11 @@ public class CloudFormationResourceProvisioner {
         String az = resolveOptional(props, "AvailabilityZone", engine);
         String mapPublicIpOnLaunch = resolveOptional(props, "MapPublicIpOnLaunch", engine);
         var subnet = ec2Service.createSubnet(region, vpcId, cidr, az);
-        if (mapPublicIpOnLaunch != null) {
-            ec2Service.modifySubnetAttribute(region, subnet.getSubnetId(), "mapPublicIpOnLaunch", mapPublicIpOnLaunch);
+        // Normalized through Boolean.parseBoolean so a template value of "TRUE" or an
+        // intrinsic that resolved to something non-canonical still lands as true/false.
+        if (mapPublicIpOnLaunch != null && !mapPublicIpOnLaunch.isBlank()) {
+            ec2Service.modifySubnetAttribute(region, subnet.getSubnetId(), "mapPublicIpOnLaunch",
+                    String.valueOf(Boolean.parseBoolean(mapPublicIpOnLaunch)));
         }
         r.setPhysicalId(subnet.getSubnetId());
         r.getAttributes().put("SubnetId", subnet.getSubnetId());
