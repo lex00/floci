@@ -2508,7 +2508,11 @@ class Ec2IntegrationTest {
     // then terminates the extra instances. Does not affect other tests.
 
     @Test
-    @Order(92)
+    // Runs after the other @Order(92) ENI tests: it launches five instances, and
+    // describeNetworkInterfacesWithMaxResultsNoNextToken asserts the total is under its
+    // MaxResults. Sharing an order left their relative execution unspecified, so whichever
+    // ran second could see the other's state.
+    @Order(93)
     void describeNetworkInterfacesMultipagePagination() {
         // ── Launch 5 additional instances to have 6 total ENIs ──
         List<String> batchIds = given()
