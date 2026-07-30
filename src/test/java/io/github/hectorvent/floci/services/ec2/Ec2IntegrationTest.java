@@ -287,6 +287,62 @@ class Ec2IntegrationTest {
     }
 
     @Test
+    // Runs last: it launches two extra instances, and the DescribeNetworkInterfaces
+    // pagination tests at @Order(92) assert on exact ENI counts.
+    @Order(321)
+    void createImageInheritsTheSourceImageMetadata() {
+        // An arm64 source: a created AMI that reported the registerImage defaults would come
+        // back x86_64 here, which is the whole point of the assertion.
+        String armInstanceId = given()
+            .formParam("Action", "RunInstances")
+            .formParam("ImageId", "ami-ubuntu2404-arm64")
+            .formParam("InstanceType", "t4g.micro")
+            .formParam("MinCount", "1")
+            .formParam("MaxCount", "1")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("RunInstancesResponse.instancesSet.item.instanceId");
+
+        String amiId = given()
+            .formParam("Action", "CreateImage")
+            .formParam("InstanceId", armInstanceId)
+            .formParam("Name", "created-from-arm-instance")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("CreateImageResponse.imageId");
+
+        given()
+            .formParam("Action", "DescribeImages")
+            .formParam("ImageId.1", amiId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeImagesResponse.imagesSet.item.architecture", equalTo("arm64"));
+
+        // The created AMI is launchable, not just describable.
+        given()
+            .formParam("Action", "RunInstances")
+            .formParam("ImageId", amiId)
+            .formParam("InstanceType", "t4g.micro")
+            .formParam("MinCount", "1")
+            .formParam("MaxCount", "1")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("RunInstancesResponse.instancesSet.item.imageId", equalTo(amiId));
+    }
+
+    @Test
     @Order(10)
     void createImageRequiresExistingInstance() {
         given()
