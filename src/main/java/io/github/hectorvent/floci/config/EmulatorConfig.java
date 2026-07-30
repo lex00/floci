@@ -1424,6 +1424,24 @@ public interface EmulatorConfig {
         int sshPortRangeEnd();
 
         /**
+         * The /16 a public-facing instance's reported PublicIpAddress is drawn from. Instances
+         * are reached through published host ports, never through this address, so it is a
+         * reported value only — but it has to look like a routable public address, because
+         * tooling that reads it reasons about internet reachability from it. The previous
+         * 127.0.0.1 read as loopback and was taken as proof of no connectivity.
+         */
+        @WithDefault("54.144")
+        String publicIpPrefix();
+
+        /**
+         * When true, PublicDnsName follows the AWS form (ec2-&lt;dashed-ip&gt;.compute-1.amazonaws.com)
+         * rather than "localhost". Off by default: the AWS form does not resolve, and UserData
+         * that reads the IMDS public-hostname and dials it would break.
+         */
+        @WithDefault("false")
+        boolean awsFaithfulPublicDns();
+
+        /**
          * When true, TCP ports opened by an instance's security-group ingress rules are
          * published on the host via a socat sidecar container, both at launch and on later
          * authorize-security-group-ingress. Set false to keep security groups as metadata only.
