@@ -2447,16 +2447,26 @@ class Ec2IntegrationTest {
             .body("Response.Errors.Error.Code", equalTo("InvalidParameterValue"));
     }
 
+    /** ENIs visible to the account right now; other test classes share this emulator. */
+    private static int countNetworkInterfaces() {
+        String body = given()
+            .formParam("Action", "DescribeNetworkInterfaces")
+            .header("Authorization", AUTH_HEADER)
+        .when().post("/").then().statusCode(200).extract().body().asString();
+        return body.split("<networkInterfaceId>", -1).length - 1;
+    }
+
     @Test
     @Order(92)
     void describeNetworkInterfacesWithMaxResultsNoNextToken() {
-        // When MaxResults exceeds the number of available ENIs,
-        // all results are returned and nextToken is omitted.
-        // This test works regardless of how many instances exist
-        // (including zero, e.g. when run in isolation).
+        // When MaxResults exceeds the number of available ENIs, all results are returned
+        // and nextToken is omitted. Other test classes share this emulator instance, so the
+        // account total is not fixed — ask for one more than actually exist instead of
+        // assuming a small account. MaxResults has a floor of 5.
+        int maxResults = Math.max(5, countNetworkInterfaces() + 1);
         String body = given()
             .formParam("Action", "DescribeNetworkInterfaces")
-            .formParam("MaxResults", "5")
+            .formParam("MaxResults", String.valueOf(maxResults))
             .header("Authorization", AUTH_HEADER)
         .when()
             .post("/")
