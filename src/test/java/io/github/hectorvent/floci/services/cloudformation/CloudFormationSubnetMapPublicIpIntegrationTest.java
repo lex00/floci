@@ -70,11 +70,27 @@ class CloudFormationSubnetMapPublicIpIntegrationTest {
             .header("Authorization", EC2_AUTH)
         .when().post("/").then().statusCode(200)
             .body(containsString("<mapPublicIpOnLaunch>true</mapPublicIpOnLaunch>"));
+
+        String privId = between(describe, "<OutputKey>PrivateId</OutputKey>", "</member>");
+        privId = between(privId, "<OutputValue>", "</OutputValue>");
+
+        // The declared false carries through — this is the case an
+        // unconditionally-true implementation would fail.
+        given()
+            .formParam("Action", "DescribeSubnets")
+            .formParam("SubnetId.1", privId)
+            .header("Authorization", EC2_AUTH)
+        .when().post("/").then().statusCode(200)
+            .body(containsString("<mapPublicIpOnLaunch>false</mapPublicIpOnLaunch>"));
     }
 
     private static String between(String haystack, String open, String close) {
         int i = haystack.indexOf(open);
-        int j = haystack.indexOf(close, i + open.length());
+        int j = i < 0 ? -1 : haystack.indexOf(close, i + open.length());
+        if (i < 0 || j < 0) {
+            throw new AssertionError(
+                    "could not find '" + open + "' ... '" + close + "' in:\n" + haystack);
+        }
         return haystack.substring(i + open.length(), j);
     }
 }

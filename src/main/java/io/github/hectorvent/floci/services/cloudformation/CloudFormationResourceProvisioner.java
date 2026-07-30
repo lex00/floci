@@ -566,9 +566,12 @@ public class CloudFormationResourceProvisioner {
         var subnet = ec2Service.createSubnet(region, vpcId, cidr, az);
         // Honor MapPublicIpOnLaunch from the template (createSubnet has no such
         // parameter; the value is applied the same way ModifySubnetAttribute does).
-        if (props != null && props.hasNonNull("MapPublicIpOnLaunch")) {
+        // Resolved through the engine like the properties above, so an intrinsic
+        // (Ref / Fn::If) yields its resolved value instead of collapsing to false.
+        String mapPublicIp = resolveOptional(props, "MapPublicIpOnLaunch", engine);
+        if (mapPublicIp != null && !mapPublicIp.isBlank()) {
             ec2Service.modifySubnetAttribute(region, subnet.getSubnetId(),
-                    "mapPublicIpOnLaunch", String.valueOf(props.get("MapPublicIpOnLaunch").asBoolean()));
+                    "mapPublicIpOnLaunch", String.valueOf(Boolean.parseBoolean(mapPublicIp)));
         }
         r.setPhysicalId(subnet.getSubnetId());
         r.getAttributes().put("SubnetId", subnet.getSubnetId());
