@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.services.cloudformation.model.StackResource;
+import io.github.hectorvent.floci.services.cloudformation.provisioners.CfnRollback;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.CloudFormationResourceRegistry;
+import io.github.hectorvent.floci.services.cloudformation.provisioners.IamRoleCfnProvisioner;
 import io.github.hectorvent.floci.services.iam.IamService;
 import io.github.hectorvent.floci.services.iam.model.IamPolicy;
 import io.github.hectorvent.floci.services.iam.model.IamRole;
@@ -50,7 +52,7 @@ class CloudFormationIamAttachmentProvisionerTest {
                 mapper,
                 null, null, null, null, null, null, null,
                 null, null, null, null, null, null, null,
-                new CloudFormationResourceRegistry(List.of()));
+                new CloudFormationResourceRegistry(List.of(new IamRoleCfnProvisioner(iamService))));
     }
 
     @Test
@@ -130,11 +132,11 @@ class CloudFormationIamAttachmentProvisionerTest {
                 "Role", "AWS::IAM::Role", """
                         {"RoleName":"same-name","ManagedPolicyArns":["%s"]}
                         """.formatted(NEW_POLICY), "same-name",
-                Map.of("RoleId", "AROAOLD", CloudFormationResourceProvisioner.ROLLBACK_OWNED_ATTR, "true"));
+                Map.of("RoleId", "AROAOLD", CfnRollback.ROLLBACK_OWNED_ATTR, "true"));
 
         assertEquals("CREATE_FAILED", result.getStatus());
         assertEquals("already exists", result.getStatusReason());
-        assertNull(result.getAttributes().get(CloudFormationResourceProvisioner.ROLLBACK_OWNED_ATTR));
+        assertNull(result.getAttributes().get(CfnRollback.ROLLBACK_OWNED_ATTR));
         verify(iamService, never()).attachRolePolicy("same-name", NEW_POLICY);
         verify(iamService, never()).deleteRole("same-name");
     }
@@ -224,7 +226,7 @@ class CloudFormationIamAttachmentProvisionerTest {
         assertEquals("CREATE_FAILED", result.getStatus());
         assertEquals("existing-role", result.getAttributes().get("InlineRoleTargets"));
         assertEquals("true", result.getAttributes().get(
-                CloudFormationResourceProvisioner.ROLLBACK_OWNED_ATTR));
+                CfnRollback.ROLLBACK_OWNED_ATTR));
 
         provisioner.delete(result, "us-east-1");
 
