@@ -595,7 +595,8 @@ class IamServiceTest {
         // which rolls the whole stack back.
         for (String name : new String[] {
                 "AWSCloudFormationReadOnlyAccess", "AmazonAthenaFullAccess",
-                "AmazonRedshiftFullAccess", "AmazonS3TablesReadOnlyAccess" }) {
+                "AmazonRedshiftFullAccess", "AmazonS3TablesReadOnlyAccess",
+                "AmazonBedrockFullAccess", "AmazonBedrockReadOnly" }) {
             IamPolicy seeded = iamService.getPolicy("arn:aws:iam::aws:policy/" + name);
             assertEquals(name, seeded.getPolicyName());
             assertEquals("/", seeded.getPath());
