@@ -66,6 +66,13 @@ final class AwsManagedPolicies {
         // rolls back and no CDK app can be deployed.
         new ManagedPolicyDef("AWSCloudFormationReadOnlyAccess", "/",
                 "Provides access to AWS CloudFormation via the AWS Management Console."),
+        new ManagedPolicyDef("AmazonAthenaFullAccess", "/",
+                "Provide full access to Amazon Athena and scoped access to the dependencies "
+                + "needed to enable querying, writing results, and data management."),
+        new ManagedPolicyDef("AmazonRedshiftFullAccess", "/",
+                "Provides full access to Amazon Redshift via the AWS Management Console."),
+        new ManagedPolicyDef("AmazonS3TablesReadOnlyAccess", "/",
+                "Provides read-only access to Amazon S3 Tables."),
         new ManagedPolicyDef("AWSCloudTrail_FullAccess", "/",
                 "Provides full access to AWS CloudTrail."),
         new ManagedPolicyDef("AWSCloudTrail_ReadOnlyAccess", "/",
@@ -154,12 +161,7 @@ final class AwsManagedPolicies {
         new ManagedPolicyDef("AmazonDataZoneDomainExecutionRolePolicy", "/service-role/",
                 "Provides permissions for the Amazon DataZone domain execution role."),
 
-        // Amazon Bedrock policies
-        new ManagedPolicyDef("AmazonBedrockFullAccess", "/",
-                "Provides full access to Amazon Bedrock as well as limited access to related services "
-                + "that are required by it"),
-        new ManagedPolicyDef("AmazonBedrockReadOnly", "/",
-                "Provides read only access to Amazon Bedrock"),
+        // Amazon Bedrock execution role policy
         new ManagedPolicyDef("AmazonBedrockAgentCoreMemoryBedrockModelInferenceExecutionRolePolicy", "/",
                 "Provides Bedrock Model inference permissions to Bedrock agent core memory."),
 
