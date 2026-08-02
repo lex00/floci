@@ -28,7 +28,11 @@ import io.github.hectorvent.floci.services.autoscaling.AutoScalingService;
 import io.github.hectorvent.floci.services.cloudwatch.metrics.model.MetricAlarm;
 import io.github.hectorvent.floci.services.ec2.Ec2Service;
 import io.github.hectorvent.floci.services.kinesis.KinesisService;
+import io.github.hectorvent.floci.services.ec2.model.IpPermission;
+import io.github.hectorvent.floci.services.ec2.model.IpRange;
+import io.github.hectorvent.floci.services.ec2.model.Ipv6Range;
 import io.github.hectorvent.floci.services.ec2.model.Tag;
+import io.github.hectorvent.floci.services.ec2.model.UserIdGroupPair;
 import io.github.hectorvent.floci.services.ecs.EcsService;
 import io.github.hectorvent.floci.services.firehose.FirehoseService;
 import io.github.hectorvent.floci.services.firehose.model.DeliveryStreamDescription;
@@ -587,6 +591,102 @@ public class CloudFormationResourceProvisioner {
         r.getAttributes().put("GroupId", sg.getGroupId());
         if (sg.getVpcId() != null) {
             r.getAttributes().put("VpcId", sg.getVpcId());
+        }
+
+        // The group's rules and tags are properties of the template, not extras:
+        // creating the group and dropping them leaves a group that describes as
+        // empty, so anything comparing a template against live state reports
+        // every declared rule as missing.
+        List<IpPermission> ingress = resolveIpPermissions(props, "SecurityGroupIngress", engine);
+        if (!ingress.isEmpty()) {
+            ec2Service.authorizeSecurityGroupIngress(region, sg.getGroupId(), ingress);
+        }
+        List<IpPermission> egress = resolveIpPermissions(props, "SecurityGroupEgress", engine);
+        if (!egress.isEmpty()) {
+            ec2Service.authorizeSecurityGroupEgress(region, sg.getGroupId(), egress);
+        }
+        List<Tag> tags = resolveResourceTags(props, engine);
+        if (!tags.isEmpty()) {
+            ec2Service.createTags(region, List.of(sg.getGroupId()), tags);
+        }
+    }
+
+    /**
+     * A template's flat rule list to the nested shape the EC2 API stores.
+     *
+     * CloudFormation writes one rule per source with the source flat on the rule
+     * ({@code CidrIp}, {@code CidrIpv6}, {@code SourceSecurityGroupId}); the EC2
+     * API nests sources under a permission. Each rule becomes one permission,
+     * which is the faithful reading — merging rules that share a protocol and
+     * port range would change what the template asked for.
+     */
+    private List<IpPermission> resolveIpPermissions(JsonNode props, String name,
+                                                    CloudFormationTemplateEngine engine) {
+        List<IpPermission> permissions = new ArrayList<>();
+        if (props == null || !props.has(name) || !props.get(name).isArray()) {
+            return permissions;
+        }
+        for (JsonNode rule : props.get(name)) {
+            IpPermission permission = new IpPermission();
+            permission.setIpProtocol(resolveOptional(rule, "IpProtocol", engine));
+            permission.setFromPort(resolveOptionalInt(rule, "FromPort", engine));
+            permission.setToPort(resolveOptionalInt(rule, "ToPort", engine));
+            String description = resolveOptional(rule, "Description", engine);
+
+            String cidrIp = resolveOptional(rule, "CidrIp", engine);
+            if (cidrIp != null && !cidrIp.isBlank()) {
+                IpRange range = new IpRange();
+                range.setCidrIp(cidrIp);
+                range.setDescription(description);
+                permission.getIpRanges().add(range);
+            }
+            String cidrIpv6 = resolveOptional(rule, "CidrIpv6", engine);
+            if (cidrIpv6 != null && !cidrIpv6.isBlank()) {
+                Ipv6Range range = new Ipv6Range();
+                range.setCidrIpv6(cidrIpv6);
+                range.setDescription(description);
+                permission.getIpv6Ranges().add(range);
+            }
+            String sourceGroupId = resolveOptional(rule, "SourceSecurityGroupId", engine);
+            if (sourceGroupId != null && !sourceGroupId.isBlank()) {
+                UserIdGroupPair pair = new UserIdGroupPair();
+                pair.setGroupId(sourceGroupId);
+                permission.getUserIdGroupPairs().add(pair);
+            }
+            permissions.add(permission);
+        }
+        return permissions;
+    }
+
+    /** A template's `Tags` array as EC2 tags, resolving intrinsics in both key and value. */
+    private List<Tag> resolveResourceTags(JsonNode props, CloudFormationTemplateEngine engine) {
+        List<Tag> tags = new ArrayList<>();
+        if (props == null || !props.has("Tags") || !props.get("Tags").isArray()) {
+            return tags;
+        }
+        for (JsonNode node : props.get("Tags")) {
+            String key = resolveOptional(node, "Key", engine);
+            if (key == null || key.isBlank()) {
+                continue;
+            }
+            Tag tag = new Tag();
+            tag.setKey(key);
+            tag.setValue(resolveOptional(node, "Value", engine));
+            tags.add(tag);
+        }
+        return tags;
+    }
+
+    /** {@link #resolveOptional} for a numeric property — a port may be a literal or an intrinsic. */
+    private Integer resolveOptionalInt(JsonNode props, String name, CloudFormationTemplateEngine engine) {
+        String raw = resolveOptional(props, name, engine);
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(raw.trim());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 
