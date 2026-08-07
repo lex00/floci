@@ -543,6 +543,8 @@ public interface EmulatorConfig {
         BedrockRuntimeServiceConfig bedrockRuntime();
         EksServiceConfig eks();
         PipesServiceConfig pipes();
+        BedrockAgentCoreControlServiceConfig bedrockAgentCoreControl();
+        BedrockAgentCoreServiceConfig bedrockAgentCore();
         ElbV2ServiceConfig elbv2();
         CodeBuildServiceConfig codebuild();
         CodeDeployServiceConfig codedeploy();
@@ -1433,6 +1435,22 @@ public interface EmulatorConfig {
     interface PipesServiceConfig {
         @WithDefault("true")
         boolean enabled();
+    }
+
+    interface BedrockAgentCoreControlServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface BedrockAgentCoreServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+
+        @WithDefault("{\"output\":\"yes\"}")
+        String invokeResponse();
+
+        @WithDefault("false")
+        boolean validateRuntimeExists();
     }
 
     interface ElbV2ServiceConfig {
