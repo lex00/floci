@@ -1990,8 +1990,9 @@ public class CloudFormationResourceProvisioner {
                     ? previousPolicyName
                     : generatePhysicalName(stackName, r.getLogicalId(), 128, false);
         }
+        // Resolved, not verbatim — same reason as the managed policy below.
         String document = props != null && props.has("PolicyDocument")
-                ? props.get("PolicyDocument").toString()
+                ? engine.resolveNode(props.get("PolicyDocument")).toString()
                 : "{\"Version\":\"2012-10-17\",\"Statement\":[]}";
 
         final String name = policyName;
@@ -2149,12 +2150,15 @@ public class CloudFormationResourceProvisioner {
         if (policyName == null || policyName.isBlank()) {
             policyName = generatePhysicalName(stackName, r.getLogicalId(), 128, false);
         }
+        // Resolved, not verbatim: policy documents carry Fn::Sub/Ref over the
+        // account and region, and a stored intrinsic surfaces on every read.
         String document = props != null && props.has("PolicyDocument")
-                ? props.get("PolicyDocument").toString()
+                ? engine.resolveNode(props.get("PolicyDocument")).toString()
                 : "{\"Version\":\"2012-10-17\",\"Statement\":[]}";
         List<String> roleNames = resolveStringList(props, "Roles", engine);
+        String description = resolveOptional(props, "Description", engine);
 
-        var policy = iamService.createPolicy(policyName, "/", null, document, Map.of());
+        var policy = iamService.createPolicy(policyName, "/", description, document, Map.of());
         r.getAttributes().put(CfnRollback.ROLLBACK_OWNED_ATTR, "true");
         r.setPhysicalId(policy.getArn());
         // PolicyArn is the attribute CloudFormation documents for this type, and what a template

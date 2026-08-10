@@ -54,8 +54,12 @@ public class IamRoleCfnProvisioner implements CfnResourceProvisioner {
             throw new AwsException("ValidationError",
                     "Updating RoleName requires resource replacement, which is not supported.", 400);
         }
+        // Resolved through the engine, not stored verbatim: a trust policy
+        // routinely carries Fn::Sub over the account id in its Principal, and
+        // storing the intrinsic makes every later read of the role show a
+        // document AWS would never return.
         String assumeDoc = props != null && props.has("AssumeRolePolicyDocument")
-                ? props.get("AssumeRolePolicyDocument").toString()
+                ? ctx.engine().resolveNode(props.get("AssumeRolePolicyDocument")).toString()
                 : "{\"Version\":\"2012-10-17\",\"Statement\":[]}";
         String path = ctx.resolveOptional(props, "Path");
         if (path == null) {

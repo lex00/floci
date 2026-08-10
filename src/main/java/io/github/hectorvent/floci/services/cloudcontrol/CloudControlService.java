@@ -414,9 +414,15 @@ public class CloudControlService {
             ObjectNode properties = mapper.createObjectNode();
             // The ARN is both the Cloud Control identifier and the read-only
             // PolicyArn attribute CloudFormation exposes through Fn::GetAtt.
+            // Property names follow the CFN resource schema — a reader diffs
+            // this model against a declared AWS::IAM::ManagedPolicy, and
+            // ManagedPolicyName under any other key reads as drift.
             properties.put("PolicyArn", policy.getArn());
-            properties.put("PolicyName", policy.getPolicyName());
+            properties.put("ManagedPolicyName", policy.getPolicyName());
             properties.put("Path", policy.getPath());
+            if (policy.getDescription() != null && !policy.getDescription().isBlank()) {
+                properties.put("Description", policy.getDescription());
+            }
             setJsonDocument(properties, "PolicyDocument", policy.getDefaultDocument());
             resources.add(new ResourceDescription(policy.getArn(), propertiesString(properties)));
         }

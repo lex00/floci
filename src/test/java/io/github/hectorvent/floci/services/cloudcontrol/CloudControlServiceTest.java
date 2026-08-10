@@ -97,7 +97,7 @@ class CloudControlServiceTest {
         // reporting ResourceNotFound over a policy that exists.
         assertEquals("arn:aws:iam::000000000000:policy/S3VectorsReadOnlyAccess", described.identifier());
         JsonNode props = mapper.readTree(described.properties());
-        assertEquals("S3VectorsReadOnlyAccess", props.path("PolicyName").asText());
+        assertEquals("S3VectorsReadOnlyAccess", props.path("ManagedPolicyName").asText());
         assertEquals("2012-10-17", props.path("PolicyDocument").path("Version").asText());
     }
 }
