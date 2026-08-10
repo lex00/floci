@@ -17,6 +17,7 @@ import io.github.hectorvent.floci.services.ec2.model.Subnet;
 import io.github.hectorvent.floci.services.ec2.model.Tag;
 import io.github.hectorvent.floci.services.ec2.model.Vpc;
 import io.github.hectorvent.floci.services.iam.IamService;
+import io.github.hectorvent.floci.services.iam.model.IamPolicy;
 import io.github.hectorvent.floci.services.iam.model.IamRole;
 import io.github.hectorvent.floci.services.iam.model.IamUser;
 import io.github.hectorvent.floci.services.s3.S3Service;
@@ -167,6 +168,7 @@ public class CloudControlService {
             case "AWS::EC2::InternetGateway" -> "InternetGatewayId";
             case "AWS::EC2::RouteTable" -> "RouteTableId";
             case "AWS::EC2::LaunchTemplate" -> "LaunchTemplateId";
+            case "AWS::IAM::ManagedPolicy" -> "PolicyArn";
             default -> "Id";
         };
     }
@@ -260,6 +262,7 @@ public class CloudControlService {
             case "AWS::EC2::Subnet" -> subnets(region);
             case "AWS::EC2::SecurityGroup" -> securityGroups(region);
             case "AWS::IAM::Role" -> roles();
+            case "AWS::IAM::ManagedPolicy" -> managedPolicies();
             case "AWS::IAM::User" -> users();
             case "AWS::EC2::Instance" -> instances(region);
             case "AWS::EC2::LaunchTemplate" -> launchTemplates(region);
@@ -391,9 +394,55 @@ public class CloudControlService {
             properties.put("Arn", role.getArn());
             properties.put("RoleName", role.getRoleName());
             properties.put("Path", role.getPath());
+            // The trust policy and attachments are what a drift engine compares
+            // against the declared role. Identity alone made every clean apply
+            // report the whole document as removed.
+            setJsonDocument(properties, "AssumeRolePolicyDocument", role.getAssumeRolePolicyDocument());
+            List<String> attached = role.getAttachedPolicyArns();
+            if (attached != null && !attached.isEmpty()) {
+                var arr = properties.putArray("ManagedPolicyArns");
+                attached.forEach(arr::add);
+            }
             resources.add(new ResourceDescription(role.getRoleName(), propertiesString(properties)));
         }
         return resources;
+    }
+
+    private List<ResourceDescription> managedPolicies() {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (IamPolicy policy : iamService.listPolicies("Local", "/")) {
+            ObjectNode properties = mapper.createObjectNode();
+            // The ARN is both the Cloud Control identifier and the read-only
+            // PolicyArn attribute CloudFormation exposes through Fn::GetAtt.
+            properties.put("PolicyArn", policy.getArn());
+            properties.put("PolicyName", policy.getPolicyName());
+            properties.put("Path", policy.getPath());
+            setJsonDocument(properties, "PolicyDocument", policy.getDefaultDocument());
+            resources.add(new ResourceDescription(policy.getArn(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    /**
+     * Attach a policy document as structured JSON. IAM stores the document as a
+     * string and its API URL-encodes it on the way out; a reader diffing
+     * properties needs the tree, not an encoding of it. Unparseable input is
+     * kept verbatim rather than dropped.
+     */
+    private void setJsonDocument(ObjectNode properties, String field, String document) {
+        if (document == null || document.isBlank()) {
+            return;
+        }
+        for (String candidate : new String[] {
+                document, java.net.URLDecoder.decode(document, java.nio.charset.StandardCharsets.UTF_8)}) {
+            try {
+                properties.set(field, mapper.readTree(candidate));
+                return;
+            } catch (Exception ignored) {
+                // try the decoded form, then fall through
+            }
+        }
+        properties.put(field, document);
     }
 
     private List<ResourceDescription> users() {
