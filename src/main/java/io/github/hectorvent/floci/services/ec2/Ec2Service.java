@@ -2823,7 +2823,9 @@ public class Ec2Service implements ContainerTeardown {
                                                List<String> securityGroupIds, String userData,
                                                String encodedUserData,
                                                String iamInstanceProfileArn,
-                                               List<Tag> launchTemplateTags, List<Tag> instanceTags) {
+                                               List<Tag> launchTemplateTags, List<Tag> instanceTags,
+                                               LaunchTemplateData.MetadataOptions metadataOptions,
+                                               Boolean monitoringEnabled) {
         ensureDefaultResources(region);
         if (name == null || name.isBlank()) {
             throw new AwsException("MissingParameter", "The request must contain the parameter LaunchTemplateName", 400);
@@ -2847,6 +2849,8 @@ public class Ec2Service implements ContainerTeardown {
         launchTemplate.setUserData(userData);
         launchTemplate.setEncodedUserData(encodedUserData);
         launchTemplate.setIamInstanceProfileArn(iamInstanceProfileArn);
+        launchTemplate.setMetadataOptions(metadataOptions);
+        launchTemplate.setMonitoringEnabled(monitoringEnabled);
         if (securityGroupIds != null) {
             launchTemplate.setSecurityGroupIds(new ArrayList<>(securityGroupIds));
         }
@@ -2868,7 +2872,9 @@ public class Ec2Service implements ContainerTeardown {
                                                       List<String> securityGroupIds, String userData,
                                                       String encodedUserData,
                                                       String iamInstanceProfileArn,
-                                                      List<Tag> instanceTags) {
+                                                      List<Tag> instanceTags,
+                                                      LaunchTemplateData.MetadataOptions metadataOptions,
+                                                      Boolean monitoringEnabled) {
         ensureDefaultResources(region);
         LaunchTemplate launchTemplate = findLaunchTemplate(region, id, name);
         ensureLaunchTemplateVersions(launchTemplate);
@@ -2891,6 +2897,12 @@ public class Ec2Service implements ContainerTeardown {
         }
         if (iamInstanceProfileArn != null && !iamInstanceProfileArn.isBlank()) {
             data.setIamInstanceProfileArn(iamInstanceProfileArn);
+        }
+        if (metadataOptions != null) {
+            data.setMetadataOptions(metadataOptions);
+        }
+        if (monitoringEnabled != null) {
+            data.setMonitoringEnabled(monitoringEnabled);
         }
         if (securityGroupIds != null && !securityGroupIds.isEmpty()) {
             data.setSecurityGroupIds(securityGroupIds);
@@ -3043,6 +3055,8 @@ public class Ec2Service implements ContainerTeardown {
         data.setIamInstanceProfileArn(launchTemplate.getIamInstanceProfileArn());
         data.setSecurityGroupIds(launchTemplate.getSecurityGroupIds());
         data.setInstanceTags(launchTemplate.getInstanceTags());
+        data.setMetadataOptions(launchTemplate.getMetadataOptions());
+        data.setMonitoringEnabled(launchTemplate.getMonitoringEnabled());
         return data;
     }
 
@@ -3055,6 +3069,8 @@ public class Ec2Service implements ContainerTeardown {
         launchTemplate.setIamInstanceProfileArn(data.getIamInstanceProfileArn());
         launchTemplate.setSecurityGroupIds(new ArrayList<>(data.getSecurityGroupIds()));
         launchTemplate.setInstanceTags(data.getInstanceTags());
+        launchTemplate.setMetadataOptions(data.getMetadataOptions());
+        launchTemplate.setMonitoringEnabled(data.getMonitoringEnabled());
     }
 
     private LaunchTemplate copyForVersion(LaunchTemplate source, String versionNumber) {
