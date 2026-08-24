@@ -190,7 +190,9 @@ public class EcsContainerManager {
                     EfsVolumeConfiguration efs = efsVolumes.get(mp.sourceVolume());
                     if (sourcePath != null) {
                         // Host volume: bind-mount an absolute path on the Docker host.
-                        if (mp.readOnly()) {
+                        // readOnly is nullable (AWS leaves it absent, not false, when the
+                        // caller never set it) - absent means the documented default, false.
+                        if (Boolean.TRUE.equals(mp.readOnly())) {
                             specBuilder.withReadOnlyBind(sourcePath, mp.containerPath());
                         } else {
                             specBuilder.withBind(sourcePath, mp.containerPath());
@@ -207,7 +209,7 @@ public class EcsContainerManager {
                                 efsCfg.ownerUid(), efsCfg.ownerGid(), efsCfg.rootPermissions(),
                                 efsCfg.initImage());
                         specBuilder.withNamedVolume(efsVolumeName(efs.fileSystemId()),
-                                mp.containerPath(), mp.readOnly());
+                                mp.containerPath(), Boolean.TRUE.equals(mp.readOnly()));
                         // Emulate the access point's PosixUser: run the container under the
                         // configured uid[:gid] and/or add the supplementary group, so a non-root
                         // image can read/write the shared volume owned by ownerUid/ownerGid.

@@ -1250,7 +1250,9 @@ public class EcsJsonHandler {
                 ObjectNode mpNode = objectMapper.createObjectNode();
                 mpNode.put("sourceVolume", mp.sourceVolume());
                 mpNode.put("containerPath", mp.containerPath());
-                mpNode.put("readOnly", mp.readOnly());
+                if (mp.readOnly() != null) {
+                    mpNode.put("readOnly", mp.readOnly());
+                }
                 mps.add(mpNode);
             }
             n.set("mountPoints", mps);
@@ -1368,7 +1370,9 @@ public class EcsJsonHandler {
                 ObjectNode mpNode = objectMapper.createObjectNode();
                 mpNode.put("sourceVolume", mp.sourceVolume());
                 mpNode.put("containerPath", mp.containerPath());
-                mpNode.put("readOnly", mp.readOnly());
+                if (mp.readOnly() != null) {
+                    mpNode.put("readOnly", mp.readOnly());
+                }
                 mps.add(mpNode);
             }
             n.set("mountPoints", mps);
@@ -1906,7 +1910,7 @@ public class EcsJsonHandler {
             result.add(new MountPoint(
                     item.path("sourceVolume").asText(),
                     item.path("containerPath").asText(),
-                    item.path("readOnly").asBoolean(false)));
+                    item.has("readOnly") ? item.path("readOnly").asBoolean() : null));
         }
         return result;
     }
