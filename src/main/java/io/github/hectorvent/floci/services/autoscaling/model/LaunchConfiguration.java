@@ -1,6 +1,7 @@
 package io.github.hectorvent.floci.services.autoscaling.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import io.github.hectorvent.floci.services.ec2.model.BlockDeviceMapping;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.time.Instant;
@@ -22,6 +23,18 @@ public class LaunchConfiguration {
     // Nullable on purpose: AWS treats an absent flag as "fall back to the
     // subnet's MapPublicIpOnLaunch" and an explicit false as an override.
     private Boolean associatePublicIpAddress;
+    // Never null once created: CreateLaunchConfiguration's own doc says the
+    // default is true (enabled) when the caller omits it, and
+    // DescribeLaunchConfigurations always echoes an InstanceMonitoring
+    // structure back - never omits it - so a real caller's Read() never
+    // sees a bare EC2-default fallback for this field the way
+    // AssociatePublicIpAddress's absence is meaningful. See
+    // AutoScalingService.createLaunchConfiguration, which is what enforces
+    // the default; this field itself is left non-defaulting so a
+    // deserialized record from before this field existed does not
+    // silently become "monitored".
+    private Boolean instanceMonitoringEnabled;
+    private List<BlockDeviceMapping> blockDeviceMappings = new ArrayList<>();
     private Instant createdTime;
     private String region;
 
@@ -53,6 +66,12 @@ public class LaunchConfiguration {
 
     public Boolean getAssociatePublicIpAddress() { return associatePublicIpAddress; }
     public void setAssociatePublicIpAddress(Boolean v) { this.associatePublicIpAddress = v; }
+
+    public Boolean getInstanceMonitoringEnabled() { return instanceMonitoringEnabled; }
+    public void setInstanceMonitoringEnabled(Boolean v) { this.instanceMonitoringEnabled = v; }
+
+    public List<BlockDeviceMapping> getBlockDeviceMappings() { return blockDeviceMappings; }
+    public void setBlockDeviceMappings(List<BlockDeviceMapping> v) { this.blockDeviceMappings = v; }
 
     public Instant getCreatedTime() { return createdTime; }
     public void setCreatedTime(Instant v) { this.createdTime = v; }

@@ -79,6 +79,17 @@ public class AutoScalingService {
                                                           List<String> securityGroups, String userData,
                                                           String iamInstanceProfile,
                                                           Boolean associatePublicIpAddress) {
+        return createLaunchConfiguration(region, name, instanceId, imageId, instanceType, keyName,
+                securityGroups, userData, iamInstanceProfile, associatePublicIpAddress, null, List.of());
+    }
+
+    public LaunchConfiguration createLaunchConfiguration(String region, String name, String instanceId,
+                                                          String imageId, String instanceType, String keyName,
+                                                          List<String> securityGroups, String userData,
+                                                          String iamInstanceProfile,
+                                                          Boolean associatePublicIpAddress,
+                                                          Boolean instanceMonitoringEnabled,
+                                                          List<io.github.hectorvent.floci.services.ec2.model.BlockDeviceMapping> blockDeviceMappings) {
         String key = lcKey(region, name);
         if (launchConfigs.containsKey(key)) {
             throw new AwsException("AlreadyExists",
@@ -130,6 +141,14 @@ public class AutoScalingService {
         lc.setUserData(userData);
         lc.setIamInstanceProfile(iamInstanceProfile);
         lc.setAssociatePublicIpAddress(associatePublicIpAddress);
+        // CreateLaunchConfiguration's own doc: "The default value is true
+        // (enabled)" for InstanceMonitoring - unlike
+        // AssociatePublicIpAddress, real AWS always echoes this structure
+        // back from Describe, so a caller that omitted it still gets a
+        // real, non-absent answer, and the honest one is the documented
+        // default rather than Java's own null-to-false collapse.
+        lc.setInstanceMonitoringEnabled(instanceMonitoringEnabled != null ? instanceMonitoringEnabled : Boolean.TRUE);
+        lc.setBlockDeviceMappings(blockDeviceMappings != null ? new ArrayList<>(blockDeviceMappings) : new ArrayList<>());
         lc.setCreatedTime(Instant.now());
         lc.setRegion(region);
         launchConfigs.put(key, lc);

@@ -61,6 +61,83 @@ class AutoScalingIntegrationTest {
                 .body(containsString("t3.micro"));
     }
 
+    // Real AWS always includes InstanceMonitoring and BlockDeviceMappings in
+    // DescribeLaunchConfigurations, never omits them - traced via
+    // choudoufu's corpus-eks-basic gauntlet crossing (a real
+    // terraform-aws-eks estate) to a perpetual ForceNew replace because
+    // this response used to omit both entirely, which the AWS SDK's own
+    // Read logic collapses to enable_monitoring=false and an empty
+    // root_block_device regardless of what was actually configured.
+    @Test
+    @Order(43)
+    void createLaunchConfigurationWithMonitoringAndRootDevice() {
+        given()
+                .formParam("Action", "CreateLaunchConfiguration")
+                .formParam("LaunchConfigurationName", "my-lc-with-root-device")
+                .formParam("ImageId", "ami-12345678")
+                .formParam("InstanceType", "t3.micro")
+                .formParam("InstanceMonitoring.Enabled", "true")
+                .formParam("BlockDeviceMappings.member.1.DeviceName", "/dev/xvda")
+                .formParam("BlockDeviceMappings.member.1.Ebs.VolumeSize", "100")
+                .formParam("BlockDeviceMappings.member.1.Ebs.VolumeType", "gp2")
+                .formParam("BlockDeviceMappings.member.1.Ebs.DeleteOnTermination", "true")
+                .header("Authorization", AUTH)
+            .when()
+                .post("/")
+            .then()
+                .statusCode(200)
+                .body(containsString("CreateLaunchConfigurationResponse"));
+    }
+
+    @Test
+    @Order(44)
+    void describeLaunchConfigurationEchoesMonitoringAndRootDevice() {
+        given()
+                .formParam("Action", "DescribeLaunchConfigurations")
+                .formParam("LaunchConfigurationNames.member.1", "my-lc-with-root-device")
+                .header("Authorization", AUTH)
+            .when()
+                .post("/")
+            .then()
+                .statusCode(200)
+                .body(containsString("<InstanceMonitoring><Enabled>true</Enabled></InstanceMonitoring>"))
+                .body(containsString("<DeviceName>/dev/xvda</DeviceName>"))
+                .body(containsString("<VolumeSize>100</VolumeSize>"))
+                .body(containsString("<VolumeType>gp2</VolumeType>"));
+    }
+
+    // A launch configuration created with no InstanceMonitoring argument at
+    // all must still read back "true" - CreateLaunchConfiguration's own doc
+    // states that is the default, and DescribeLaunchConfigurations never
+    // simply omits the structure the way it omits AssociatePublicIpAddress
+    // when that one is genuinely unset. Self-contained (its own create),
+    // rather than reusing "my-lc" from Order(1): Order(41)'s
+    // deleteLaunchConfiguration test removes that one before this runs.
+    @Test
+    @Order(45)
+    void describeLaunchConfigurationDefaultsMonitoringToEnabled() {
+        given()
+                .formParam("Action", "CreateLaunchConfiguration")
+                .formParam("LaunchConfigurationName", "my-lc-no-monitoring-arg")
+                .formParam("ImageId", "ami-12345678")
+                .formParam("InstanceType", "t3.micro")
+                .header("Authorization", AUTH)
+            .when()
+                .post("/")
+            .then()
+                .statusCode(200);
+
+        given()
+                .formParam("Action", "DescribeLaunchConfigurations")
+                .formParam("LaunchConfigurationNames.member.1", "my-lc-no-monitoring-arg")
+                .header("Authorization", AUTH)
+            .when()
+                .post("/")
+            .then()
+                .statusCode(200)
+                .body(containsString("<InstanceMonitoring><Enabled>true</Enabled></InstanceMonitoring>"));
+    }
+
     // ── Auto Scaling Groups ───────────────────────────────────────────────────
 
     @Test

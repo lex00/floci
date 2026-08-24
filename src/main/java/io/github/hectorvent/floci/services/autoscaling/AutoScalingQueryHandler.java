@@ -119,7 +119,9 @@ public class AutoScalingQueryHandler {
                 memberList(p, "SecurityGroups"),
                 p.getFirst("UserData"),
                 p.getFirst("IamInstanceProfile"),
-                nullableBoolParam(p, "AssociatePublicIpAddress"));
+                nullableBoolParam(p, "AssociatePublicIpAddress"),
+                nullableBoolParam(p, "InstanceMonitoring.Enabled"),
+                parseLaunchConfigurationBlockDeviceMappings(p));
         String xml = new XmlBuilder()
                 .start("CreateLaunchConfigurationResponse", NS)
                   .raw(AwsQueryResponse.responseMetadata())
@@ -152,7 +154,21 @@ public class AutoScalingQueryHandler {
             if (lc.getIamInstanceProfile() != null) { xml.elem("IamInstanceProfile", lc.getIamInstanceProfile()); }
             xml.start("SecurityGroups");
             for (String sg : lc.getSecurityGroups()) { xml.elem("member", sg); }
-            xml.end("SecurityGroups").end("member");
+            xml.end("SecurityGroups");
+            // Real AWS always includes InstanceMonitoring in this response,
+            // never omits it the way AssociatePublicIpAddress's absence is
+            // meaningful - a caller that never overrides
+            // enable_monitoring must still read back CreateLaunchConfiguration's
+            // own documented default (true) rather than a legacy SDK's
+            // nil-pointer-to-false collapse, which is exactly the shape
+            // lex00/floci#<TBD> traced a perpetual ForceNew replace to via
+            // corpus-eks-basic.
+            xml.start("InstanceMonitoring")
+               .elem("Enabled", String.valueOf(
+                       lc.getInstanceMonitoringEnabled() != null ? lc.getInstanceMonitoringEnabled() : Boolean.TRUE))
+               .end("InstanceMonitoring");
+            xml.raw(launchConfigurationBlockDeviceMappingsXml(lc.getBlockDeviceMappings()));
+            xml.end("member");
         }
         xml.end("LaunchConfigurations")
            .end("DescribeLaunchConfigurationsResult")
@@ -1661,6 +1677,110 @@ public class AutoScalingQueryHandler {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    // CreateLaunchConfiguration's own BlockDeviceMappings.member.N.* shape -
+    // the same fields Ec2QueryHandler.parseBlockDeviceMappings reads for
+    // RunInstances/CreateLaunchTemplate, just under autoscaling's own
+    // ".member." list indexing rather than EC2's bare ".N.". Reusing
+    // io.github.hectorvent.floci.services.ec2.model.BlockDeviceMapping
+    // rather than a second, autoscaling-only copy: the wire shape (Ebs's
+    // seven fields, VirtualName, NoDevice) is identical, only the query
+    // parameter prefix differs.
+    private List<io.github.hectorvent.floci.services.ec2.model.BlockDeviceMapping> parseLaunchConfigurationBlockDeviceMappings(
+            MultivaluedMap<String, String> p) {
+        List<io.github.hectorvent.floci.services.ec2.model.BlockDeviceMapping> mappings = new ArrayList<>();
+        for (int i = 1; ; i++) {
+            String prefix = "BlockDeviceMappings.member." + i;
+            String deviceName = p.getFirst(prefix + ".DeviceName");
+            String virtualName = p.getFirst(prefix + ".VirtualName");
+            String snapshotId = p.getFirst(prefix + ".Ebs.SnapshotId");
+            String volumeSize = p.getFirst(prefix + ".Ebs.VolumeSize");
+            String volumeType = p.getFirst(prefix + ".Ebs.VolumeType");
+            String deleteOnTermination = p.getFirst(prefix + ".Ebs.DeleteOnTermination");
+            String encrypted = p.getFirst(prefix + ".Ebs.Encrypted");
+            String iops = p.getFirst(prefix + ".Ebs.Iops");
+            String throughput = p.getFirst(prefix + ".Ebs.Throughput");
+            boolean hasEbs = snapshotId != null || volumeSize != null || volumeType != null
+                    || deleteOnTermination != null || encrypted != null || iops != null || throughput != null;
+            if (deviceName == null && virtualName == null && !hasEbs) {
+                break;
+            }
+            var mapping = new io.github.hectorvent.floci.services.ec2.model.BlockDeviceMapping();
+            mapping.setDeviceName(deviceName);
+            mapping.setVirtualName(virtualName);
+            if (hasEbs) {
+                var ebs = new io.github.hectorvent.floci.services.ec2.model.EbsBlockDevice();
+                ebs.setSnapshotId(snapshotId);
+                ebs.setVolumeSize(parseOptionalInt(volumeSize, prefix + ".Ebs.VolumeSize"));
+                ebs.setVolumeType(volumeType);
+                ebs.setDeleteOnTermination(parseOptionalBoolean(deleteOnTermination, prefix + ".Ebs.DeleteOnTermination"));
+                ebs.setEncrypted(parseOptionalBoolean(encrypted, prefix + ".Ebs.Encrypted"));
+                ebs.setIops(parseOptionalInt(iops, prefix + ".Ebs.Iops"));
+                ebs.setThroughput(parseOptionalInt(throughput, prefix + ".Ebs.Throughput"));
+                mapping.setEbs(ebs);
+            }
+            mappings.add(mapping);
+        }
+        return mappings;
+    }
+
+    private Integer parseOptionalInt(String value, String name) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            throw new AwsException("InvalidParameterValue", name + " is not a valid integer.", 400);
+        }
+    }
+
+    private Boolean parseOptionalBoolean(String value, String name) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
+            return Boolean.parseBoolean(value);
+        }
+        throw new AwsException("InvalidParameterValue", name + " is not a valid boolean.", 400);
+    }
+
+    // DescribeLaunchConfigurations' own response shape for the field this
+    // mirrors: real AWS returns an empty BlockDeviceMappings list when none
+    // were configured, matching what CreateLaunchConfiguration was given -
+    // never omits it, so a caller round-trips exactly what it sent (real
+    // AWS's "By default, the block devices specified in the block device
+    // mapping for the AMI are used" note describes what gets attached at
+    // INSTANCE launch time, not what this call's own BlockDeviceMappings
+    // list carries back).
+    private String launchConfigurationBlockDeviceMappingsXml(
+            List<io.github.hectorvent.floci.services.ec2.model.BlockDeviceMapping> mappings) {
+        XmlBuilder xml = new XmlBuilder().start("BlockDeviceMappings");
+        if (mappings != null) {
+            for (var mapping : mappings) {
+                xml.start("member");
+                if (mapping.getVirtualName() != null) { xml.elem("VirtualName", mapping.getVirtualName()); }
+                if (mapping.getDeviceName() != null) { xml.elem("DeviceName", mapping.getDeviceName()); }
+                var ebs = mapping.getEbs();
+                if (ebs != null) {
+                    xml.start("Ebs");
+                    if (ebs.getSnapshotId() != null) { xml.elem("SnapshotId", ebs.getSnapshotId()); }
+                    if (ebs.getVolumeSize() != null) { xml.elem("VolumeSize", String.valueOf(ebs.getVolumeSize())); }
+                    if (ebs.getVolumeType() != null) { xml.elem("VolumeType", ebs.getVolumeType()); }
+                    if (ebs.getDeleteOnTermination() != null) {
+                        xml.elem("DeleteOnTermination", String.valueOf(ebs.getDeleteOnTermination()));
+                    }
+                    if (ebs.getIops() != null) { xml.elem("Iops", String.valueOf(ebs.getIops())); }
+                    if (ebs.getEncrypted() != null) { xml.elem("Encrypted", String.valueOf(ebs.getEncrypted())); }
+                    if (ebs.getThroughput() != null) { xml.elem("Throughput", String.valueOf(ebs.getThroughput())); }
+                    xml.end("Ebs");
+                }
+                xml.end("member");
+            }
+        }
+        xml.end("BlockDeviceMappings");
+        return xml.build();
+    }
 
     private List<String> memberList(MultivaluedMap<String, String> p, String prefix) {
         List<String> result = new ArrayList<>();
