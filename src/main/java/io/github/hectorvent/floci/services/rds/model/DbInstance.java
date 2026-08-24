@@ -43,6 +43,13 @@ public class DbInstance {
     private Map<String, String> tags = new LinkedHashMap<>();
     private Instant createdAt;
     private int proxyPort;
+    // lex00/floci#124: the literal address the internal proxy's ServerSocket binds to. Null
+    // means "the default/shared host" (today's behavior: bind on the wildcard address, report
+    // proxyEndpointHost()'s value). Non-null only when a genuine same-port collision with
+    // another instance forced this instance onto its own distinct loopback alias (127.0.0.x) so
+    // both instances can honor their identical requested port without one silently reaching the
+    // other's real listener. See RdsService.allocateProxyEndpoint().
+    private String proxyBindHost;
 
     // AWS always returns these in DescribeDBInstances, defaulted to match AWS's own
     // CreateDBInstance defaults when the request omits them.
@@ -188,6 +195,8 @@ public class DbInstance {
 
     public int getProxyPort() { return proxyPort; }
     public void setProxyPort(int proxyPort) { this.proxyPort = proxyPort; }
+    public String getProxyBindHost() { return proxyBindHost; }
+    public void setProxyBindHost(String proxyBindHost) { this.proxyBindHost = proxyBindHost; }
 
     public String getDockerVolumeName() { return dockerVolumeName; }
     public void setDockerVolumeName(String dockerVolumeName) { this.dockerVolumeName = dockerVolumeName; }

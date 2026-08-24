@@ -168,10 +168,24 @@ class RdsJdbcCompatTest {
                     .enableIAMDatabaseAuthentication(false)
                     .build());
 
+            // lex00/floci#124: this instance requests no explicit port, so it defaults to
+            // Postgres's standard 5432 - the same port the IAM-enabled instance from the first
+            // test already holds a real listener on. Real AWS never collides here (every
+            // instance is its own isolated network endpoint), so the ONLY AWS-faithful way to
+            // reach the RIGHT instance is by dialing the exact (address, port) this instance's
+            // own DescribeDBInstances/CreateDBInstance response reports - never a host
+            // hardcoded from a different instance's connection info. This is deliberately NOT
+            // TestFixtures.proxyHost() (see openPostgresConnection(String, String, String, int)):
+            // that fixed host is where the FIRST (IAM-enabled) instance's real listener lives,
+            // so dialing it here would silently re-test the wrong instance and mask exactly the
+            // wrong-instance regression lex00/floci#125 introduced and f1b2520c reverted.
+            String noIamHost = response.dbInstance().endpoint().address();
             Integer noIamPort = response.dbInstance().endpoint().port();
+            assertThat(noIamPort).as("a genuine same-port collision must never silently "
+                    + "reassign the declared port").isEqualTo(POSTGRES_DEFAULT_PORT);
 
             String token = rds.utilities().generateAuthenticationToken(GenerateAuthenticationTokenRequest.builder()
-                    .hostname(TestFixtures.proxyHost())
+                    .hostname(noIamHost)
                     .port(noIamPort)
                     .username(USERNAME)
                     .region(REGION)
@@ -181,7 +195,7 @@ class RdsJdbcCompatTest {
             // Non-IAM instance rejects IAM tokens. The rejection may happen at the
             // PostgreSQL auth layer ("password authentication failed") or at the TCP
             // level if the proxy doesn't forward non-IAM connections ("connection attempt failed").
-            assertThatThrownBy(() -> openPostgresConnection(USERNAME, token, noIamPort))
+            assertThatThrownBy(() -> openPostgresConnection(noIamHost, USERNAME, token, noIamPort))
                     .isInstanceOf(SQLException.class);
         } finally {
             try {
@@ -376,13 +390,26 @@ class RdsJdbcCompatTest {
     }
 
     private static Connection openPostgresConnection(String username, String password, int port) throws SQLException {
+        return openPostgresConnection(TestFixtures.proxyHost(), username, password, port);
+    }
+
+    /**
+     * lex00/floci#124: unlike every other connection helper here (which assumes every instance
+     * shares {@link TestFixtures#proxyHost()}, true only when there's no port collision), this
+     * overload dials the EXACT address DescribeDBInstances/CreateDBInstance reported for a
+     * specific instance - the only way to reach a same-port-collision fallback instance (one
+     * bound to its own distinct loopback alias) rather than whichever instance happens to hold
+     * the shared default host on that port.
+     */
+    private static Connection openPostgresConnection(String host, String username, String password, int port)
+            throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", username);
         properties.setProperty("password", password);
         properties.setProperty("sslmode", "disable");
         properties.setProperty("connectTimeout", "5");
         return DriverManager.getConnection(
-                "jdbc:postgresql://" + TestFixtures.proxyHost() + ":" + port + "/" + DATABASE,
+                "jdbc:postgresql://" + host + ":" + port + "/" + DATABASE,
                 properties);
     }
 

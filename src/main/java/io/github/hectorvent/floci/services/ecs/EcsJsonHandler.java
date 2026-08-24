@@ -1495,9 +1495,14 @@ public class EcsJsonHandler {
             dc.put("type", s.getDeploymentController());
             n.set("deploymentController", dc);
         }
-        if (s.getServiceConnectConfiguration() != null) {
-            n.set("serviceConnectConfiguration", objectMapper.valueToTree(s.getServiceConnectConfiguration()));
-        }
+        // serviceConnectConfiguration is intentionally NOT echoed here: AWS's own Service shape
+        // has no top-level serviceConnectConfiguration member (verified against both botocore's
+        // and the AWS SDK for Java v2's ECS models) - it lives only on each deployments[] entry
+        // (and on ServiceRevision). See deploymentNode() below, fed from
+        // EcsServiceModel.serviceConnectConfiguration via deploymentsFor(). A real AWS client
+        // (and Terraform's provider, generated from the same model) silently drops an
+        // unmodeled field at this location, so putting it here reads as permanent drift even
+        // though the wire JSON "has" it.
         if (s.getTags() != null && !s.getTags().isEmpty()) {
             n.set("tags", tagsNode(s.getTags()));
         }
@@ -1561,6 +1566,9 @@ public class EcsJsonHandler {
         if (d.getLaunchType() != null) { n.put("launchType", d.getLaunchType().name()); }
         if (d.getCreatedAt() != null) { n.put("createdAt", d.getCreatedAt().toEpochMilli() / 1000.0); }
         if (d.getUpdatedAt() != null) { n.put("updatedAt", d.getUpdatedAt().toEpochMilli() / 1000.0); }
+        if (d.getServiceConnectConfiguration() != null) {
+            n.set("serviceConnectConfiguration", objectMapper.valueToTree(d.getServiceConnectConfiguration()));
+        }
         return n;
     }
 
