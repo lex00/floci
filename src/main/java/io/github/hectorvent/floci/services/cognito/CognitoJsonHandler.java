@@ -732,7 +732,7 @@ public class CognitoJsonHandler {
         node.put("CreationDate", (double) p.getCreationDate());
         node.put("LastModifiedDate", (double) p.getLastModifiedDate());
 
-        node.set("Policies", objectMapper.valueToTree(p.getPolicies() != null ? p.getPolicies() : new HashMap<>()));
+        node.set("Policies", objectMapper.valueToTree(withDefaultPolicies(p.getPolicies())));
         node.put("DeletionProtection", p.getDeletionProtection() != null ? p.getDeletionProtection() : "INACTIVE");
         node.set("LambdaConfig", objectMapper.valueToTree(p.getLambdaConfig() != null ? p.getLambdaConfig() : new HashMap<>()));
         node.set("SchemaAttributes", objectMapper.valueToTree(CognitoStandardAttributes.merge(p.getSchemaAttributes())));
@@ -744,23 +744,86 @@ public class CognitoJsonHandler {
         if (p.getEmailVerificationMessage() != null) node.put("EmailVerificationMessage", p.getEmailVerificationMessage());
         if (p.getEmailVerificationSubject() != null) node.put("EmailVerificationSubject", p.getEmailVerificationSubject());
 
-        node.set("VerificationMessageTemplate", objectMapper.valueToTree(p.getVerificationMessageTemplate() != null ? p.getVerificationMessageTemplate() : new HashMap<>()));
+        node.set("VerificationMessageTemplate", objectMapper.valueToTree(withDefaultVerificationMessageTemplate(p.getVerificationMessageTemplate())));
 
         if (p.getSmsAuthenticationMessage() != null) node.put("SmsAuthenticationMessage", p.getSmsAuthenticationMessage());
 
         node.put("MfaConfiguration", p.getMfaConfiguration() != null ? p.getMfaConfiguration() : "OFF");
-        node.set("DeviceConfiguration", objectMapper.valueToTree(p.getDeviceConfiguration() != null ? p.getDeviceConfiguration() : new HashMap<>()));
+        // Real AWS never mentions these opt-in feature blocks in
+        // Create/DescribeUserPoolOutput until the caller actually
+        // configures one - the key itself is absent, not present with an
+        // empty object. Returning {} for an unconfigured block gives the
+        // terraform-provider-aws flattener a non-nil, single-element list
+        // to put in state that config never asked for, which every
+        // subsequent plan then proposes to remove - a permanent, spurious
+        // diff (gauntlet-choudoufu corpus-alb-complete/test_plan, family 4,
+        // confirmed against real AWS us-east-2 2026-08-24).
+        setIfConfigured(node, "DeviceConfiguration", p.getDeviceConfiguration());
         node.put("EstimatedNumberOfUsers", p.getEstimatedNumberOfUsers());
-        node.set("EmailConfiguration", objectMapper.valueToTree(p.getEmailConfiguration() != null ? p.getEmailConfiguration() : new HashMap<>()));
-        node.set("SmsConfiguration", objectMapper.valueToTree(p.getSmsConfiguration() != null ? p.getSmsConfiguration() : new HashMap<>()));
-        node.set("UserPoolTags", objectMapper.valueToTree(p.getUserPoolTags() != null ? p.getUserPoolTags() : new HashMap<>()));
-        node.set("AdminCreateUserConfig", objectMapper.valueToTree(p.getAdminCreateUserConfig() != null ? p.getAdminCreateUserConfig() : new HashMap<>()));
-        node.set("UserPoolAddOns", objectMapper.valueToTree(p.getUserPoolAddOns() != null ? p.getUserPoolAddOns() : new HashMap<>()));
-        node.set("UsernameConfiguration", objectMapper.valueToTree(p.getUsernameConfiguration() != null ? p.getUsernameConfiguration() : new HashMap<>()));
-        node.set("AccountRecoverySetting", objectMapper.valueToTree(p.getAccountRecoverySetting() != null ? p.getAccountRecoverySetting() : new HashMap<>()));
+        node.set("EmailConfiguration", objectMapper.valueToTree(withDefaultEmailConfiguration(p.getEmailConfiguration())));
+        setIfConfigured(node, "SmsConfiguration", p.getSmsConfiguration());
+        setIfConfigured(node, "UserPoolTags", p.getUserPoolTags());
+        node.set("AdminCreateUserConfig", objectMapper.valueToTree(withDefaultAdminCreateUserConfig(p.getAdminCreateUserConfig())));
+        setIfConfigured(node, "UserPoolAddOns", p.getUserPoolAddOns());
+        setIfConfigured(node, "UsernameConfiguration", p.getUsernameConfiguration());
+        node.set("AccountRecoverySetting", objectMapper.valueToTree(withDefaultAccountRecoverySetting(p.getAccountRecoverySetting())));
         node.put("UserPoolTier", p.getUserPoolTier() != null ? p.getUserPoolTier() : "ESSENTIALS");
 
         return node;
+    }
+
+    /** Sets {@code key} on {@code node} only when {@code value} actually carries something - see the comment above the DeviceConfiguration call site. */
+    private void setIfConfigured(ObjectNode node, String key, Map<String, ?> value) {
+        if (value != null && !value.isEmpty()) {
+            node.set(key, objectMapper.valueToTree(value));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> withDefaultPolicies(Map<String, Object> policies) {
+        Map<String, Object> merged = policies != null ? new HashMap<>(policies) : new HashMap<>();
+        Map<String, Object> passwordPolicy = merged.containsKey("PasswordPolicy")
+                ? new HashMap<>((Map<String, Object>) merged.get("PasswordPolicy")) : new HashMap<>();
+        passwordPolicy.putIfAbsent("MinimumLength", 8);
+        passwordPolicy.putIfAbsent("RequireUppercase", true);
+        passwordPolicy.putIfAbsent("RequireLowercase", true);
+        passwordPolicy.putIfAbsent("RequireNumbers", true);
+        passwordPolicy.putIfAbsent("RequireSymbols", true);
+        passwordPolicy.putIfAbsent("TemporaryPasswordValidityDays", 7);
+        merged.put("PasswordPolicy", passwordPolicy);
+
+        Map<String, Object> signInPolicy = merged.containsKey("SignInPolicy")
+                ? new HashMap<>((Map<String, Object>) merged.get("SignInPolicy")) : new HashMap<>();
+        signInPolicy.putIfAbsent("AllowedFirstAuthFactors", List.of("PASSWORD"));
+        merged.put("SignInPolicy", signInPolicy);
+        return merged;
+    }
+
+    private Map<String, Object> withDefaultVerificationMessageTemplate(Map<String, Object> template) {
+        Map<String, Object> merged = template != null ? new HashMap<>(template) : new HashMap<>();
+        merged.putIfAbsent("DefaultEmailOption", "CONFIRM_WITH_CODE");
+        return merged;
+    }
+
+    private Map<String, Object> withDefaultEmailConfiguration(Map<String, Object> emailConfiguration) {
+        Map<String, Object> merged = emailConfiguration != null ? new HashMap<>(emailConfiguration) : new HashMap<>();
+        merged.putIfAbsent("EmailSendingAccount", "COGNITO_DEFAULT");
+        return merged;
+    }
+
+    private Map<String, Object> withDefaultAdminCreateUserConfig(Map<String, Object> adminCreateUserConfig) {
+        Map<String, Object> merged = adminCreateUserConfig != null ? new HashMap<>(adminCreateUserConfig) : new HashMap<>();
+        merged.putIfAbsent("AllowAdminCreateUserOnly", false);
+        merged.putIfAbsent("UnusedAccountValidityDays", 7);
+        return merged;
+    }
+
+    private Map<String, Object> withDefaultAccountRecoverySetting(Map<String, Object> accountRecoverySetting) {
+        Map<String, Object> merged = accountRecoverySetting != null ? new HashMap<>(accountRecoverySetting) : new HashMap<>();
+        merged.putIfAbsent("RecoveryMechanisms", List.of(
+                Map.of("Priority", 1, "Name", "verified_email"),
+                Map.of("Priority", 2, "Name", "verified_phone_number")));
+        return merged;
     }
 
     private ObjectNode clientToDescriptionNode(UserPoolClient c) {
