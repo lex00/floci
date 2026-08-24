@@ -1527,6 +1527,7 @@ public class EcsService implements ContainerTeardown {
         d.setRolloutStateReason("ECS deployment " + deploymentId
                 + (converged ? " completed." : " in progress."));
         d.setLaunchType(svc.getLaunchType());
+        d.setServiceConnectConfiguration(svc.getServiceConnectConfiguration());
         // The deployment's own start time, not the service's: a task-definition change mints a
         // new deployment id, so reporting service creation here would contradict it. Older
         // persisted services predate the field and fall back to the service creation time.

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.nullValue;
 
 /**
  * Regression coverage for lex00/floci#59 and lex00/floci#60: fields accepted on
@@ -176,8 +177,19 @@ class EcsCreateFieldRoundtripIntegrationTest {
                         equalTo("arn:aws:iam::000000000000:role/ecs-blue-green"));
     }
 
+    /**
+     * AWS's own {@code Service} shape has no top-level {@code serviceConnectConfiguration}
+     * member - confirmed against both botocore's and the AWS SDK for Java v2's ECS models. It
+     * lives only on each {@code deployments[]} entry (and on {@code ServiceRevision}). A real
+     * client parsing strictly against that shape (the AWS CLI/botocore, the AWS SDKs,
+     * Terraform's provider) silently drops the field wherever floci previously put it
+     * (top-level on the Service object), which read as permanent drift even though the raw
+     * wire JSON technically "had" it. This asserts the field is at the real, documented
+     * location - and that it is NOT also duplicated at the wrong (former) location, which
+     * would regress the drift for any client that also validates absence there.
+     */
     @Test
-    void createServiceRoundTripsServiceConnectConfiguration() {
+    void createServiceRoundTripsServiceConnectConfigurationOnDeployments() {
         seedClusterAndTaskDef("ci-svc-cluster-5", "ci-svc-td-5");
 
         String body = "{\"cluster\":\"ci-svc-cluster-5\",\"serviceName\":\"ci-svc-5\","
@@ -187,19 +199,24 @@ class EcsCreateFieldRoundtripIntegrationTest {
                 + "\"clientAliases\":[{\"port\":80,\"dnsName\":\"web.internal\"}]}]}}";
 
         call("CreateService", body).then()
-                .body("service.serviceConnectConfiguration.enabled", equalTo(true))
-                .body("service.serviceConnectConfiguration.namespace", equalTo("internal"))
-                .body("service.serviceConnectConfiguration.services[0].portName", equalTo("web"))
-                .body("service.serviceConnectConfiguration.services[0].discoveryName", equalTo("web-svc"))
-                .body("service.serviceConnectConfiguration.services[0].clientAliases[0].port", equalTo(80))
-                .body("service.serviceConnectConfiguration.services[0].clientAliases[0].dnsName",
+                .body("service.serviceConnectConfiguration", nullValue())
+                .body("service.deployments[0].serviceConnectConfiguration.enabled", equalTo(true))
+                .body("service.deployments[0].serviceConnectConfiguration.namespace", equalTo("internal"))
+                .body("service.deployments[0].serviceConnectConfiguration.services[0].portName", equalTo("web"))
+                .body("service.deployments[0].serviceConnectConfiguration.services[0].discoveryName",
+                        equalTo("web-svc"))
+                .body("service.deployments[0].serviceConnectConfiguration.services[0].clientAliases[0].port",
+                        equalTo(80))
+                .body("service.deployments[0].serviceConnectConfiguration.services[0].clientAliases[0].dnsName",
                         equalTo("web.internal"));
 
         call("DescribeServices", "{\"cluster\":\"ci-svc-cluster-5\",\"services\":[\"ci-svc-5\"]}").then()
-                .body("services[0].serviceConnectConfiguration.enabled", equalTo(true))
-                .body("services[0].serviceConnectConfiguration.namespace", equalTo("internal"))
-                .body("services[0].serviceConnectConfiguration.services[0].discoveryName", equalTo("web-svc"))
-                .body("services[0].serviceConnectConfiguration.services[0].clientAliases[0].dnsName",
+                .body("services[0].serviceConnectConfiguration", nullValue())
+                .body("services[0].deployments[0].serviceConnectConfiguration.enabled", equalTo(true))
+                .body("services[0].deployments[0].serviceConnectConfiguration.namespace", equalTo("internal"))
+                .body("services[0].deployments[0].serviceConnectConfiguration.services[0].discoveryName",
+                        equalTo("web-svc"))
+                .body("services[0].deployments[0].serviceConnectConfiguration.services[0].clientAliases[0].dnsName",
                         equalTo("web.internal"));
     }
 }

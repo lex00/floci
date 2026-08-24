@@ -28,15 +28,57 @@ public class RdsProxyManager {
                            int proxyPort, String backendHost, int backendPort,
                            String masterUsername, String masterPassword, String dbName,
                            RdsAuthProxy.PasswordValidator passwordValidator) {
+        startProxy(instanceId, engine, iamEnabled, null, proxyPort, backendHost, backendPort,
+                masterUsername, masterPassword, dbName, passwordValidator);
+    }
+
+    /**
+     * Strict bind - {@code bindHost} is used exactly as given with no fallback. Use for
+     * lex00/floci#124's same-port-collision loopback-alias fallback, where silently falling
+     * back to the wildcard address on failure would be unsafe (see
+     * {@link RdsAuthProxy#start(String, int)}).
+     *
+     * @param bindHost see {@link RdsAuthProxy#start(String, int)}; null/blank for the wildcard bind.
+     */
+    public void startProxy(String instanceId, DatabaseEngine engine, boolean iamEnabled,
+                           String bindHost, int proxyPort, String backendHost, int backendPort,
+                           String masterUsername, String masterPassword, String dbName,
+                           RdsAuthProxy.PasswordValidator passwordValidator) {
         RdsAuthProxy proxy = new RdsAuthProxy(
                 instanceId, backendHost, backendPort, engine, iamEnabled,
                 masterUsername, masterPassword, dbName, sigV4Validator, passwordValidator);
         try {
-            proxy.start(proxyPort);
+            proxy.start(bindHost, proxyPort);
             proxies.put(instanceId, proxy);
         } catch (IOException e) {
             throw new RuntimeException("Failed to start RDS proxy for instance " + instanceId
-                    + " on port " + proxyPort, e);
+                    + " on " + (bindHost == null || bindHost.isBlank() ? "*" : bindHost)
+                    + ":" + proxyPort, e);
+        }
+    }
+
+    /**
+     * Bind preferring {@code bindHost}, falling back to the wildcard address if that specific
+     * address can't actually be bound locally. Use for the ordinary, non-colliding proxy start -
+     * see {@link RdsAuthProxy#startPreferring(String, int)}.
+     *
+     * @param bindHost see {@link RdsAuthProxy#startPreferring(String, int)}; null/blank goes
+     *                 straight to the wildcard bind.
+     */
+    public void startProxyPreferring(String instanceId, DatabaseEngine engine, boolean iamEnabled,
+                           String bindHost, int proxyPort, String backendHost, int backendPort,
+                           String masterUsername, String masterPassword, String dbName,
+                           RdsAuthProxy.PasswordValidator passwordValidator) {
+        RdsAuthProxy proxy = new RdsAuthProxy(
+                instanceId, backendHost, backendPort, engine, iamEnabled,
+                masterUsername, masterPassword, dbName, sigV4Validator, passwordValidator);
+        try {
+            proxy.startPreferring(bindHost, proxyPort);
+            proxies.put(instanceId, proxy);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to start RDS proxy for instance " + instanceId
+                    + " on " + (bindHost == null || bindHost.isBlank() ? "*" : bindHost)
+                    + ":" + proxyPort, e);
         }
     }
 

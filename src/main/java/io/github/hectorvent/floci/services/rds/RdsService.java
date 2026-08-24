@@ -95,6 +95,11 @@ public class RdsService implements Resettable {
     private final DockerHostResolver dockerHostResolver;
     private final CurrentContainerNetworkResolver currentContainerNetworkResolver;
     private final Set<Integer> usedPorts = ConcurrentHashMap.newKeySet();
+    // lex00/floci#124: distinct loopback bind-address pool for the same-port-collision
+    // fallback. See allocateProxyEndpoint()'s doc comment.
+    private final Set<String> usedBindHosts = ConcurrentHashMap.newKeySet();
+    private final java.util.concurrent.atomic.AtomicInteger nextLoopbackAliasOctet =
+            new java.util.concurrent.atomic.AtomicInteger(2);
     private static final Pattern IMAGE_TAG_VERSION_PATTERN = Pattern.compile("^(\\d+(?:\\.\\d+)*)(.*)$");
     private static final Pattern SAFE_IMAGE_TAG_PATTERN = Pattern.compile("[A-Za-z0-9._-]+");
 
@@ -178,6 +183,7 @@ public class RdsService implements Resettable {
 
     public void clear() {
         usedPorts.clear();
+        usedBindHosts.clear();
     }
 
     // ── DB Instances ──────────────────────────────────────────────────────────
@@ -396,8 +402,8 @@ public class RdsService implements Resettable {
         }
 
         if (!mock && hasBackend(backendHost, backendPort)) {
-            proxyManager.startProxy(id, engine, iamEnabled, proxyPort, backendHost, backendPort,
-                    masterUsername, masterPassword, dbName,
+            proxyManager.startProxyPreferring(id, engine, iamEnabled, defaultProxyBindHost(), proxyPort,
+                    backendHost, backendPort, masterUsername, masterPassword, dbName,
                     (user, pw) -> validateDbPassword(id, user, pw));
         }
 
@@ -539,19 +545,137 @@ public class RdsService implements Resettable {
         }
         boolean mock = config.services().rds().mock();
         int oldPort = instance.getProxyPort();
-        int newPort = allocateProxyPort(requestedPort);
+        String oldBindHost = instance.getProxyBindHost();
+        ProxyEndpointAllocation allocation = allocateProxyEndpoint(requestedPort);
         if (!mock && hasBackend(instance.getContainerHost(), instance.getContainerPort())) {
             proxyManager.stopProxy(id);
+            try {
+                startInstanceProxy(id, instance, allocation);
+            } catch (RuntimeException e) {
+                if (allocation.bindHost() == null) {
+                    throw e;
+                }
+                // lex00/floci#124: the freshly allocated loopback alias genuinely couldn't be
+                // bound (e.g. a platform, like bare macOS, that doesn't auto-alias 127.0.0.0/8
+                // the way Linux - the real container's OS - does). Falling back to the wildcard
+                // address here would be unsafe (see RdsAuthProxy#start's doc comment), so
+                // instead this degrades to the pre-#124 safe behavior: a genuinely different
+                // PORT on the shared default host, rather than leaving the instance half-broken.
+                LOG.warnv("Same-port-collision loopback bind failed for instance {0} on {1}:{2} "
+                        + "({3}); falling back to a different port on the shared host instead of "
+                        + "the requested one.", id, allocation.bindHost(),
+                        String.valueOf(allocation.port()), e.getMessage());
+                releaseBindHost(allocation.bindHost());
+                int fallbackPort = allocateProxyPort(null);
+                allocation = new ProxyEndpointAllocation(null, fallbackPort);
+                startInstanceProxy(id, instance, allocation);
+            }
+        }
+        if (oldBindHost != null) {
+            releaseBindHost(oldBindHost);
+        } else {
+            releaseProxyPort(oldPort);
+        }
+        instance.setProxyPort(allocation.port());
+        instance.setProxyBindHost(allocation.bindHost());
+        instance.setEndpoint(mock ? new DbEndpoint(allocation.bindHost() != null ? allocation.bindHost() : "localhost",
+                allocation.port()) : proxyEndpoint(allocation.bindHost(), allocation.port()));
+        instances.put(id, instance);
+        return instance;
+    }
+
+    /**
+     * Starts (or restarts) an instance's real proxy listener for the given allocation.
+     * {@code allocation.bindHost() == null} is the ordinary, non-colliding case: preferring the
+     * resolved default address (falling back to the wildcard bind if that's not actually
+     * bindable locally - see {@link RdsAuthProxy#startPreferring}) so the wildcard doesn't
+     * needlessly occupy every address on that port for a LATER colliding instance.
+     * {@code allocation.bindHost() != null} is lex00/floci#124's same-port-collision fallback: a
+     * strict bind (no wildcard fallback - see {@link RdsAuthProxy#start(String, int)}) to the
+     * instance's own distinct loopback alias.
+     */
+    private void startInstanceProxy(String id, DbInstance instance, ProxyEndpointAllocation allocation) {
+        if (allocation.bindHost() != null) {
             proxyManager.startProxy(id, instance.getEngine(), instance.isIamDatabaseAuthenticationEnabled(),
-                    newPort, instance.getContainerHost(), instance.getContainerPort(),
+                    allocation.bindHost(), allocation.port(), instance.getContainerHost(),
+                    instance.getContainerPort(),
+                    instance.getMasterUsername(), instance.getMasterPassword(), instance.getDbName(),
+                    (user, pw) -> validateDbPassword(id, user, pw));
+        } else {
+            proxyManager.startProxyPreferring(id, instance.getEngine(),
+                    instance.isIamDatabaseAuthenticationEnabled(), defaultProxyBindHost(), allocation.port(),
+                    instance.getContainerHost(), instance.getContainerPort(),
                     instance.getMasterUsername(), instance.getMasterPassword(), instance.getDbName(),
                     (user, pw) -> validateDbPassword(id, user, pw));
         }
-        releaseProxyPort(oldPort);
-        instance.setProxyPort(newPort);
-        instance.setEndpoint(mock ? new DbEndpoint("localhost", newPort) : proxyEndpoint(newPort));
-        instances.put(id, instance);
-        return instance;
+    }
+
+    /**
+     * A (bindHost, port) pair for a proxy's real listener. {@code bindHost} is null for the
+     * common case (the default/shared host every other instance also uses); non-null only for
+     * lex00/floci#124's same-port-collision fallback below.
+     */
+    private record ProxyEndpointAllocation(String bindHost, int port) { }
+
+    // lex00/floci#124: round 5's fix (51a17134) honored a second instance's explicitly-
+    // requested port in the DECLARED Endpoint.Port while its REAL listener stayed on whatever
+    // port allocateProxyPort's range-scan fallback picked - decoupling the two. Round 6 reverted
+    // that (f1b2520c): RdsJdbcCompatTest.iamAuthRejectedWhenDisabledAtCreate caught a real
+    // instance mix-up, because a client trusting the declared port silently reached the FIRST
+    // instance's real listener instead of the second's.
+    //
+    // Real AWS never has this collision at all: every RDS instance gets its own distinct
+    // network address, so two instances requesting the identical port (the common case - most
+    // engines' own examples, and terraform-aws-modules/terraform-aws-rds's own
+    // "complete-postgres" example among them, just hardcode the engine's standard port on every
+    // instance) never actually contend for one (address, port) pair. floci's shared-host proxy
+    // can't fake a distinct address on the *default* host - that's a single value shared by
+    // every instance (config.services().rds().endpointHost(), or dockerHostResolver otherwise)
+    // - but on a genuine collision it can give the colliding instance its own distinct address
+    // on the one address family that's always available inside the container's own network
+    // namespace, independent of Docker's port-publishing model: 127.0.0.0/8 is entirely
+    // loopback, so a second, third, ... instance can bind the SAME requested port again on
+    // 127.0.0.2, 127.0.0.3, etc., without either one racing the other for the literal socket.
+    // This keeps round 6's safety property: the returned bindHost is always where the real
+    // listener for THIS id actually lives, and it's what proxyEndpoint() below reports as
+    // Endpoint.Address, so a client dialing the exact (address, port)
+    // DescribeDBInstances/CreateDBInstance hands back reaches this instance and only this
+    // instance - never the collision partner's.
+    //
+    // Boundary this does NOT resolve: reachability from outside floci's own network namespace
+    // over Docker's default single/ranged `-p` port publishing. Docker's NAT for `-p` always
+    // forwards to the container's own primary interface address, never to an arbitrary loopback
+    // alias inside that namespace, so a bridge-networked Docker deployment relying on the
+    // generic port-range mapping cannot reach 127.0.0.x from the host without its own explicit
+    // per-alias `-p 127.0.0.x:<port>:<port>` mapping declared at container-start time (
+    // impractical for instances created dynamically after the container is already running) or
+    // `--network host`. This fix corrects the emulator's own
+    // DescribeDBInstances/CreateDBInstance metadata (Endpoint.Port is always the literal
+    // request, never silently reassigned) and real connect+isolation for any client that shares
+    // floci's network namespace (a bare/native floci process - the common dev/CI case - or a
+    // `--network host`/sidecar Docker deployment); it does not, by itself, make the fallback
+    // address reachable through a bridge-networked container's default port publishing.
+    private ProxyEndpointAllocation allocateProxyEndpoint(int requestedPort) {
+        if (usedPorts.add(requestedPort)) {
+            return new ProxyEndpointAllocation(null, requestedPort);
+        }
+        return new ProxyEndpointAllocation(allocateLoopbackBindHost(), requestedPort);
+    }
+
+    private String allocateLoopbackBindHost() {
+        while (true) {
+            int octet = nextLoopbackAliasOctet.getAndUpdate(o -> o >= 254 ? 2 : o + 1);
+            String host = "127.0.0." + octet;
+            if (usedBindHosts.add(host)) {
+                return host;
+            }
+        }
+    }
+
+    private void releaseBindHost(String host) {
+        if (host != null) {
+            usedBindHosts.remove(host);
+        }
     }
 
     public Map<String, String> listTagsForResource(String resourceName) {
@@ -803,11 +927,22 @@ public class RdsService implements Resettable {
             if (hasBackend(instance.getContainerHost(), instance.getContainerPort())) {
                 String effectiveMasterUser = instance.getMasterUsername() != null
                         ? instance.getMasterUsername() : "root";
-                proxyManager.startProxy(id, instance.getEngine(),
-                        instance.isIamDatabaseAuthenticationEnabled(),
-                        instance.getProxyPort(), instance.getContainerHost(), instance.getContainerPort(),
-                        effectiveMasterUser, instance.getMasterPassword(), instance.getDbName(),
-                        (user, pw) -> validateDbPassword(id, user, pw));
+                // Reboot restarts the SAME listener the instance already had - preserve
+                // whatever bind mode it was using (a lex00/floci#124 loopback alias, or the
+                // ordinary default) rather than deciding fresh.
+                if (instance.getProxyBindHost() != null) {
+                    proxyManager.startProxy(id, instance.getEngine(),
+                            instance.isIamDatabaseAuthenticationEnabled(), instance.getProxyBindHost(),
+                            instance.getProxyPort(), instance.getContainerHost(), instance.getContainerPort(),
+                            effectiveMasterUser, instance.getMasterPassword(), instance.getDbName(),
+                            (user, pw) -> validateDbPassword(id, user, pw));
+                } else {
+                    proxyManager.startProxyPreferring(id, instance.getEngine(),
+                            instance.isIamDatabaseAuthenticationEnabled(), defaultProxyBindHost(),
+                            instance.getProxyPort(), instance.getContainerHost(), instance.getContainerPort(),
+                            effectiveMasterUser, instance.getMasterPassword(), instance.getDbName(),
+                            (user, pw) -> validateDbPassword(id, user, pw));
+                }
             } else {
                 // No backing container — created or last rebooted while no daemon was reachable.
                 instance = ensureInstanceBackend(id);
@@ -870,11 +1005,21 @@ public class RdsService implements Resettable {
 
         String effectiveMasterUser = instance.getMasterUsername() != null
                 ? instance.getMasterUsername() : "root";
-        proxyManager.startProxy(id, instance.getEngine(),
-                instance.isIamDatabaseAuthenticationEnabled(), instance.getProxyPort(),
-                instance.getContainerHost(), instance.getContainerPort(), effectiveMasterUser,
-                instance.getMasterPassword(), instance.getDbName(),
-                (user, pw) -> validateDbPassword(id, user, pw));
+        // Preserve whatever bind mode this instance was already using (a lex00/floci#124
+        // loopback alias, or the ordinary default) rather than deciding fresh.
+        if (instance.getProxyBindHost() != null) {
+            proxyManager.startProxy(id, instance.getEngine(),
+                    instance.isIamDatabaseAuthenticationEnabled(), instance.getProxyBindHost(),
+                    instance.getProxyPort(), instance.getContainerHost(), instance.getContainerPort(),
+                    effectiveMasterUser, instance.getMasterPassword(), instance.getDbName(),
+                    (user, pw) -> validateDbPassword(id, user, pw));
+        } else {
+            proxyManager.startProxyPreferring(id, instance.getEngine(),
+                    instance.isIamDatabaseAuthenticationEnabled(), defaultProxyBindHost(),
+                    instance.getProxyPort(), instance.getContainerHost(), instance.getContainerPort(),
+                    effectiveMasterUser, instance.getMasterPassword(), instance.getDbName(),
+                    (user, pw) -> validateDbPassword(id, user, pw));
+        }
         instances.put(id, instance);
         LOG.infov("Backing database container for DB instance {0} started on retry", id);
         return instance;
@@ -909,8 +1054,11 @@ public class RdsService implements Resettable {
 
         String effectiveMasterUser = cluster.getMasterUsername() != null
                 ? cluster.getMasterUsername() : "root";
-        proxyManager.startProxy(id, cluster.getEngine(),
-                cluster.isIamDatabaseAuthenticationEnabled(), cluster.getProxyPort(),
+        // lex00/floci#124: prefer a concrete bind address over the wildcard so this cluster's
+        // port doesn't needlessly block a later colliding DB instance from binding its own
+        // distinct loopback alias on the same port number (see defaultProxyBindHost()'s doc).
+        proxyManager.startProxyPreferring(id, cluster.getEngine(),
+                cluster.isIamDatabaseAuthenticationEnabled(), defaultProxyBindHost(), cluster.getProxyPort(),
                 cluster.getContainerHost(), cluster.getContainerPort(), effectiveMasterUser,
                 cluster.getMasterPassword(), cluster.getDatabaseName(),
                 (user, pw) -> validateDbClusterPassword(id, user, pw));
@@ -963,7 +1111,11 @@ public class RdsService implements Resettable {
             }
         }
 
-        releaseProxyPort(instance.getProxyPort());
+        if (instance.getProxyBindHost() != null) {
+            releaseBindHost(instance.getProxyBindHost());
+        } else {
+            releaseProxyPort(instance.getProxyPort());
+        }
         instances.delete(id);
         LOG.infov("DB instance {0} deleted", id);
     }
@@ -1041,7 +1193,8 @@ public class RdsService implements Resettable {
 
         if (!mock && hasBackend(cluster.getContainerHost(), cluster.getContainerPort())) {
             String effectiveMasterUser = masterUsername != null ? masterUsername : "root";
-            proxyManager.startProxy(id, engine, iamEnabled, proxyPort, cluster.getContainerHost(), cluster.getContainerPort(),
+            proxyManager.startProxyPreferring(id, engine, iamEnabled, defaultProxyBindHost(), proxyPort,
+                    cluster.getContainerHost(), cluster.getContainerPort(),
                     effectiveMasterUser, masterPassword, databaseName,
                     (user, pw) -> validateDbClusterPassword(id, user, pw));
         }
@@ -1583,6 +1736,18 @@ public class RdsService implements Resettable {
     }
 
     private DbEndpoint proxyEndpoint(int proxyPort) {
+        return proxyEndpoint(null, proxyPort);
+    }
+
+    private DbEndpoint proxyEndpoint(String bindHost, int proxyPort) {
+        if (bindHost != null && !bindHost.isBlank()) {
+            // lex00/floci#124: this instance's real listener lives specifically at this
+            // loopback alias (a same-port-collision fallback - see allocateProxyEndpoint()),
+            // not at the shared/default host, so THIS is the address that must be reported:
+            // it's the only one a client can dial and actually reach this instance rather than
+            // the collision partner holding the shared host.
+            return new DbEndpoint(bindHost, proxyPort);
+        }
         Optional<String> endpointHost = config.services().rds().endpointHost()
                 .filter(host -> !host.isBlank());
         if (endpointHost.isEmpty()) {
@@ -1597,6 +1762,21 @@ public class RdsService implements Resettable {
 
     private String proxyEndpointHost() {
         return dockerHostResolver != null ? dockerHostResolver.resolve() : "localhost";
+    }
+
+    /**
+     * lex00/floci#124: the concrete local address the ORDINARY (non-colliding) proxy path
+     * prefers to bind, instead of just always taking the wildcard address. It's exactly the
+     * same value {@link #proxyEndpoint} already reports as {@code Endpoint.Address} for this
+     * case, so the socket and the advertised address agree; {@link RdsAuthProxy#startPreferring}
+     * falls back to the wildcard bind automatically if this specific address turns out not to
+     * be one this process can actually bind (e.g. {@code host.docker.internal}, a DNS alias
+     * rather than a literal local interface, in the native-host fallback branch of
+     * {@code dockerHostResolver}).
+     */
+    private String defaultProxyBindHost() {
+        Optional<String> endpointHost = config.services().rds().endpointHost().filter(h -> !h.isBlank());
+        return endpointHost.orElseGet(this::proxyEndpointHost);
     }
 
     private void restoreClusters() {
@@ -1632,8 +1812,8 @@ public class RdsService implements Resettable {
                 if (handle != null) {
                     String effectiveMasterUser = cluster.getMasterUsername() != null
                             ? cluster.getMasterUsername() : "root";
-                    proxyManager.startProxy(cluster.getDbClusterIdentifier(), cluster.getEngine(),
-                            cluster.isIamDatabaseAuthenticationEnabled(), proxyPort,
+                    proxyManager.startProxyPreferring(cluster.getDbClusterIdentifier(), cluster.getEngine(),
+                            cluster.isIamDatabaseAuthenticationEnabled(), defaultProxyBindHost(), proxyPort,
                             handle.getHost(), handle.getPort(), effectiveMasterUser,
                             cluster.getMasterPassword(), cluster.getDatabaseName(),
                             (user, pw) -> validateDbClusterPassword(cluster.getDbClusterIdentifier(), user, pw));
@@ -1653,16 +1833,18 @@ public class RdsService implements Resettable {
             if (instance.getStatus() == DbInstanceStatus.DELETING) {
                 continue;
             }
+            String persistedBindHost = instance.getProxyBindHost();
             if (config.services().rds().mock()) {
-                int mockPort = reserveOrAllocateProxyPort(instance.getProxyPort());
+                int mockPort = reserveOrAllocateProxyPort(instance.getProxyPort(), persistedBindHost);
                 instance.setProxyPort(mockPort);
-                instance.setEndpoint(new DbEndpoint("localhost", mockPort));
+                instance.setEndpoint(new DbEndpoint(persistedBindHost != null ? persistedBindHost : "localhost",
+                        mockPort));
                 instance.setStatus(DbInstanceStatus.AVAILABLE);
                 continue;
             }
-            int proxyPort = reserveOrAllocateProxyPort(instance.getProxyPort());
+            int proxyPort = reserveOrAllocateProxyPort(instance.getProxyPort(), persistedBindHost);
             instance.setProxyPort(proxyPort);
-            instance.setEndpoint(proxyEndpoint(proxyPort));
+            instance.setEndpoint(proxyEndpoint(persistedBindHost, proxyPort));
             try {
                 String backendHost;
                 int backendPort;
@@ -1701,15 +1883,27 @@ public class RdsService implements Resettable {
                 if (hasBackend(backendHost, backendPort)) {
                     String effectiveMasterUser = instance.getMasterUsername() != null
                             ? instance.getMasterUsername() : "root";
-                    proxyManager.startProxy(instance.getDbInstanceIdentifier(), instance.getEngine(),
-                            instance.isIamDatabaseAuthenticationEnabled(), proxyPort,
-                            backendHost, backendPort, effectiveMasterUser,
-                            instance.getMasterPassword(), instance.getDbName(),
-                            (user, pw) -> validateDbPassword(instance.getDbInstanceIdentifier(), user, pw));
+                    if (persistedBindHost != null) {
+                        proxyManager.startProxy(instance.getDbInstanceIdentifier(), instance.getEngine(),
+                                instance.isIamDatabaseAuthenticationEnabled(), persistedBindHost, proxyPort,
+                                backendHost, backendPort, effectiveMasterUser,
+                                instance.getMasterPassword(), instance.getDbName(),
+                                (user, pw) -> validateDbPassword(instance.getDbInstanceIdentifier(), user, pw));
+                    } else {
+                        proxyManager.startProxyPreferring(instance.getDbInstanceIdentifier(), instance.getEngine(),
+                                instance.isIamDatabaseAuthenticationEnabled(), defaultProxyBindHost(), proxyPort,
+                                backendHost, backendPort, effectiveMasterUser,
+                                instance.getMasterPassword(), instance.getDbName(),
+                                (user, pw) -> validateDbPassword(instance.getDbInstanceIdentifier(), user, pw));
+                    }
                 }
                 instance.setStatus(DbInstanceStatus.AVAILABLE);
             } catch (Exception e) {
-                releaseProxyPort(proxyPort);
+                if (persistedBindHost != null) {
+                    releaseBindHost(persistedBindHost);
+                } else {
+                    releaseProxyPort(proxyPort);
+                }
                 LOG.warnv(e, "Failed to restore RDS instance {0}", instance.getDbInstanceIdentifier());
             }
         }
@@ -1734,6 +1928,22 @@ public class RdsService implements Resettable {
             return persistedPort;
         }
         return allocateProxyPort();
+    }
+
+    /**
+     * @param persistedBindHost non-null when this instance was a lex00/floci#124
+     *                          same-port-collision fallback before restart - its literal port
+     *                          lived (and still lives, since {@code usedBindHosts} starts empty
+     *                          on process restart) on this distinct loopback alias rather than
+     *                          in the shared global port pool, so it's reserved directly instead
+     *                          of going through {@code usedPorts}.
+     */
+    private int reserveOrAllocateProxyPort(int persistedPort, String persistedBindHost) {
+        if (persistedBindHost != null && persistedPort > 0) {
+            usedBindHosts.add(persistedBindHost);
+            return persistedPort;
+        }
+        return reserveOrAllocateProxyPort(persistedPort);
     }
 
     private PlacementResolution resolvePlacement(String dbSubnetGroupName, String availabilityZone, boolean multiAz) {

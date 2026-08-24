@@ -3,6 +3,7 @@ package io.github.hectorvent.floci.services.ecs.model;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.time.Instant;
+import java.util.Map;
 
 /**
  * A deployment of an ECS service, as reported in {@code DescribeServices}'
@@ -25,6 +26,12 @@ public class Deployment {
     private LaunchType launchType;
     private Instant createdAt;
     private Instant updatedAt;
+    /** Raw passthrough of the service's {@code serviceConnectConfiguration}. AWS's own
+     * {@code Service} shape has no top-level {@code serviceConnectConfiguration} member - it
+     * lives only on {@code Deployment} (and on {@code ServiceRevision}). Both the real AWS SDKs
+     * and Terraform's provider parse strictly against that shape, so echoing it back on the
+     * Service object itself is invisible to them and reads as permanent drift. */
+    private Map<String, Object> serviceConnectConfiguration;
 
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
@@ -50,4 +57,8 @@ public class Deployment {
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+    public Map<String, Object> getServiceConnectConfiguration() { return serviceConnectConfiguration; }
+    public void setServiceConnectConfiguration(Map<String, Object> serviceConnectConfiguration) {
+        this.serviceConnectConfiguration = serviceConnectConfiguration;
+    }
 }

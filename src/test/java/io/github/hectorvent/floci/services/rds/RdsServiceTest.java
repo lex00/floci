@@ -816,8 +816,8 @@ class RdsServiceTest {
         assertEquals("127.0.0.1", started.getContainerHost());
         assertEquals(15432, started.getContainerPort());
         assertNotNull(started.getVolumeId());
-        verify(proxyManager).startProxy(eq("probe-db"), eq(DatabaseEngine.POSTGRES), eq(false),
-                eq(started.getProxyPort()), eq("127.0.0.1"), eq(15432),
+        verify(proxyManager).startProxyPreferring(eq("probe-db"), eq(DatabaseEngine.POSTGRES), eq(false),
+                any(), eq(started.getProxyPort()), eq("127.0.0.1"), eq(15432),
                 eq("admin"), eq("password"), eq("dbname"), any());
 
         // Already backed — a further call is a no-op rather than a second container. Three calls
@@ -1344,8 +1344,8 @@ class RdsServiceTest {
 
         verify(restoredContainerManager).tryStart(eq("mydb"), eq(persistedVolumeId),
                 eq(DatabaseEngine.POSTGRES), eq("postgres:16.3-alpine"), eq("admin"), eq("secret"), eq("app"));
-        verify(restoredProxyManager).startProxy(eq("mydb"), eq(DatabaseEngine.POSTGRES),
-                eq(false), eq(persistedProxyPort), eq("127.0.0.1"), eq(15432),
+        verify(restoredProxyManager).startProxyPreferring(eq("mydb"), eq(DatabaseEngine.POSTGRES),
+                eq(false), any(), eq(persistedProxyPort), eq("127.0.0.1"), eq(15432),
                 eq("admin"), eq("secret"), eq("app"), any());
     }
 
@@ -1389,11 +1389,11 @@ class RdsServiceTest {
 
         verify(restoredContainerManager).tryStart(eq("cluster1"), eq(cluster.getVolumeId()),
                 eq(DatabaseEngine.POSTGRES), eq("postgres:16.3-alpine"), eq("admin"), eq("secret"), eq("app"));
-        verify(restoredProxyManager).startProxy(eq("cluster1"), eq(DatabaseEngine.POSTGRES),
-                eq(false), eq(cluster.getProxyPort()), eq("127.0.0.1"), eq(15432),
+        verify(restoredProxyManager).startProxyPreferring(eq("cluster1"), eq(DatabaseEngine.POSTGRES),
+                eq(false), any(), eq(cluster.getProxyPort()), eq("127.0.0.1"), eq(15432),
                 eq("admin"), eq("secret"), eq("app"), any());
-        verify(restoredProxyManager).startProxy(eq("member1"), eq(DatabaseEngine.POSTGRES),
-                eq(false), eq(member.getProxyPort()), eq("127.0.0.1"), eq(15432),
+        verify(restoredProxyManager).startProxyPreferring(eq("member1"), eq(DatabaseEngine.POSTGRES),
+                eq(false), any(), eq(member.getProxyPort()), eq("127.0.0.1"), eq(15432),
                 eq("admin"), eq("secret"), eq("app"), any());
     }
 

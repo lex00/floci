@@ -93,19 +93,36 @@ class RdsInstanceOptionalFieldsTest {
         assertEquals(5432, instance.getProxyPort());
     }
 
+    // lex00/floci#124: this test used to assert the OPPOSITE - that a second instance
+    // explicitly requesting the same port an already-running instance holds gets silently
+    // bumped to a different Endpoint.Port. That was itself the bug: real AWS has no
+    // cross-instance port-uniqueness constraint at all - every RDS instance is its own isolated
+    // network endpoint - so DescribeDBInstances must echo back exactly what was requested for
+    // EVERY instance, including two that both asked for the identical value (terraform-aws-
+    // modules/terraform-aws-rds's own "complete-postgres" example does exactly this - hardcodes
+    // port 5432 on two separate aws_db_instance resources - and choudoufu's
+    // corpus-rds-complete-postgres crossing caught the resulting perpetual diff). The one real
+    // constraint floci's shared-host proxy actually has - two literal TCP listeners cannot bind
+    // the identical (address, port) pair - now lands on a distinct loopback bind address
+    // (127.0.0.x) per colliding instance instead of a different port number, so both instances
+    // keep their exact requested Endpoint.Port while staying real and independently connectable
+    // (see RdsTwoInstanceSamePortIsolationTest for the full connect+isolation proof).
     @Test
-    void createTimePortFallsBackOnCollisionRatherThanFailing() {
+    void createTimePortHonorsBothInstancesExplicitPortEvenWhenIdentical() {
         DbInstance a = create("db-a");
         a = rdsService.applyCreateTimePort("db-a", 5432);
         DbInstance b = create("db-b");
         b = rdsService.applyCreateTimePort("db-b", 5432);
 
-        // Both instances requested the same port - one real, functioning proxy port per
-        // instance is a hard constraint of floci's shared-host proxy architecture, so the second
-        // instance must fall back rather than both claiming to listen on the identical port.
         assertEquals(5432, a.getEndpoint().port());
-        assertNotEquals(5432, b.getEndpoint().port());
-        assertNotEquals(a.getEndpoint().port(), b.getEndpoint().port());
+        assertEquals(5432, b.getEndpoint().port());
+
+        // The two literal listeners can't share one (address, port) pair, so the collision
+        // fallback instance gets its own distinct bind address instead - never exposed to
+        // clients as a different PORT, unlike the old (reverted) behavior.
+        assertNotEquals(a.getEndpoint().address(), b.getEndpoint().address());
+        assertNull(a.getProxyBindHost());
+        assertEquals(b.getEndpoint().address(), b.getProxyBindHost());
     }
 
     @Test
