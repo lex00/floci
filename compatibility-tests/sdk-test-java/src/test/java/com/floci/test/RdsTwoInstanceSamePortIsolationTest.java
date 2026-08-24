@@ -1,6 +1,7 @@
 package com.floci.test;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.MethodOrderer;
@@ -63,6 +64,18 @@ class RdsTwoInstanceSamePortIsolationTest {
     private static String hostB;
     private static int portA;
     private static int portB;
+    /**
+     * lex00/floci#124's documented boundary: instance B's distinct loopback bind address is
+     * only reachable from a client sharing floci's own network namespace. This test's own
+     * process might be exactly that (e.g. run directly on the same host/container as floci) -
+     * or it might be a sibling container reaching floci over a Docker bridge network (the
+     * shape of this repo's own "native / sdk-test-java" CI job), which cannot route to an
+     * address that only exists inside floci's own namespace. Cached once via {@link
+     * #probeInstanceBReachable()} so every B-specific assertion below degrades to a skip
+     * (never a false failure OR a false pass) in the topology where it structurally cannot be
+     * exercised, while still running for real wherever it can be.
+     */
+    private static Boolean instanceBReachable;
 
     @BeforeAll
     static void setup() {
@@ -137,12 +150,22 @@ class RdsTwoInstanceSamePortIsolationTest {
         // so isolation is proven by AUTHENTICATION: instance A's master password must be
         // rejected by instance B's real listener, and vice versa. If either connection reached
         // the WRONG instance, the "wrong" password would actually be the RIGHT one there.
+        //
+        // Instance A always uses the ordinary/default bind address, reachable the same way
+        // this test process already reaches floci's own API - so it's asserted unconditionally.
         Connection connA = awaitConnection(hostA, portA, USERNAME, PASSWORD_A);
         try {
             assertThat(selectOne(connA)).isEqualTo(1);
         } finally {
             connA.close();
         }
+
+        Assumptions.assumeTrue(probeInstanceBReachable(), "Instance B's distinct loopback bind "
+                + "address (" + hostB + ") is not reachable from this test process - only from "
+                + "a client sharing floci's own network namespace. See lex00/floci#124's PR for "
+                + "this documented boundary: a sibling container reaching floci over a Docker "
+                + "bridge network (this CI job's own topology) cannot route to an address that "
+                + "exists only inside floci's own network namespace.");
 
         Connection connB = awaitConnection(hostB, portB, USERNAME, PASSWORD_B);
         try {
@@ -191,6 +214,10 @@ class RdsTwoInstanceSamePortIsolationTest {
             connA.close();
         }
 
+        Assumptions.assumeTrue(probeInstanceBReachable(), "Instance B's distinct loopback bind "
+                + "address (" + hostB + ") is not reachable from this test process - see "
+                + "eachInstanceIsReachableAndIsolatedAtItsOwnEndpoint's assumption for detail.");
+
         // Dialing instance B using a token minted for instance A's endpoint must fail - either
         // because B rejects the signature (wrong host/port in the signed request) or because B
         // has IAM disabled and treats the token as an ordinary (wrong) password. Either way, it
@@ -198,6 +225,37 @@ class RdsTwoInstanceSamePortIsolationTest {
         assertThatThrownBy(() -> openConnection(hostB, portB, USERNAME, tokenForA))
                 .as("a token signed for instance A's endpoint must not authenticate at instance B")
                 .isInstanceOf(SQLException.class);
+    }
+
+    /**
+     * A short, one-time probe that answers "can THIS process open a TCP connection to instance
+     * B's distinct bind address at all" - deliberately a raw socket connect, not a full
+     * PostgreSQL handshake, so it can't be confused by an unrelated PostgreSQL-level failure
+     * (wrong role, auth rejected, backend still bootstrapping) which means the network path DID
+     * work and the real assertions below should run and see that failure directly, not have it
+     * silently swallowed into a skip. The answer is cached, since it can't change mid-test-class:
+     * the topology (same network namespace as floci, or a separate sibling container) is fixed
+     * for the whole run. 20s is generous for the genuine "container still starting" case (matches
+     * the other connection helpers' pacing) while not burning the full 60s budget every other
+     * connection here uses on what is, in the unreachable case, a structural topology fact
+     * rather than a transient timing issue.
+     */
+    private static boolean probeInstanceBReachable() throws Exception {
+        if (instanceBReachable != null) {
+            return instanceBReachable;
+        }
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(20));
+        while (Instant.now().isBefore(deadline)) {
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress(hostB, portB), 2000);
+                instanceBReachable = true;
+                return true;
+            } catch (java.io.IOException e) {
+                Thread.sleep(1000);
+            }
+        }
+        instanceBReachable = false;
+        return false;
     }
 
     private static Connection awaitConnection(String host, int port, String username, String password)
