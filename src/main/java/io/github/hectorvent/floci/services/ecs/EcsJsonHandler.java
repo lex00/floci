@@ -236,6 +236,11 @@ public class EcsJsonHandler {
         // Task-level volumes are not part of registerTaskDefinition's signature; set them on the
         // returned (and stored) task definition so they round-trip and reach RunTask launches.
         td.setVolumes(parseVolumes(req.path("volumes")));
+        // Same store-and-echo reasoning as ContainerDefinition.raw: this keeps runtimePlatform
+        // (a required, ForceNew Fargate field with no typed field on TaskDefinition) and every
+        // other top-level RegisterTaskDefinition input round-tripping through Describe, without
+        // hand-modeling each one.
+        td.setRaw(req.deepCopy());
 
         ObjectNode resp = objectMapper.createObjectNode();
         resp.set("taskDefinition", taskDefinitionNode(td));
@@ -1095,6 +1100,17 @@ public class EcsJsonHandler {
 
     private ObjectNode taskDefinitionNode(TaskDefinition td) {
         ObjectNode n = objectMapper.createObjectNode();
+        // Same base-then-override merge as containerDefinitionNode: start from exactly what
+        // RegisterTaskDefinition was called with (runtimePlatform, pidMode, ipcMode,
+        // ephemeralStorage, proxyConfiguration, placementConstraints, ... - fields this class
+        // has no typed home for), then let floci's own computed fields below win.
+        if (td.getRaw() != null && td.getRaw().isObject()) {
+            n.setAll((ObjectNode) td.getRaw());
+        }
+        // Same reasoning as containerDefinitionNode's clear: these are only ever conditionally
+        // re-derived below, so a raw request that happened to include one of them explicitly
+        // (an empty "volumes": [], say) can't leak past a condition that would have omitted it.
+        n.remove(List.of("containerDefinitions", "volumes", "tags", "requiresCompatibilities", "compatibilities"));
         n.put("taskDefinitionArn", td.getTaskDefinitionArn());
         n.put("family", td.getFamily());
         n.put("revision", td.getRevision());
@@ -1171,11 +1187,27 @@ public class EcsJsonHandler {
 
     private ObjectNode containerDefinitionNode(ContainerDefinition def) {
         ObjectNode n = objectMapper.createObjectNode();
+        // Base the response on exactly what was registered - RegisterTaskDefinition is a
+        // store-and-echo API, and a field this class has no typed home for (dependsOn,
+        // linuxParameters, restartPolicy, versionConsistency, startTimeout/stopTimeout,
+        // interactive, pseudoTerminal, privileged, readonlyRootFilesystem, user,
+        // firelensConfiguration, volumesFrom, ...) still has to round-trip. The explicit fields
+        // below override this raw copy with floci's own computed/defaulted view, which is
+        // authoritative wherever the two disagree.
+        if (def.getRaw() != null && def.getRaw().isObject()) {
+            n.setAll((ObjectNode) def.getRaw());
+        }
+        // These keys are re-derived below from floci's own parsed, typed fields and are only
+        // ever emitted conditionally (non-null/non-empty); clearing them here first means an
+        // explicit-but-empty value in the raw request (e.g. "environment": []) can never leak
+        // through as a value the conditional logic below would otherwise have omitted.
+        n.remove(List.of("portMappings", "environment", "secrets", "mountPoints", "logConfiguration"));
         n.put("name", def.getName());
         n.put("image", def.getImage());
         n.put("essential", def.isEssential());
         if (def.getCpu() != null) { n.put("cpu", def.getCpu()); }
         if (def.getMemory() != null) { n.put("memory", def.getMemory()); }
+        if (def.getMemoryReservation() != null) { n.put("memoryReservation", def.getMemoryReservation()); }
 
         if (def.getPortMappings() != null && !def.getPortMappings().isEmpty()) {
             ArrayNode pms = objectMapper.createArrayNode();
@@ -1184,6 +1216,7 @@ public class EcsJsonHandler {
                 pmNode.put("containerPort", pm.containerPort());
                 pmNode.put("hostPort", pm.hostPort());
                 pmNode.put("protocol", pm.protocol());
+                if (pm.name() != null) { pmNode.put("name", pm.name()); }
                 pms.add(pmNode);
             }
             n.set("portMappings", pms);
@@ -1698,6 +1731,7 @@ public class EcsJsonHandler {
         }
         for (JsonNode item : node) {
             ContainerDefinition def = new ContainerDefinition();
+            def.setRaw(item.deepCopy());
             def.setName(item.path("name").asText());
             def.setImage(item.path("image").asText());
             def.setEssential(item.path("essential").asBoolean(true));
@@ -1802,7 +1836,8 @@ public class EcsJsonHandler {
             int containerPort = item.path("containerPort").asInt(0);
             int hostPort = item.path("hostPort").asInt(0);
             String protocol = item.path("protocol").asText("tcp");
-            result.add(new PortMapping(containerPort, hostPort, protocol));
+            String name = item.hasNonNull("name") ? item.path("name").asText() : null;
+            result.add(new PortMapping(containerPort, hostPort, protocol, name));
         }
         return result;
     }

@@ -1,5 +1,6 @@
 package io.github.hectorvent.floci.services.ecs.model;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.util.HashMap;
@@ -23,6 +24,13 @@ public class TaskDefinition {
     private List<String> requiresCompatibilities;
     private List<String> compatibilities;
     private Map<String, String> tags = new HashMap<>();
+
+    // The exact RegisterTaskDefinition request body, kept the same store-and-echo way as
+    // ContainerDefinition.raw (see there for why). This is what makes runtimePlatform - a
+    // required Fargate field with no typed home on this class - round-trip: hashicorp/aws
+    // treats it as ForceNew, and an emulator that never echoes it back forces a replacement on
+    // every plan after the very first apply, independent of anything the caller changed.
+    private JsonNode raw;
 
     public String getTaskDefinitionArn() { return taskDefinitionArn; }
     public void setTaskDefinitionArn(String taskDefinitionArn) { this.taskDefinitionArn = taskDefinitionArn; }
@@ -67,4 +75,7 @@ public class TaskDefinition {
 
     public Map<String, String> getTags() { return tags; }
     public void setTags(Map<String, String> tags) { this.tags = tags; }
+
+    public JsonNode getRaw() { return raw; }
+    public void setRaw(JsonNode raw) { this.raw = raw; }
 }
