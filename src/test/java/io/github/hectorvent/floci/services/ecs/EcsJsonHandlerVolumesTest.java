@@ -97,6 +97,46 @@ class EcsJsonHandlerVolumesTest {
         assertFalse(mps.get(1).path("readOnly").asBoolean(), "aws mount is read-write");
     }
 
+    // lex00/floci#131: real AWS leaves mountPoints[].readOnly entirely ABSENT from
+    // RegisterTaskDefinition/DescribeTaskDefinition when the caller never set it - confirmed
+    // live (register-task-definition with no readOnly on a mount point; the response carries
+    // no readOnly key at all, not readOnly=false). Before this fix MountPoint.readOnly was a
+    // primitive boolean, so it always defaulted to and echoed false, growing a key the caller
+    // never sent - exactly the "override direction" ec82d50d's own test already pins for other
+    // fields (a bare container definition must not grow keys it never declared). For
+    // terraform-provider-aws's container_definitions equivalence check that phantom key reads
+    // as a genuine diff and forces a needless task-definition replacement on every plan.
+    @Test
+    void registerTaskDefinitionLeavesMountPointReadOnlyAbsentWhenNeverSet() throws Exception {
+        String requestJson = """
+                {
+                  "family": "no-readonly-family",
+                  "containerDefinitions": [
+                    {
+                      "name": "app",
+                      "image": "alpine:latest",
+                      "mountPoints": [
+                        {"sourceVolume": "ex-vol", "containerPath": "/var/www/ex-vol"}
+                      ]
+                    }
+                  ],
+                  "volumes": [
+                    {"name": "ex-vol", "host": {"sourcePath": "/host/abs/ex-vol"}}
+                  ]
+                }
+                """;
+        JsonNode request = objectMapper.readTree(requestJson);
+
+        Response response = handler.handle("RegisterTaskDefinition", request, "us-east-1");
+        JsonNode td = objectMapper.valueToTree(response.getEntity()).path("taskDefinition");
+
+        JsonNode mp = td.path("containerDefinitions").get(0).path("mountPoints").get(0);
+        assertEquals("ex-vol", mp.path("sourceVolume").asText());
+        assertEquals("/var/www/ex-vol", mp.path("containerPath").asText());
+        assertTrue(mp.path("readOnly").isMissingNode(),
+                "readOnly must be entirely absent, not defaulted to false, when the caller never set it");
+    }
+
     @Test
     void registerTaskDefinitionRoundTripsEfsVolumeConfiguration() throws Exception {
         String requestJson = """
