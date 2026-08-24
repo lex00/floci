@@ -286,6 +286,63 @@ java.util.Map.of(), java.util.Map.of(), null));
                 service.describeLaunchConfigurations(REGION, List.of("lc-from-instance")).getFirst());
     }
 
+    // lex00/floci: aws_launch_configuration's InstanceMonitoring and
+    // BlockDeviceMappings were dropped on create and never echoed back on
+    // Describe at all - traced via choudoufu's corpus-eks-basic gauntlet
+    // crossing to a perpetual ForceNew replace (enable_monitoring reading
+    // back false regardless of what was configured, and an explicitly
+    // configured root_block_device reading back as an empty list forever).
+    // Real AWS's CreateLaunchConfiguration doc states the InstanceMonitoring
+    // default is true (enabled) when the caller omits it, and
+    // DescribeLaunchConfigurations always includes the structure - it is
+    // never simply absent the way AssociatePublicIpAddress's absence is
+    // itself meaningful.
+    @Test
+    void createLaunchConfigurationDefaultsInstanceMonitoringToEnabled() {
+        var lc = service.createLaunchConfiguration(REGION, "lc-default-monitoring", null,
+                "ami-12345678", "t3.micro", null, List.of(), null, null, null, null, List.of());
+
+        assertEquals(Boolean.TRUE, lc.getInstanceMonitoringEnabled());
+        assertEquals(Boolean.TRUE,
+                service.describeLaunchConfigurations(REGION, List.of("lc-default-monitoring"))
+                        .getFirst().getInstanceMonitoringEnabled());
+    }
+
+    @Test
+    void createLaunchConfigurationHonoursAnExplicitInstanceMonitoringOverride() {
+        var lc = service.createLaunchConfiguration(REGION, "lc-monitoring-off", null,
+                "ami-12345678", "t3.micro", null, List.of(), null, null, null, Boolean.FALSE, List.of());
+
+        assertEquals(Boolean.FALSE, lc.getInstanceMonitoringEnabled());
+        assertEquals(Boolean.FALSE,
+                service.describeLaunchConfigurations(REGION, List.of("lc-monitoring-off"))
+                        .getFirst().getInstanceMonitoringEnabled());
+    }
+
+    @Test
+    void createLaunchConfigurationRoundTripsBlockDeviceMappings() {
+        var ebs = new io.github.hectorvent.floci.services.ec2.model.EbsBlockDevice();
+        ebs.setVolumeSize(100);
+        ebs.setVolumeType("gp2");
+        ebs.setIops(0);
+        ebs.setDeleteOnTermination(true);
+        var mapping = new io.github.hectorvent.floci.services.ec2.model.BlockDeviceMapping();
+        mapping.setDeviceName("/dev/xvda");
+        mapping.setEbs(ebs);
+
+        var lc = service.createLaunchConfiguration(REGION, "lc-with-root-device", null,
+                "ami-12345678", "t3.micro", null, List.of(), null, null, null, null, List.of(mapping));
+
+        assertEquals(1, lc.getBlockDeviceMappings().size());
+        var stored = service.describeLaunchConfigurations(REGION, List.of("lc-with-root-device"))
+                .getFirst().getBlockDeviceMappings().getFirst();
+        assertEquals("/dev/xvda", stored.getDeviceName());
+        assertEquals(100, stored.getEbs().getVolumeSize());
+        assertEquals("gp2", stored.getEbs().getVolumeType());
+        assertEquals(0, stored.getEbs().getIops());
+        assertEquals(Boolean.TRUE, stored.getEbs().getDeleteOnTermination());
+    }
+
     @Test
     void createAutoScalingGroupRejectsUnresolvedLaunchTemplateBeforeMutation() {
         Ec2Service ec2Service = mock(Ec2Service.class);
