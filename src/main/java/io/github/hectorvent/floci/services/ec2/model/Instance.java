@@ -52,6 +52,13 @@ public class Instance {
     private String rootVolumeId;
     private boolean rootVolumeDeleteOnTermination = true;
 
+    // Null for an instance type family with no burstable credit model at all (see
+    // Ec2Service#defaultCreditSpecification); DescribeInstances then omits the
+    // creditSpecification element entirely, matching real AWS. Set at RunInstances time from
+    // an explicit CreditSpecification.CpuCredits request parameter, or the family's own AWS-
+    // documented default otherwise ("unlimited" for t3/t3a/t4g, "standard" for t2).
+    private String creditSpecificationCpuCredits;
+
     // NOTE: disableApiStop and disableApiTermination are stored but ModifyInstanceAttribute
     // does not yet wire them through. Terraform reads these via DescribeInstanceAttribute;
     // without model backing, a modify → plan cycle would show drift. Tracked as a known limitation.
@@ -206,6 +213,9 @@ public class Instance {
 
     public boolean isRootVolumeDeleteOnTermination() { return rootVolumeDeleteOnTermination; }
     public void setRootVolumeDeleteOnTermination(boolean rootVolumeDeleteOnTermination) { this.rootVolumeDeleteOnTermination = rootVolumeDeleteOnTermination; }
+
+    public String getCreditSpecificationCpuCredits() { return creditSpecificationCpuCredits; }
+    public void setCreditSpecificationCpuCredits(String creditSpecificationCpuCredits) { this.creditSpecificationCpuCredits = creditSpecificationCpuCredits; }
 
     public boolean isDisableApiStop() { return disableApiStop; }
     public void setDisableApiStop(boolean disableApiStop) { this.disableApiStop = disableApiStop; }
