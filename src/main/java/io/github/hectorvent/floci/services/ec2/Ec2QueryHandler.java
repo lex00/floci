@@ -1655,14 +1655,30 @@ public class Ec2QueryHandler {
     private Response handleRevokeSecurityGroupIngress(MultivaluedMap<String, String> p, String region) {
         String groupId = p.getFirst("GroupId");
         List<IpPermission> perms = parseIpPermissions(p, "IpPermissions");
-        service.revokeSecurityGroupIngress(region, groupId, perms);
+        if (!perms.isEmpty()) {
+            service.revokeSecurityGroupIngress(region, groupId, perms);
+        }
+        // The other way a caller names what to revoke: by the rule's own id
+        // (SecurityGroupRuleId.N, a sibling of IpPermissions.N rather than nested under it) -
+        // what aws_vpc_security_group_ingress_rule's Delete always sends, since a rule's id is
+        // its whole identity. See Ec2Service.revokeSecurityGroupRulesByIds's own doc comment.
+        List<String> ruleIds = getList(p, "SecurityGroupRuleId");
+        if (!ruleIds.isEmpty()) {
+            service.revokeSecurityGroupRulesByIds(region, groupId, ruleIds, false);
+        }
         return booleanResponse("RevokeSecurityGroupIngress");
     }
 
     private Response handleRevokeSecurityGroupEgress(MultivaluedMap<String, String> p, String region) {
         String groupId = p.getFirst("GroupId");
         List<IpPermission> perms = parseIpPermissions(p, "IpPermissions");
-        service.revokeSecurityGroupEgress(region, groupId, perms);
+        if (!perms.isEmpty()) {
+            service.revokeSecurityGroupEgress(region, groupId, perms);
+        }
+        List<String> ruleIds = getList(p, "SecurityGroupRuleId");
+        if (!ruleIds.isEmpty()) {
+            service.revokeSecurityGroupRulesByIds(region, groupId, ruleIds, true);
+        }
         return booleanResponse("RevokeSecurityGroupEgress");
     }
 

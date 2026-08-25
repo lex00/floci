@@ -248,6 +248,153 @@ class Ec2SecurityGroupRuleIdentityIntegrationTest {
             .body(not(containsString("<fromPort>5432</fromPort>")));
     }
 
+    /**
+     * The other way to name what to revoke, and the one Terraform's per-rule resources
+     * (aws_vpc_security_group_ingress_rule / egress_rule) always use: not (protocol, ports,
+     * source) but the rule's own id, sent as a top-level {@code SecurityGroupRuleId.N} parameter
+     * rather than nested under {@code IpPermissions}.
+     *
+     * <p>Found running choudoufu's own destroy-order gauntlet unit against this image: the plan
+     * proposed destroying a security group and its rules in the correct order (rules before the
+     * group), the apply reported "Return: true" for every one of them, and the rule was still
+     * live on the very next DescribeSecurityGroupRules call - reproduced here with no Terraform
+     * or choudoufu in the loop at all, straight against the query API, per this project's own
+     * "confirm against a service directly before calling anything upstream" discipline.
+     */
+    @Test
+    void revokingBySecurityGroupRuleIdActuallyRemovesTheRule() {
+        String vpcId = createVpc();
+        String groupId = createSecurityGroup(uniqueName("revoke-by-id"), vpcId);
+
+        String ruleId = given()
+            .formParam("Action", "AuthorizeSecurityGroupIngress")
+            .formParam("GroupId", groupId)
+            .formParam("IpPermissions.1.IpProtocol", "tcp")
+            .formParam("IpPermissions.1.FromPort", "5432")
+            .formParam("IpPermissions.1.ToPort", "5432")
+            .formParam("IpPermissions.1.IpRanges.1.CidrIp", "10.0.0.0/16")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("AuthorizeSecurityGroupIngressResponse.securityGroupRuleSet.item.securityGroupRuleId");
+
+        given()
+            .formParam("Action", "RevokeSecurityGroupIngress")
+            .formParam("GroupId", groupId)
+            .formParam("SecurityGroupRuleId.1", ruleId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        given()
+            .formParam("Action", "DescribeSecurityGroupRules")
+            .formParam("SecurityGroupRuleId.1", ruleId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body(not(containsString(ruleId)));
+
+        // The group's own summary list has to agree, the same way it does for the
+        // IpPermissions-based revoke path (revokingByGroupReferenceMatchesAResolvedReference,
+        // just above): a rule gone from DescribeSecurityGroupRules but still echoed in
+        // DescribeSecurityGroups' own ipPermissions would be the two views disagreeing.
+        given()
+            .formParam("Action", "DescribeSecurityGroups")
+            .formParam("GroupId.1", groupId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body(not(containsString("<fromPort>5432</fromPort>")));
+    }
+
+    /** revokingBySecurityGroupRuleIdActuallyRemovesTheRule's egress sibling. */
+    @Test
+    void revokingBySecurityGroupRuleIdActuallyRemovesTheEgressRule() {
+        String vpcId = createVpc();
+        String groupId = createSecurityGroup(uniqueName("revoke-by-id-egress"), vpcId);
+
+        String ruleId = authorizeEgressCidr(groupId, "8443", "10.5.0.0/16", "revoke-me")
+            .then()
+            .statusCode(200)
+            .extract().path("AuthorizeSecurityGroupEgressResponse.securityGroupRuleSet.item.securityGroupRuleId");
+
+        given()
+            .formParam("Action", "RevokeSecurityGroupEgress")
+            .formParam("GroupId", groupId)
+            .formParam("SecurityGroupRuleId.1", ruleId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        given()
+            .formParam("Action", "DescribeSecurityGroupRules")
+            .formParam("SecurityGroupRuleId.1", ruleId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body(not(containsString(ruleId)));
+    }
+
+    /**
+     * The mutation-check boundary: a rule id that belongs to a DIFFERENT security group must not
+     * be removed by a revoke call naming the wrong group. AWS validates this; a fix that just
+     * looked the rule up by id alone and deleted it, with no group or direction check, would pass
+     * every test above and still be wrong here.
+     */
+    @Test
+    void revokingBySecurityGroupRuleIdIgnoresARuleFromAnotherGroup() {
+        String vpcId = createVpc();
+        String targetGroupId = createSecurityGroup(uniqueName("revoke-by-id-wrong-group"), vpcId);
+        String otherGroupId = createSecurityGroup(uniqueName("revoke-by-id-other-group"), vpcId);
+
+        String otherRuleId = given()
+            .formParam("Action", "AuthorizeSecurityGroupIngress")
+            .formParam("GroupId", otherGroupId)
+            .formParam("IpPermissions.1.IpProtocol", "tcp")
+            .formParam("IpPermissions.1.FromPort", "9999")
+            .formParam("IpPermissions.1.ToPort", "9999")
+            .formParam("IpPermissions.1.IpRanges.1.CidrIp", "10.0.0.0/16")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("AuthorizeSecurityGroupIngressResponse.securityGroupRuleSet.item.securityGroupRuleId");
+
+        // Named against targetGroupId, which never authorized this rule.
+        given()
+            .formParam("Action", "RevokeSecurityGroupIngress")
+            .formParam("GroupId", targetGroupId)
+            .formParam("SecurityGroupRuleId.1", otherRuleId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        given()
+            .formParam("Action", "DescribeSecurityGroupRules")
+            .formParam("SecurityGroupRuleId.1", otherRuleId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body(containsString(otherRuleId));
+    }
+
     @Test
     void revokingAPortRangeDoesNotTakeADifferentProtocolWithIt() {
         String vpcId = createVpc();
