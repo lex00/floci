@@ -2309,6 +2309,28 @@ class Ec2IntegrationTest {
             .body("CreateTagsResponse.return", equalTo("true"));
     }
 
+    // The instance and its auto-created ENI are tagged independently here on purpose - real EC2
+    // only applies a TagSpecification to the resource type it names (RunInstances with an
+    // "instance"-only TagSpecification, as this suite's launch above used, leaves the
+    // auto-created network interface untagged), and CreateTags on one resource never touches the
+    // other. describeNetworkInterfacesFullFields (below) asserts both directions: the ENI's own
+    // tag is visible on it, and the instance's tag is not.
+    @Test
+    @Order(90)
+    void createTagsOnNetworkInterface() {
+        given()
+            .formParam("Action", "CreateTags")
+            .formParam("ResourceId.1", networkInterfaceId)
+            .formParam("Tag.1.Key", "Name")
+            .formParam("Tag.1.Value", "test-eni")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("CreateTagsResponse.return", equalTo("true"));
+    }
+
     @Test
     @Order(91)
     void describeTags() {
@@ -2386,11 +2408,18 @@ class Ec2IntegrationTest {
             // availabilityZone from instance placement
             .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item[0].availabilityZone",
                     startsWith("us-east-1"))
-            // tagSet propagated from instance tags (created at Order 90)
+            // tagSet is the ENI's own (created directly on it at Order 90, above) - not the
+            // instance's. Real EC2 does not propagate an "instance"-only TagSpecification, or a
+            // later CreateTags on the instance, onto the network interface it auto-created.
+            .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item.size()", equalTo(1))
+            .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item[0].tagSet.item.size()",
+                    equalTo(1))
             .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item[0].tagSet.item[0].key",
                     equalTo("Name"))
             .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item[0].tagSet.item[0].value",
-                    equalTo("test-instance"))
+                    equalTo("test-eni"))
+            .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item[0].tagSet.item.findAll "
+                    + "{ it.value == 'test-instance' }.size()", equalTo(0))
             // attachment: attachTime (from instance launchTime) and deleteOnTermination
             .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item[0].attachment.attachTime",
                     notNullValue())
@@ -2487,10 +2516,13 @@ class Ec2IntegrationTest {
     @Test
     @Order(92)
     void describeNetworkInterfacesFilterByTag() {
+        // Filters on the ENI's own tag (created directly on it, at Order 90) - not the
+        // instance's "test-instance" tag, which the ENI never carries (see
+        // describeNetworkInterfacesFullFields's own comment).
         given()
             .formParam("Action", "DescribeNetworkInterfaces")
             .formParam("Filter.1.Name", "tag:Name")
-            .formParam("Filter.1.Value.1", "test-instance")
+            .formParam("Filter.1.Value.1", "test-eni")
             .header("Authorization", AUTH_HEADER)
         .when()
             .post("/")

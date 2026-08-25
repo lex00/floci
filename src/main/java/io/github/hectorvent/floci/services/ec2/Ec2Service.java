@@ -5663,7 +5663,14 @@ public class Ec2Service implements ContainerTeardown {
                 if (inst.getPlacement() != null) {
                     ni.setAvailabilityZone(inst.getPlacement().getAvailabilityZone());
                 }
-                ni.getTagSet().addAll(inst.getTags());
+                // The ENI is its own taggable resource, not a shadow of the instance it is
+                // attached to: RunInstances only applies a TagSpecification to the resource
+                // type it names, so an "instance"-only TagSpecification (the common case, and
+                // the only one this build parses today - see Ec2QueryHandler#parseRunInstances)
+                // leaves an auto-created network interface untagged in real AWS. Read this
+                // ENI's own tags from the same generic side-store CreateTags writes to
+                // (effectiveTags), keyed by the ENI's own id - never by the instance's.
+                ni.getTagSet().addAll(effectiveTags(region, eni.getNetworkInterfaceId()));
 
                 NetworkInterfaceAttachment att = new NetworkInterfaceAttachment();
                 att.setAttachmentId(eni.getAttachmentId());
