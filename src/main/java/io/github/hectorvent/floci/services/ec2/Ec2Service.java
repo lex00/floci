@@ -5663,7 +5663,16 @@ public class Ec2Service implements ContainerTeardown {
                 if (inst.getPlacement() != null) {
                     ni.setAvailabilityZone(inst.getPlacement().getAvailabilityZone());
                 }
-                ni.getTagSet().addAll(inst.getTags());
+                // A network interface's tags are its OWN, never the instance's. AWS tags
+                // exactly the resource types a RunInstances TagSpecification names, so an
+                // interface created for an instance whose specification said
+                // ResourceType=instance carries no tags at all until something tags the
+                // eni- id itself - and DescribeTags never listed these tags either, so
+                // copying them here made DescribeNetworkInterfaces disagree with
+                // DescribeTags about the same resource. Read the interface's own entry in
+                // the tag store instead: CreateTags on the eni- id writes it, and so does
+                // a RunInstances TagSpecification with ResourceType=network-interface.
+                ni.getTagSet().addAll(effectiveTags(region, eni.getNetworkInterfaceId()));
 
                 NetworkInterfaceAttachment att = new NetworkInterfaceAttachment();
                 att.setAttachmentId(eni.getAttachmentId());
