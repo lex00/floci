@@ -244,6 +244,10 @@ floci:
     iam:
       enabled: true
       enforcement-enabled: false
+      enforce-for-test-keys: false  # When enforcement-enabled=true, the "test" access key still
+                                     # bypasses policy checks by default (backward-compatible with
+                                     # every estate that signs as "test"). Set true to enforce
+                                     # against "test" too.
       seed-deployer-principal: false
       # account-alias: ""  # When set, seeds the account alias at startup so callers can read one
                            # without creating it first. Unset means the account has no alias,

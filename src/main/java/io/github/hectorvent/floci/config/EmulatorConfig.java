@@ -916,6 +916,17 @@ public interface EmulatorConfig {
         @WithDefault("false")
         boolean enforcementEnabled();
 
+        /**
+         * When enforcement is enabled, the access key "test" is still treated as a
+         * root/admin stand-in and bypasses policy checks by default — every estate in
+         * live/e2e (and most local dev flows) signs as "test", so flipping enforcement
+         * on without this stays backward-compatible. Set true to enforce policies
+         * against "test" too, e.g. to prove a tag-scoped Allow/Deny in a test harness
+         * that signs as "test".
+         */
+        @WithDefault("false")
+        boolean enforceForTestKeys();
+
         @WithDefault("false")
         boolean seedDeployerPrincipal();
 
