@@ -739,6 +739,48 @@ class Ec2ServiceTest {
         assertTrue(detached.getAttachments().isEmpty());
     }
 
+    // Real AWS documents that a preserved (DeleteOnTermination=false) data volume "can [be]
+    // attach[ed] to another instance" immediately after the instance it was on terminates
+    // (EC2 User Guide, "Preserve data when an instance is terminated") - so the volume must
+    // leave "in-use" on its own, the same outcome an explicit DetachVolume produces. Before
+    // this fix terminateInstances only ever deleted the ROOT volume and never looked at any
+    // other volume's attachments at all, so a data volume attached via AttachVolume (the shape
+    // every `aws_volume_attachment` resource uses) stayed "in-use", attached to an instance
+    // that no longer existed, and a later AttachVolume of the SAME volume to a new instance
+    // failed with InvalidVolume.InUse - exactly the shape choudoufu's gauntlet hit forcing a
+    // replace of an instance with an attached EBS data disk (corpus-sumaform-aws, day2_replace).
+    @Test
+    void terminateInstancesDetachesNonRootVolumesLeftAttached() {
+        Ec2Service service = new Ec2Service(mockConfig(true), mock(Ec2ContainerManager.class),
+                mock(Ec2PortForwardManager.class), mock(AmiImageResolver.class), mock(Ec2ImageCatalog.class),
+                new Ec2InstanceTypeCatalog(), new InMemoryStorageFactory());
+        Reservation reservation = service.runInstances("us-east-1", "ami-1234567890abcdef0", "t3.micro",
+                1, 1, null, List.of(), null, null, List.of(), null, null);
+        Instance inst = reservation.getInstances().getFirst();
+        inst.setState(InstanceState.running());
+        String instanceId = inst.getInstanceId();
+        String instanceAz = inst.getPlacement().getAvailabilityZone();
+        Volume data = service.createVolume("us-east-1", instanceAz, "gp3", 8,
+                false, 0, null, null, List.of());
+        service.attachVolume("us-east-1", data.getVolumeId(), instanceId, "/dev/sdf");
+
+        service.terminateInstances("us-east-1", List.of(instanceId));
+
+        Volume after = service.describeVolumes("us-east-1", List.of(data.getVolumeId()), Map.of()).getFirst();
+        assertEquals("available", after.getState());
+        assertTrue(after.getAttachments().isEmpty());
+
+        // The whole point: a second, unrelated instance can now claim the volume, the same as
+        // real AWS's own documented "attach it to another instance" outcome.
+        Reservation second = service.runInstances("us-east-1", "ami-1234567890abcdef0", "t3.micro",
+                1, 1, null, List.of(), null, null, List.of(), null, null);
+        Instance inst2 = second.getInstances().getFirst();
+        inst2.setState(InstanceState.running());
+        inst2.getPlacement().setAvailabilityZone(instanceAz); // AttachVolume requires a same-AZ match
+        VolumeAttachment reattached = service.attachVolume("us-east-1", data.getVolumeId(), inst2.getInstanceId(), "/dev/sdf");
+        assertEquals(inst2.getInstanceId(), reattached.getInstanceId());
+    }
+
     @Test
     void detachRootVolumeRequiresForceAndStopped() {
         Ec2Service service = new Ec2Service(mockConfig(true), mock(Ec2ContainerManager.class),

@@ -1350,6 +1350,37 @@ public class Ec2Service implements ContainerTeardown {
             if (inst.getRootVolumeId() != null) {
                 volumes.delete(key(region, inst.getRootVolumeId()));
             }
+            // Every OTHER volume still attached to this instance (attached after launch via
+            // AttachVolume, or a launch-time data volume never captured as the root) is either
+            // deleted (its own attachment's DeleteOnTermination=true) or detached and left
+            // "available" - real AWS's documented behaviour ("Preserve data when an instance is
+            // terminated": a preserved volume "can [be] attach[ed] to another instance"
+            // immediately after termination, so it cannot still show in-use to the instance that
+            // no longer exists). Confirmed missing against this digest 2026-08-25: attaching a
+            // volume, terminating its instance, and attaching the SAME volume to a new instance
+            // failed with VolumeInUse - the volume never left "in-use", which is exactly the
+            // shape that broke choudoufu's gauntlet (corpus-sumaform-aws day2_replace: an
+            // instance replace destroys the old instance and its volume attachment, then
+            // recreates both against the SAME data volume).
+            for (Volume vol : volumes.scan(k -> true)) {
+                if (!region.equals(vol.getRegion()) || vol.getVolumeId().equals(inst.getRootVolumeId())) {
+                    continue;
+                }
+                VolumeAttachment attachment = vol.getAttachments().stream()
+                        .filter(a -> id.equals(a.getInstanceId()))
+                        .findFirst().orElse(null);
+                if (attachment == null) {
+                    continue;
+                }
+                if (attachment.isDeleteOnTermination()) {
+                    volumes.delete(key(region, vol.getVolumeId()));
+                } else {
+                    attachment.setState("detached");
+                    vol.getAttachments().clear();
+                    vol.setState("available");
+                    volumes.put(key(region, vol.getVolumeId()), vol);
+                }
+            }
             instances.put(key(region, id), inst);
             Map<String, String> entry = new LinkedHashMap<>();
             entry.put("instanceId", id);
