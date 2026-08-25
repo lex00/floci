@@ -5219,7 +5219,10 @@ public class Ec2Service implements ContainerTeardown {
                 case "vpc-id" -> matchesValue(values, vpc.getVpcId());
                 case "state" -> matchesValue(values, vpc.getState());
                 case "isDefault", "is-default" -> matchesValue(values, String.valueOf(vpc.isDefault()));
-                case "cidr" -> matchesValue(values, vpc.getCidrBlock());
+                // "cidr" is the documented filter name for a VPC's primary CIDR block; real EC2 also
+                // accepts the undocumented alias "cidr-block" (confirmed against live AWS 2026-08-25:
+                // it matches only the primary block, not a secondary cidr-block-association entry).
+                case "cidr", "cidr-block" -> matchesValue(values, vpc.getCidrBlock());
                 default -> true;
             };
         }
