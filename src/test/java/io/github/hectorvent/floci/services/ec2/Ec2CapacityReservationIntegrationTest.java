@@ -242,4 +242,65 @@ class Ec2CapacityReservationIntegrationTest {
             .body("Response.Errors.Error.Code", equalTo("InvalidCapacityReservationId.NotFound"))
             .body("Response.Errors.Error.Message", containsString("cr-00000000000000000"));
     }
+
+    /**
+     * lex00/floci#137: CreateCapacityReservation's own inline tag-specification parameter is the
+     * PLURAL "TagSpecifications.N.*", not the singular "TagSpecification.N.*" every other create
+     * action in this codebase uses - confirmed by capturing the real wire request a genuine
+     * hashicorp/terraform-provider-aws apply sends (TF_LOG=DEBUG), not by reading the docs alone.
+     * Order(1) above already exercises the singular spelling and would keep passing even if the
+     * plural one were never handled, which is exactly how this shipped unnoticed: the choudoufu
+     * corpus-autoscaling-complete/greenfield gauntlet unit caught it by reading
+     * DescribeCapacityReservations/DescribeTags directly against a real apply, with no terraform
+     * in the loop, and finding the tags simply absent right after create.
+     *
+     * <p>A separate, independent reservation and a follow-up Describe (not just the Create
+     * response's own echo) so this proves the tag is actually PERSISTED, not merely reflected in
+     * the same in-memory object the handler happens to still be holding.
+     */
+    @Test
+    @Order(10)
+    void createHonoursThePluralTagSpecificationsParameter() {
+        String id = given()
+            .formParam("Action", "CreateCapacityReservation")
+            .formParam("InstanceType", "t3.micro")
+            .formParam("InstancePlatform", "Linux/UNIX")
+            .formParam("AvailabilityZone", "us-east-1a")
+            .formParam("InstanceCount", "1")
+            .formParam("InstanceMatchCriteria", "targeted")
+            .formParam("TagSpecifications.1.ResourceType", "capacity-reservation")
+            .formParam("TagSpecifications.1.Tag.1.Key", "Name")
+            .formParam("TagSpecifications.1.Tag.1.Value", "plural-form-reservation")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("CreateCapacityReservationResponse.capacityReservation.tagSet.item.key", equalTo("Name"))
+            .body("CreateCapacityReservationResponse.capacityReservation.tagSet.item.value", equalTo("plural-form-reservation"))
+            .extract().path("CreateCapacityReservationResponse.capacityReservation.capacityReservationId");
+
+        given()
+            .formParam("Action", "DescribeCapacityReservations")
+            .formParam("CapacityReservationId.1", id)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeCapacityReservationsResponse.capacityReservationSet.item.tagSet.item.key", equalTo("Name"))
+            .body("DescribeCapacityReservationsResponse.capacityReservationSet.item.tagSet.item.value", equalTo("plural-form-reservation"));
+
+        given()
+            .formParam("Action", "DescribeTags")
+            .formParam("Filter.1.Name", "resource-id")
+            .formParam("Filter.1.Value.1", id)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeTagsResponse.tagSet.item.key", equalTo("Name"))
+            .body("DescribeTagsResponse.tagSet.item.value", equalTo("plural-form-reservation"));
+    }
 }

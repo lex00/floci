@@ -463,16 +463,36 @@ public class Ec2QueryHandler {
         return perms;
     }
 
+    // AWS's own query-protocol parameter name for a create call's inline tag
+    // specifications is not consistent action to action: most (RunInstances,
+    // CreateVolume, CreateSecurityGroup, ...) send the singular
+    // "TagSpecification.N.*", but CreateCapacityReservation sends the plural
+    // "TagSpecifications.N.*" - confirmed by capturing the real wire request
+    // a genuine hashicorp/terraform-provider-aws apply sends
+    // (TF_LOG=DEBUG), not by reading the docs alone: "Action=
+    // CreateCapacityReservation&...&TagSpecifications.1.ResourceType=
+    // capacity-reservation&...". Trying the singular form first, and only
+    // falling back to the plural one when it finds nothing, keeps every
+    // existing caller (which all send singular) byte-for-byte unaffected
+    // and fixes the one action that does not.
     private List<Tag> parseTagsForResource(MultivaluedMap<String, String> p, String resourceType) {
+        List<Tag> tags = parseTagsForResource(p, resourceType, "TagSpecification");
+        if (tags.isEmpty()) {
+            tags = parseTagsForResource(p, resourceType, "TagSpecifications");
+        }
+        return tags;
+    }
+
+    private List<Tag> parseTagsForResource(MultivaluedMap<String, String> p, String resourceType, String paramName) {
         List<Tag> tags = new ArrayList<>();
         for (int i = 1; ; i++) {
-            String resType = p.getFirst("TagSpecification." + i + ".ResourceType");
+            String resType = p.getFirst(paramName + "." + i + ".ResourceType");
             if (resType == null) break;
             if (resourceType.equals(resType)) {
                 for (int j = 1; ; j++) {
-                    String key = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Key");
+                    String key = p.getFirst(paramName + "." + i + ".Tag." + j + ".Key");
                     if (key == null) break;
-                    String value = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Value");
+                    String value = p.getFirst(paramName + "." + i + ".Tag." + j + ".Value");
                     tags.add(new Tag(key, value));
                 }
             }
