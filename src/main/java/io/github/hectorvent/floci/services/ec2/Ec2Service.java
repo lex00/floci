@@ -948,6 +948,27 @@ public class Ec2Service implements ContainerTeardown {
                                     Boolean associatePublicIp,
                                     List<BlockDeviceMapping> blockDeviceMappings,
                                     InstanceMetadataRequest metadataOptions) {
+        return runInstances(region, imageId, instanceType, minCount, maxCount, keyName,
+                securityGroupIds, subnetId, clientToken, instanceTags, userData,
+                iamInstanceProfileArn, associatePublicIp, blockDeviceMappings, metadataOptions, null);
+    }
+
+    /**
+     * explicitCreditSpecificationCpuCredits is null when the launch request carried no
+     * CreditSpecification.CpuCredits parameter, meaning "use the instance type family's own
+     * AWS-documented default" (see {@link #defaultCreditSpecification}) rather than "unset" -
+     * a family with no burstable credit model at all (most of them) has no credit
+     * specification, full stop, matching real AWS's DescribeInstances response.
+     */
+    public Reservation runInstances(String region, String imageId, String instanceType,
+                                    int minCount, int maxCount, String keyName,
+                                    List<String> securityGroupIds, String subnetId,
+                                    String clientToken, List<Tag> instanceTags,
+                                    String userData, String iamInstanceProfileArn,
+                                    Boolean associatePublicIp,
+                                    List<BlockDeviceMapping> blockDeviceMappings,
+                                    InstanceMetadataRequest metadataOptions,
+                                    String explicitCreditSpecificationCpuCredits) {
         if (imageId == null || imageId.isBlank()) {
             throw new AwsException("MissingParameter", "The request must contain the parameter ImageId", 400);
         }
@@ -1034,6 +1055,9 @@ public class Ec2Service implements ContainerTeardown {
             inst.setUserData(userData);
             inst.setIamInstanceProfileArn(iamInstanceProfileArn);
             applyInstanceMetadataRequest(inst, metadataOptions);
+            inst.setCreditSpecificationCpuCredits(explicitCreditSpecificationCpuCredits != null
+                    ? explicitCreditSpecificationCpuCredits
+                    : defaultCreditSpecification(effectiveInstanceType));
             if (instanceTags != null && !instanceTags.isEmpty()) {
                 inst.setTags(new ArrayList<>(instanceTags));
                 tags.put(instanceId, new ArrayList<>(instanceTags));
@@ -1221,6 +1245,29 @@ public class Ec2Service implements ContainerTeardown {
                                 .filter(value -> value != null && !value.isBlank())
                                 .findFirst()))
                 .orElse("x86_64");
+    }
+
+    // AWS's own documented burstable-performance families and their own documented default
+    // CpuCredits (https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-performance-instances-how-to.html,
+    // https://aws.amazon.com/ec2/instance-types/t3/): t3/t3a/t4g launch in Unlimited mode by
+    // default, t2 in Standard. Every other family (including the legacy, pre-credit-model t1)
+    // has no credit specification at all - DescribeInstances omits the element entirely for
+    // those, which is why this returns null rather than a fabricated value.
+    private static final java.util.Set<String> UNLIMITED_BY_DEFAULT_FAMILIES = java.util.Set.of("t3", "t3a", "t4g");
+    private static final java.util.Set<String> STANDARD_BY_DEFAULT_FAMILIES = java.util.Set.of("t2");
+
+    private String defaultCreditSpecification(String instanceType) {
+        if (instanceType == null) {
+            return null;
+        }
+        String family = instanceType.contains(".") ? instanceType.substring(0, instanceType.indexOf('.')) : instanceType;
+        if (UNLIMITED_BY_DEFAULT_FAMILIES.contains(family)) {
+            return "unlimited";
+        }
+        if (STANDARD_BY_DEFAULT_FAMILIES.contains(family)) {
+            return "standard";
+        }
+        return null;
     }
 
     public Subnet requireSubnet(String region, String subnetId) {
@@ -1438,6 +1485,24 @@ public class Ec2Service implements ContainerTeardown {
                 .filter(i -> i.getRegion().equals(region))
                 .filter(i -> instanceIds.isEmpty() || instanceIds.contains(i.getInstanceId()))
                 .filter(i -> "running".equals(i.getState().getName()))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Real AWS: an instance with no burstable credit model at all (not t2/t3/t3a/t4g, and
+     * never launched or resized into one) is simply absent from an unfiltered call, and an
+     * explicit instance ID for one of those is an error. This build's callers (Terraform's
+     * aws_instance read path) always pass an explicit instance ID for a type it already knows
+     * is burstable, so the simpler "filter out non-burstable" behavior below is enough; it
+     * never needs to distinguish "not found" from "not burstable" for an unfiltered call
+     * because nothing here calls it unfiltered yet.
+     */
+    public List<Instance> describeInstanceCreditSpecifications(String region, List<String> instanceIds) {
+        ensureDefaultResources(region);
+        return instances.scan(k -> true).stream()
+                .filter(i -> i.getRegion().equals(region))
+                .filter(i -> instanceIds.isEmpty() || instanceIds.contains(i.getInstanceId()))
+                .filter(i -> i.getCreditSpecificationCpuCredits() != null)
                 .collect(Collectors.toList());
     }
 
@@ -5663,7 +5728,16 @@ public class Ec2Service implements ContainerTeardown {
                 if (inst.getPlacement() != null) {
                     ni.setAvailabilityZone(inst.getPlacement().getAvailabilityZone());
                 }
-                ni.getTagSet().addAll(inst.getTags());
+                // A network interface's tags are its OWN, never the instance's. AWS tags
+                // exactly the resource types a RunInstances TagSpecification names, so an
+                // interface created for an instance whose specification said
+                // ResourceType=instance carries no tags at all until something tags the
+                // eni- id itself - and DescribeTags never listed these tags either, so
+                // copying them here made DescribeNetworkInterfaces disagree with
+                // DescribeTags about the same resource. Read the interface's own entry in
+                // the tag store instead: CreateTags on the eni- id writes it, and so does
+                // a RunInstances TagSpecification with ResourceType=network-interface.
+                ni.getTagSet().addAll(effectiveTags(region, eni.getNetworkInterfaceId()));
 
                 NetworkInterfaceAttachment att = new NetworkInterfaceAttachment();
                 att.setAttachmentId(eni.getAttachmentId());

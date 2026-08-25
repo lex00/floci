@@ -671,6 +671,35 @@ class Ec2IntegrationTest {
                     equalTo("arm64"));
     }
 
+    // Terraform's aws_instance resource gates its entire credit_specification read/write path
+    // (DescribeInstanceCreditSpecifications, ModifyInstanceCreditSpecification) on this flag -
+    // findInstanceTypeByName().BurstablePerformanceSupported - before ever calling either, so a
+    // wrong value here silently starves that whole feature rather than raising anything (see
+    // Ec2Service.describeInstanceCreditSpecificationsDefaultsByFamily's own comment).
+    @Test
+    @Order(17)
+    void describeInstanceTypesReportsBurstablePerformanceSupported() {
+        given()
+            .formParam("Action", "DescribeInstanceTypes")
+            .formParam("InstanceType.1", "t3.micro")
+            .formParam("InstanceType.2", "t2.micro")
+            .formParam("InstanceType.3", "t4g.medium")
+            .formParam("InstanceType.4", "m6gd.2xlarge")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeInstanceTypesResponse.instanceTypeSet.item.find { it.instanceType == 't3.micro' }.burstablePerformanceSupported",
+                    equalTo("true"))
+            .body("DescribeInstanceTypesResponse.instanceTypeSet.item.find { it.instanceType == 't2.micro' }.burstablePerformanceSupported",
+                    equalTo("true"))
+            .body("DescribeInstanceTypesResponse.instanceTypeSet.item.find { it.instanceType == 't4g.medium' }.burstablePerformanceSupported",
+                    equalTo("true"))
+            .body("DescribeInstanceTypesResponse.instanceTypeSet.item.find { it.instanceType == 'm6gd.2xlarge' }.burstablePerformanceSupported",
+                    equalTo("false"));
+    }
+
     @Test
     @Order(18)
     void describeLargeGravitonInstanceTypes() {
@@ -1990,6 +2019,97 @@ class Ec2IntegrationTest {
             .body("Response.Errors.Error.Code", equalTo("InvalidParameterValue"));
     }
 
+    // AWS's own documented defaults (burstable-performance-instances-how-to.html): t3/t3a/t4g
+    // launch in Unlimited mode, t2 in Standard, and every other family has no credit
+    // specification at all. CreditSpecification is not a member of the Instance shape
+    // DescribeInstances/RunInstances return (confirmed against botocore's ec2 service-2.json
+    // model) - it only ever comes back through the dedicated
+    // DescribeInstanceCreditSpecifications action, which is what Terraform's aws_instance
+    // resource actually reads credit_specification from.
+    @Test
+    @Order(80)
+    void describeInstanceCreditSpecificationsDefaultsByFamily() {
+        String t3Id = given()
+            .formParam("Action", "RunInstances")
+            .formParam("ImageId", "ami-0abcdef1234567890")
+            .formParam("InstanceType", "t3.micro")
+            .formParam("MinCount", "1")
+            .formParam("MaxCount", "1")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("RunInstancesResponse.instancesSet.item.instanceId");
+
+        String t2Id = given()
+            .formParam("Action", "RunInstances")
+            .formParam("ImageId", "ami-0abcdef1234567890")
+            .formParam("InstanceType", "t2.nano")
+            .formParam("MinCount", "1")
+            .formParam("MaxCount", "1")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("RunInstancesResponse.instancesSet.item.instanceId");
+
+        // A non-burstable family: never appears in the response at all, not with an empty
+        // credit option - real AWS never reports one for m5, and a fabricated one is exactly
+        // the phantom in-place update this whole family of fields exists to prevent.
+        String m5Id = given()
+            .formParam("Action", "RunInstances")
+            .formParam("ImageId", "ami-0abcdef1234567890")
+            .formParam("InstanceType", "m5.large")
+            .formParam("MinCount", "1")
+            .formParam("MaxCount", "1")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("RunInstancesResponse.instancesSet.item.instanceId");
+
+        // An explicit CreditSpecification.CpuCredits overrides the family default in both
+        // directions.
+        String overriddenId = given()
+            .formParam("Action", "RunInstances")
+            .formParam("ImageId", "ami-0abcdef1234567890")
+            .formParam("InstanceType", "t3.micro")
+            .formParam("MinCount", "1")
+            .formParam("MaxCount", "1")
+            .formParam("CreditSpecification.CpuCredits", "standard")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("RunInstancesResponse.instancesSet.item.instanceId");
+
+        given()
+            .formParam("Action", "DescribeInstanceCreditSpecifications")
+            .formParam("InstanceId.1", t3Id)
+            .formParam("InstanceId.2", t2Id)
+            .formParam("InstanceId.3", m5Id)
+            .formParam("InstanceId.4", overriddenId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeInstanceCreditSpecificationsResponse.instanceCreditSpecificationSet.item.size()",
+                    equalTo(3))
+            .body("DescribeInstanceCreditSpecificationsResponse.instanceCreditSpecificationSet.item.find "
+                    + "{ it.instanceId == '" + t3Id + "' }.cpuCredits", equalTo("unlimited"))
+            .body("DescribeInstanceCreditSpecificationsResponse.instanceCreditSpecificationSet.item.find "
+                    + "{ it.instanceId == '" + t2Id + "' }.cpuCredits", equalTo("standard"))
+            // m5Id deliberately excluded from the size()==3 assertion above and from any
+            // per-instance lookup here: non-burstable m5 has no place in this response at all.
+            .body("DescribeInstanceCreditSpecificationsResponse.instanceCreditSpecificationSet.item.find "
+                    + "{ it.instanceId == '" + overriddenId + "' }.cpuCredits", equalTo("standard"));
+    }
+
     @Test
     @Order(81)
     void describeInstances() {
@@ -2386,11 +2506,13 @@ class Ec2IntegrationTest {
             // availabilityZone from instance placement
             .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item[0].availabilityZone",
                     startsWith("us-east-1"))
-            // tagSet propagated from instance tags (created at Order 90)
-            .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item[0].tagSet.item[0].key",
-                    equalTo("Name"))
-            .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item[0].tagSet.item[0].value",
-                    equalTo("test-instance"))
+            // The interface's tagSet is its OWN, never the instance's. The instance
+            // carries Name=test-instance (CreateTags at Order 90) and nothing has
+            // tagged this eni- id, so AWS answers with an empty tagSet here: a
+            // RunInstances TagSpecification tags exactly the resource types it names,
+            // and ec2:DescribeTags never listed these tags for the interface either,
+            // so copying them made two calls disagree about one resource.
+            .body(not(containsString("test-instance")))
             // attachment: attachTime (from instance launchTime) and deleteOnTermination
             .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item[0].attachment.attachTime",
                     notNullValue())
@@ -2487,6 +2609,62 @@ class Ec2IntegrationTest {
     @Test
     @Order(92)
     void describeNetworkInterfacesFilterByTag() {
+        // A tag:N filter matches the interface's own tags, so the interface is tagged
+        // here first. Filtering on the INSTANCE's tags used to match, which is what
+        // describeNetworkInterfacesDoNotInheritInstanceTags now pins the other way.
+        given()
+            .formParam("Action", "CreateTags")
+            .formParam("ResourceId.1", networkInterfaceId)
+            .formParam("Tag.1.Key", "FilterProbe")
+            .formParam("Tag.1.Value", "eni-own-tag")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        given()
+            .formParam("Action", "DescribeNetworkInterfaces")
+            .formParam("Filter.1.Name", "tag:FilterProbe")
+            .formParam("Filter.1.Value.1", "eni-own-tag")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item.size()",
+                    equalTo(1))
+            .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item[0].networkInterfaceId",
+                    equalTo(networkInterfaceId))
+            .body(containsString("FilterProbe"));
+    }
+
+    /**
+     * Issue: DescribeNetworkInterfaces answered with the ATTACHED INSTANCE's tags as
+     * the interface's own tagSet, which AWS never does - RunInstances applies each
+     * TagSpecification to exactly the resource type it names, and this emulator's own
+     * ec2:DescribeTags never listed those tags for the eni- id either, so the two
+     * calls disagreed about one resource.
+     *
+     * <p>Read the promise, not the implementation: the instance carries
+     * Name=test-instance (Order 90) and must still carry it, while no interface in the
+     * account answers a tag:Name filter for it. Before the fix this filter returned the
+     * instance's own interface.
+     */
+    @Test
+    @Order(92)
+    void describeNetworkInterfacesDoNotInheritInstanceTags() {
+        given()
+            .formParam("Action", "DescribeTags")
+            .formParam("Filter.1.Name", "resource-id")
+            .formParam("Filter.1.Value.1", instanceId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body(containsString("test-instance"));
+
         given()
             .formParam("Action", "DescribeNetworkInterfaces")
             .formParam("Filter.1.Name", "tag:Name")
@@ -2497,7 +2675,7 @@ class Ec2IntegrationTest {
         .then()
             .statusCode(200)
             .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item.size()",
-                    greaterThanOrEqualTo(1));
+                    equalTo(0));
     }
 
     @Test
@@ -3773,5 +3951,74 @@ class Ec2IntegrationTest {
             .statusCode(200)
             .body("DescribeSecurityGroupRulesResponse.securityGroupRuleSet.item.securityGroupRuleId",
                     equalTo(ruleId));
+    }
+
+    /**
+     * The other half of "an interface's tags are its own": AWS DOES tag the interfaces
+     * RunInstances creates when the request carries a TagSpecification naming
+     * ResourceType=network-interface, and only then. This launches one instance with
+     * both specifications and asserts each landed on its own resource.
+     *
+     * <p>Runs last, like the other tests that launch extra instances: the
+     * DescribeNetworkInterfaces pagination tests at @Order(92) assert on exact ENI
+     * counts, so the instance is terminated before this returns.
+     */
+    @Test
+    @Order(323)
+    void runInstancesTagsTheInterfaceOnlyWhenTheSpecificationNamesIt() {
+        String taggedInstanceId = given()
+            .formParam("Action", "RunInstances")
+            .formParam("ImageId", "ami-12345678")
+            .formParam("InstanceType", "t3.micro")
+            .formParam("MinCount", "1")
+            .formParam("MaxCount", "1")
+            .formParam("TagSpecification.1.ResourceType", "instance")
+            .formParam("TagSpecification.1.Tag.1.Key", "Name")
+            .formParam("TagSpecification.1.Tag.1.Value", "eni-tagspec-instance")
+            .formParam("TagSpecification.2.ResourceType", "network-interface")
+            .formParam("TagSpecification.2.Tag.1.Key", "Name")
+            .formParam("TagSpecification.2.Tag.1.Value", "eni-tagspec-interface")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("RunInstancesResponse.instancesSet.item.instanceId");
+
+        given()
+            .formParam("Action", "DescribeNetworkInterfaces")
+            .formParam("Filter.1.Name", "attachment.instance-id")
+            .formParam("Filter.1.Value.1", taggedInstanceId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item.size()", equalTo(1))
+            // the interface's own specification, and not the instance's
+            .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item[0].tagSet.item[0].key",
+                    equalTo("Name"))
+            .body("DescribeNetworkInterfacesResponse.networkInterfaceSet.item[0].tagSet.item[0].value",
+                    equalTo("eni-tagspec-interface"))
+            .body(not(containsString("eni-tagspec-instance")));
+
+        given()
+            .formParam("Action", "DescribeInstances")
+            .formParam("InstanceId.1", taggedInstanceId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body(containsString("eni-tagspec-instance"));
+
+        given()
+            .formParam("Action", "TerminateInstances")
+            .formParam("InstanceId.1", taggedInstanceId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
     }
 }

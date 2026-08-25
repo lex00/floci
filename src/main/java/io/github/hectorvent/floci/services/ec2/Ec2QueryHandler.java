@@ -63,6 +63,7 @@ public class Ec2QueryHandler {
                 case "StopInstances" -> handleStopInstances(params, region);
                 case "RebootInstances" -> handleRebootInstances(params, region);
                 case "DescribeInstanceStatus" -> handleDescribeInstanceStatus(params, region);
+                case "DescribeInstanceCreditSpecifications" -> handleDescribeInstanceCreditSpecifications(params, region);
                 case "DescribeInstanceAttribute" -> handleDescribeInstanceAttribute(params, region);
                 case "ModifyInstanceAttribute" -> handleModifyInstanceAttribute(params, region);
                 case "ModifyInstanceMetadataDefaults" -> handleModifyInstanceMetadataDefaults(params, region);
@@ -607,17 +608,26 @@ public class Ec2QueryHandler {
 
         String iamInstanceProfileArn = resolveIamInstanceProfileArn(p);
 
-        // Parse TagSpecifications
+        // Parse TagSpecifications. AWS applies each specification to exactly the
+        // resource type it names, so the interfaces RunInstances creates are tagged
+        // only by a ResourceType=network-interface specification - never by the
+        // instance's own tags.
         List<Tag> instanceTags = new ArrayList<>();
+        List<Tag> networkInterfaceTags = new ArrayList<>();
         for (int i = 1; ; i++) {
             String resType = p.getFirst("TagSpecification." + i + ".ResourceType");
             if (resType == null) break;
-            if ("instance".equals(resType)) {
+            List<Tag> target = switch (resType) {
+                case "instance" -> instanceTags;
+                case "network-interface" -> networkInterfaceTags;
+                default -> null;
+            };
+            if (target != null) {
                 for (int j = 1; ; j++) {
                     String k = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Key");
                     if (k == null) break;
                     String v = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Value");
-                    instanceTags.add(new Tag(k, v));
+                    target.add(new Tag(k, v));
                 }
             }
         }
@@ -643,10 +653,21 @@ public class Ec2QueryHandler {
         }
 
         InstanceMetadataRequest metadataOptions = parseInstanceMetadataRequest(p, "MetadataOptions.");
+        String creditSpecificationCpuCredits = p.getFirst("CreditSpecification.CpuCredits");
 
         Reservation res = service.runInstances(region, imageId, instanceType, minCount, maxCount,
                 keyName, sgIds, subnetId, clientToken, instanceTags, userData, iamInstanceProfileArn,
-                associatePublicIp, blockDeviceMappings, metadataOptions);
+                associatePublicIp, blockDeviceMappings, metadataOptions, creditSpecificationCpuCredits);
+
+        if (!networkInterfaceTags.isEmpty()) {
+            List<String> eniIds = new ArrayList<>();
+            for (Instance inst : res.getInstances()) {
+                inst.getNetworkInterfaces().forEach(eni -> eniIds.add(eni.getNetworkInterfaceId()));
+            }
+            if (!eniIds.isEmpty()) {
+                service.createTags(region, eniIds, networkInterfaceTags);
+            }
+        }
 
         XmlBuilder xml = new XmlBuilder()
                 .start("RunInstancesResponse", AwsNamespaces.EC2)
@@ -874,6 +895,27 @@ public class Ec2QueryHandler {
                     .end("item");
         }
         xml.end("instanceStatusSet").end("DescribeInstanceStatusResponse");
+        return xmlResponse(xml.build());
+    }
+
+    // CreditSpecification is not a member of the Instance shape DescribeInstances/RunInstances
+    // return (confirmed against botocore's own ec2 service-2.json model) - it only ever comes
+    // back through this dedicated action, which Terraform's aws_instance resource reads
+    // credit_specification from.
+    private Response handleDescribeInstanceCreditSpecifications(MultivaluedMap<String, String> p, String region) {
+        List<String> ids = getList(p, "InstanceId");
+        List<Instance> creditedInstances = service.describeInstanceCreditSpecifications(region, ids);
+        XmlBuilder xml = new XmlBuilder()
+                .start("DescribeInstanceCreditSpecificationsResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .start("instanceCreditSpecificationSet");
+        for (Instance inst : creditedInstances) {
+            xml.start("item")
+                    .elem("instanceId", inst.getInstanceId())
+                    .elem("cpuCredits", inst.getCreditSpecificationCpuCredits())
+                    .end("item");
+        }
+        xml.end("instanceCreditSpecificationSet").end("DescribeInstanceCreditSpecificationsResponse");
         return xmlResponse(xml.build());
     }
 
@@ -3017,7 +3059,8 @@ public class Ec2QueryHandler {
                     .start("memoryInfo")
                     .elem("sizeInMiB", String.valueOf(t.get("memoryMib")))
                     .end("memoryInfo")
-                    .elem("instanceStorageSupported", String.valueOf(t.get("instanceStorageSupported")));
+                    .elem("instanceStorageSupported", String.valueOf(t.get("instanceStorageSupported")))
+                    .elem("burstablePerformanceSupported", String.valueOf(t.get("burstablePerformanceSupported")));
             if (Boolean.TRUE.equals(t.get("instanceStorageSupported"))) {
                 xml.start("instanceStorageInfo")
                         .elem("totalSizeInGB", String.valueOf(t.get("localStorageGiB")))
