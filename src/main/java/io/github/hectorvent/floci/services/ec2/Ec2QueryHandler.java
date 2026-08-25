@@ -63,6 +63,7 @@ public class Ec2QueryHandler {
                 case "StopInstances" -> handleStopInstances(params, region);
                 case "RebootInstances" -> handleRebootInstances(params, region);
                 case "DescribeInstanceStatus" -> handleDescribeInstanceStatus(params, region);
+                case "DescribeInstanceCreditSpecifications" -> handleDescribeInstanceCreditSpecifications(params, region);
                 case "DescribeInstanceAttribute" -> handleDescribeInstanceAttribute(params, region);
                 case "ModifyInstanceAttribute" -> handleModifyInstanceAttribute(params, region);
                 case "ModifyInstanceMetadataDefaults" -> handleModifyInstanceMetadataDefaults(params, region);
@@ -643,10 +644,11 @@ public class Ec2QueryHandler {
         }
 
         InstanceMetadataRequest metadataOptions = parseInstanceMetadataRequest(p, "MetadataOptions.");
+        String creditSpecificationCpuCredits = p.getFirst("CreditSpecification.CpuCredits");
 
         Reservation res = service.runInstances(region, imageId, instanceType, minCount, maxCount,
                 keyName, sgIds, subnetId, clientToken, instanceTags, userData, iamInstanceProfileArn,
-                associatePublicIp, blockDeviceMappings, metadataOptions);
+                associatePublicIp, blockDeviceMappings, metadataOptions, creditSpecificationCpuCredits);
 
         XmlBuilder xml = new XmlBuilder()
                 .start("RunInstancesResponse", AwsNamespaces.EC2)
@@ -874,6 +876,27 @@ public class Ec2QueryHandler {
                     .end("item");
         }
         xml.end("instanceStatusSet").end("DescribeInstanceStatusResponse");
+        return xmlResponse(xml.build());
+    }
+
+    // CreditSpecification is not a member of the Instance shape DescribeInstances/RunInstances
+    // return (confirmed against botocore's own ec2 service-2.json model) - it only ever comes
+    // back through this dedicated action, which Terraform's aws_instance resource reads
+    // credit_specification from.
+    private Response handleDescribeInstanceCreditSpecifications(MultivaluedMap<String, String> p, String region) {
+        List<String> ids = getList(p, "InstanceId");
+        List<Instance> creditedInstances = service.describeInstanceCreditSpecifications(region, ids);
+        XmlBuilder xml = new XmlBuilder()
+                .start("DescribeInstanceCreditSpecificationsResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .start("instanceCreditSpecificationSet");
+        for (Instance inst : creditedInstances) {
+            xml.start("item")
+                    .elem("instanceId", inst.getInstanceId())
+                    .elem("cpuCredits", inst.getCreditSpecificationCpuCredits())
+                    .end("item");
+        }
+        xml.end("instanceCreditSpecificationSet").end("DescribeInstanceCreditSpecificationsResponse");
         return xmlResponse(xml.build());
     }
 
@@ -3017,7 +3040,8 @@ public class Ec2QueryHandler {
                     .start("memoryInfo")
                     .elem("sizeInMiB", String.valueOf(t.get("memoryMib")))
                     .end("memoryInfo")
-                    .elem("instanceStorageSupported", String.valueOf(t.get("instanceStorageSupported")));
+                    .elem("instanceStorageSupported", String.valueOf(t.get("instanceStorageSupported")))
+                    .elem("burstablePerformanceSupported", String.valueOf(t.get("burstablePerformanceSupported")));
             if (Boolean.TRUE.equals(t.get("instanceStorageSupported"))) {
                 xml.start("instanceStorageInfo")
                         .elem("totalSizeInGB", String.valueOf(t.get("localStorageGiB")))

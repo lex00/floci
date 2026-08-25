@@ -133,7 +133,27 @@ public class Ec2InstanceTypeCatalog {
             type.put("localStorageGiB", localStorageGiB);
             type.put("supportedArchitectures", List.copyOf(supportedArchitectures));
             type.put("currentGeneration", currentGeneration == null || currentGeneration);
+            type.put("burstablePerformanceSupported", isBurstablePerformanceFamily(instanceType));
             return type;
+        }
+
+        // AWS's own documented set of burstable-performance ("T") families
+        // (https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-performance-instances.html):
+        // t2, t3, t3a, t4g. Terraform's aws_instance resource gates its whole
+        // credit_specification read/write path on DescribeInstanceTypes reporting this flag
+        // (findInstanceTypeByName -> BurstablePerformanceSupported) before ever calling
+        // DescribeInstanceCreditSpecifications or ModifyInstanceCreditSpecification, so leaving
+        // it always false here silently starves that whole feature - see
+        // Ec2Service#defaultCreditSpecification, which shares this exact family set.
+        public static boolean isBurstablePerformanceFamily(String instanceType) {
+            if (instanceType == null) {
+                return false;
+            }
+            String family = instanceType.contains(".") ? instanceType.substring(0, instanceType.indexOf('.')) : instanceType;
+            return switch (family) {
+                case "t2", "t3", "t3a", "t4g" -> true;
+                default -> false;
+            };
         }
     }
 }
