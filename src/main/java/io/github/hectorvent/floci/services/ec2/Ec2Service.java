@@ -2419,6 +2419,73 @@ public class Ec2Service implements ContainerTeardown {
         reconcilePublishedPortsForGroup(region, groupId);
     }
 
+    /**
+     * The other way to name what to revoke: not by (protocol, ports, source) but by the rule ids
+     * DescribeSecurityGroupRules already handed out. The AWS SDK sends these as top-level
+     * {@code SecurityGroupRuleId.N} parameters, sibling to {@code IpPermissions.N} rather than
+     * nested under it, and a caller may use either but not both in one request.
+     *
+     * <p>Terraform's per-rule resources - aws_vpc_security_group_ingress_rule and
+     * aws_vpc_security_group_egress_rule - always revoke this way: a rule's own id is its whole
+     * identity (its port range, protocol and CIDR describe it but do not identify it, since two
+     * rules can share all three), so the id is the only handle the provider's Delete has. Before
+     * this method existed, {@link Ec2QueryHandler} read {@code IpPermissions.N} alone, found it
+     * empty for a rule-id revoke, and forwarded zero permissions to
+     * {@link #revokeSecurityGroupRules} - which does nothing when handed nothing, so the call
+     * returned {@code Return: true} while the rule went on existing. Reusing that same method
+     * here, with permissions rebuilt from the named rules' own stored shape, keeps this on the
+     * one code path that already keeps a security group's own {@code ipPermissions} /
+     * {@code ipPermissionsEgress} summary lists in sync with the flattened rule store.
+     *
+     * <p>A named id that does not resolve to a rule on this group, in this direction, is skipped
+     * rather than failed: AWS's own behaviour for a rule id that no longer exists is to succeed
+     * silently (revoking a security group rule is idempotent), and this mirrors that rather than
+     * inventing a new refusal for it.
+     */
+    public void revokeSecurityGroupRulesByIds(String region, String groupId, List<String> ruleIds, boolean egress) {
+        if (ruleIds.isEmpty()) {
+            return;
+        }
+        List<IpPermission> permissions = new ArrayList<>();
+        for (String ruleId : ruleIds) {
+            SecurityGroupRule rule = securityGroupRules.get(key(region, ruleId)).orElse(null);
+            if (rule == null || !groupId.equals(rule.getGroupId()) || rule.isEgress() != egress) {
+                continue;
+            }
+            permissions.add(ipPermissionFromRule(rule));
+        }
+        revokeSecurityGroupRules(region, groupId, permissions, egress);
+        if (!egress) {
+            reconcilePublishedPortsForGroup(region, groupId);
+        }
+    }
+
+    /**
+     * The inverse of {@link #ruleSourceKey}: rebuilds the one-source {@link IpPermission} a stored
+     * {@link SecurityGroupRule} came from, so a rule found by id can be fed back into
+     * {@link #revokeSecurityGroupRules}'s existing (protocol, ports, source) matching rather than
+     * that logic being duplicated for the id-based path.
+     */
+    private static IpPermission ipPermissionFromRule(SecurityGroupRule rule) {
+        IpPermission perm = new IpPermission();
+        perm.setIpProtocol(rule.getIpProtocol());
+        perm.setFromPort(rule.getFromPort());
+        perm.setToPort(rule.getToPort());
+        if (rule.getCidrIpv4() != null) {
+            perm.setIpRanges(List.of(new IpRange(rule.getCidrIpv4())));
+        } else if (rule.getCidrIpv6() != null) {
+            perm.setIpv6Ranges(List.of(new Ipv6Range(rule.getCidrIpv6())));
+        } else if (rule.getReferencedGroupInfo() != null) {
+            UserIdGroupPair pair = new UserIdGroupPair();
+            pair.setUserId(rule.getReferencedGroupInfo().getUserId());
+            pair.setGroupId(rule.getReferencedGroupInfo().getGroupId());
+            perm.setUserIdGroupPairs(List.of(pair));
+        } else if (rule.getPrefixListId() != null) {
+            perm.setPrefixListIds(List.of(new PrefixListIdReference(rule.getPrefixListId())));
+        }
+        return perm;
+    }
+
     public void revokeSecurityGroupEgress(String region, String groupId, List<IpPermission> permissions) {
         revokeSecurityGroupRules(region, groupId, permissions, true);
     }
