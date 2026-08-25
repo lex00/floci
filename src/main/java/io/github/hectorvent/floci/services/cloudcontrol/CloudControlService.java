@@ -15,7 +15,9 @@ import io.github.hectorvent.floci.services.ec2.model.Instance;
 import io.github.hectorvent.floci.services.ec2.model.LaunchTemplate;
 import io.github.hectorvent.floci.services.ec2.model.Reservation;
 import io.github.hectorvent.floci.services.iam.model.InstanceProfile;
+import io.github.hectorvent.floci.services.ec2.model.ReferencedSecurityGroup;
 import io.github.hectorvent.floci.services.ec2.model.SecurityGroup;
+import io.github.hectorvent.floci.services.ec2.model.SecurityGroupRule;
 import io.github.hectorvent.floci.services.ec2.model.Subnet;
 import io.github.hectorvent.floci.services.ec2.model.Tag;
 import io.github.hectorvent.floci.services.ec2.model.Vpc;
@@ -287,6 +289,8 @@ public class CloudControlService {
             case "AWS::IAM::User" -> users();
             case "AWS::EC2::Instance" -> instances(region);
             case "AWS::EC2::LaunchTemplate" -> launchTemplates(region);
+            case "AWS::EC2::SecurityGroupIngress" -> securityGroupRules(region, false);
+            case "AWS::EC2::SecurityGroupEgress" -> securityGroupRules(region, true);
             case "AWS::IAM::InstanceProfile" -> instanceProfiles();
             case "AWS::IVS::Channel" -> arnListed(ivsService.listChannels(), c -> c.getArn(),
                     c -> c.getName(), c -> c.getTags());
@@ -423,6 +427,60 @@ public class CloudControlService {
             properties.put("VpcId", group.getVpcId());
             addTags(properties, group.getTags());
             resources.add(new ResourceDescription(group.getGroupId(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    /**
+     * lex00/floci#141: AWS::EC2::SecurityGroupIngress and AWS::EC2::SecurityGroupEgress fell
+     * through to {@link CloudControlStoreLister}, which can never find them - both ingress and
+     * egress rules are stored as the SAME class, {@link SecurityGroupRule}, distinguished only
+     * by {@link SecurityGroupRule#isEgress()}, and the store lister's whole design is "the
+     * stored class name says the CFN type" (see its own doc comment): "SecurityGroupRule"
+     * matches neither "SecurityGroupIngress" nor "SecurityGroupEgress" under any of its rules.
+     * So {@code GetResource} 404s on a rule the account's own tag sweep (Resource Groups Tagging
+     * API) finds alive - confirmed against the API directly, no terraform/cloudformation in the
+     * loop, describeSecurityGroupRules and GetResources both show the rule; only Cloud Control's
+     * GetResource, which reads through listResources, does not.
+     *
+     * <p>Mirrors {@link #securityGroups(String)} immediately above: one case per CFN type,
+     * shaped from the owning service's own read API, keyed by the id a client round-trips
+     * (here SecurityGroupRuleId, the same "sgr-…" id DescribeSecurityGroupRules and
+     * DescribeTags/GetResources already use). GroupId is the property choudoufu's own
+     * destroy-ordering fallback needs (it guesses "GroupId" -> "security_group_id"-shaped
+     * argument names against its own provider schema to find which live parent a rule must be
+     * destroyed before); the ingress/egress-specific source/destination and prefix-list
+     * properties are included for the same reason every other case here shapes a model exactly
+     * rather than echoing raw internal field names.
+     */
+    private List<ResourceDescription> securityGroupRules(String region, boolean egress) {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (SecurityGroupRule rule : ec2Service.describeSecurityGroupRules(region, List.of(), List.of())) {
+            if (rule.isEgress() != egress) {
+                continue;
+            }
+            ObjectNode properties = mapper.createObjectNode();
+            putIfPresent(properties, "GroupId", rule.getGroupId());
+            putIfPresent(properties, "SecurityGroupRuleId", rule.getSecurityGroupRuleId());
+            putIfPresent(properties, "IpProtocol", rule.getIpProtocol());
+            if (rule.getFromPort() != null) {
+                properties.put("FromPort", rule.getFromPort());
+            }
+            if (rule.getToPort() != null) {
+                properties.put("ToPort", rule.getToPort());
+            }
+            putIfPresent(properties, "CidrIp", rule.getCidrIpv4());
+            putIfPresent(properties, "CidrIpv6", rule.getCidrIpv6());
+            putIfPresent(properties, "Description", rule.getDescription());
+            ReferencedSecurityGroup ref = rule.getReferencedGroupInfo();
+            if (ref != null && ref.getGroupId() != null) {
+                putIfPresent(properties, egress ? "DestinationSecurityGroupId" : "SourceSecurityGroupId",
+                        ref.getGroupId());
+            }
+            putIfPresent(properties, egress ? "DestinationPrefixListId" : "SourcePrefixListId",
+                    rule.getPrefixListId());
+            addTags(properties, rule.getTags());
+            resources.add(new ResourceDescription(rule.getSecurityGroupRuleId(), propertiesString(properties)));
         }
         return resources;
     }

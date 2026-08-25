@@ -215,6 +215,103 @@ class CloudControlIntegrationTest {
         assertThat(body, containsString(identifier));
     }
 
+    /**
+     * lex00/floci#141: AWS::EC2::SecurityGroupIngress and AWS::EC2::SecurityGroupEgress fell
+     * through to {@link CloudControlStoreLister}, which cannot find them - ingress and egress
+     * rules are stored as the same class ({@code SecurityGroupRule}), distinguished only by an
+     * {@code isEgress} field the lister's class-name matching never looks at - so GetResource
+     * 404s on a rule the account's own tag sweep finds alive. Order(1) above
+     * (getResourceReadsBackATypeTheReadSideDoesNotList) exercises a type with a genuinely no
+     * native list route (AWS::EC2::InternetGateway) via the create-time record fallback, which
+     * would keep passing even if these two types were never wired into listResources - this test
+     * is the one that would fail without this fix, since a rule is created through the ordinary
+     * EC2 API (never through Cloud Control's CreateResource), so its ONLY read route is
+     * listResources.
+     */
+    @Test
+    void getResourceFindsASecurityGroupRuleByIdForBothIngressAndEgress() throws JsonProcessingException {
+        String groupId = given()
+                .formParam("Action", "CreateSecurityGroup")
+                .formParam("GroupName", "cloudcontrol-rule-sg")
+                .formParam("GroupDescription", "cloudcontrol rule sg")
+                .header("Authorization", EC2_AUTH)
+                .when().post("/")
+                .then().statusCode(200)
+                .extract().path("CreateSecurityGroupResponse.groupId");
+
+        String ingressRuleId = given()
+                .formParam("Action", "AuthorizeSecurityGroupIngress")
+                .formParam("GroupId", groupId)
+                .formParam("IpPermissions.1.IpProtocol", "tcp")
+                .formParam("IpPermissions.1.FromPort", "443")
+                .formParam("IpPermissions.1.ToPort", "443")
+                .formParam("IpPermissions.1.IpRanges.1.CidrIp", "0.0.0.0/0")
+                .formParam("TagSpecification.1.ResourceType", "security-group-rule")
+                .formParam("TagSpecification.1.Tag.1.Key", "Name")
+                .formParam("TagSpecification.1.Tag.1.Value", "cloudcontrol-ingress-rule")
+                .header("Authorization", EC2_AUTH)
+                .when().post("/")
+                .then().statusCode(200)
+                .extract().path("AuthorizeSecurityGroupIngressResponse.securityGroupRuleSet.item.securityGroupRuleId");
+
+        String egressRuleId = given()
+                .formParam("Action", "AuthorizeSecurityGroupEgress")
+                .formParam("GroupId", groupId)
+                .formParam("IpPermissions.1.IpProtocol", "tcp")
+                .formParam("IpPermissions.1.FromPort", "8080")
+                .formParam("IpPermissions.1.ToPort", "8080")
+                .formParam("IpPermissions.1.IpRanges.1.CidrIp", "10.0.0.0/16")
+                .formParam("TagSpecification.1.ResourceType", "security-group-rule")
+                .formParam("TagSpecification.1.Tag.1.Key", "Name")
+                .formParam("TagSpecification.1.Tag.1.Value", "cloudcontrol-egress-rule")
+                .header("Authorization", EC2_AUTH)
+                .when().post("/")
+                .then().statusCode(200)
+                .extract().path("AuthorizeSecurityGroupEgressResponse.securityGroupRuleSet.item.securityGroupRuleId");
+
+        assertThat(ingressRuleId, containsString("sgr-"));
+        assertThat(egressRuleId, containsString("sgr-"));
+
+        // ListResources finds each rule under its own type, carrying the GroupId choudoufu's
+        // destroy-ordering fallback reads (see this fix's own class-level doc comment).
+        assertListed("AWS::EC2::SecurityGroupIngress", ingressRuleId, "GroupId");
+        assertListed("AWS::EC2::SecurityGroupEgress", egressRuleId, "GroupId");
+        assertListedWithTag("AWS::EC2::SecurityGroupIngress", ingressRuleId, "Name", "cloudcontrol-ingress-rule");
+        assertListedWithTag("AWS::EC2::SecurityGroupEgress", egressRuleId, "Name", "cloudcontrol-egress-rule");
+
+        // An ingress rule must not appear under SecurityGroupEgress and vice versa - the isEgress
+        // filter has to actually partition the shared store, not just widen what both types see.
+        String ingressListing = listResources("AWS::EC2::SecurityGroupIngress", "application/x-amz-json-1.1");
+        assertThat(ingressListing, org.hamcrest.Matchers.not(containsString(egressRuleId)));
+        String egressListing = listResources("AWS::EC2::SecurityGroupEgress", "application/x-amz-json-1.1");
+        assertThat(egressListing, org.hamcrest.Matchers.not(containsString(ingressRuleId)));
+
+        // GetResource - the exact call choudoufu's resolveOrphanResourceForDependency makes - has
+        // to find the rule by its sgr-… id directly, not just through ListResources.
+        String ct = "application/x-amz-json-1.0";
+        String ingressGet = given()
+                .config(config().encoderConfig(encoderConfig().encodeContentTypeAs(ct, TEXT)))
+                .contentType(ct)
+                .header("X-Amz-Target", "CloudApiService.GetResource")
+                .body("{\"TypeName\":\"AWS::EC2::SecurityGroupIngress\",\"Identifier\":\"" + ingressRuleId + "\"}")
+                .when().post("/")
+                .then().statusCode(200)
+                .extract().asString();
+        assertThat(ingressGet, containsString(ingressRuleId));
+        assertThat(ingressGet, containsString(groupId));
+
+        String egressGet = given()
+                .config(config().encoderConfig(encoderConfig().encodeContentTypeAs(ct, TEXT)))
+                .contentType(ct)
+                .header("X-Amz-Target", "CloudApiService.GetResource")
+                .body("{\"TypeName\":\"AWS::EC2::SecurityGroupEgress\",\"Identifier\":\"" + egressRuleId + "\"}")
+                .when().post("/")
+                .then().statusCode(200)
+                .extract().asString();
+        assertThat(egressGet, containsString(egressRuleId));
+        assertThat(egressGet, containsString(groupId));
+    }
+
     @Test
     void deleteResourceReportsFailureWhenItWouldSilentlyNoOp() {
         String ct = "application/x-amz-json-1.0";
