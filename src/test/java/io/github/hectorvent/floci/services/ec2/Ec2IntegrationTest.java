@@ -3391,6 +3391,77 @@ class Ec2IntegrationTest {
     }
 
     @Test
+    @Order(302)
+    void describeVpcsWithCidrBlockFilterAlias() {
+        // "cidr" is the documented DescribeVpcs filter name for a VPC's primary CIDR block, but
+        // real EC2 also honours the undocumented alias "cidr-block" (confirmed against live AWS
+        // 2026-08-25: a filter naming an unrelated CIDR returns zero VPCs rather than every VPC,
+        // so the service is genuinely filtering, not ignoring the name). Before this fix floci's
+        // Vpc filter switch fell through its `default -> true` arm for "cidr-block" and matched
+        // every VPC regardless of the requested value.
+        String matching = given()
+            .formParam("Action", "CreateVpc")
+            .formParam("CidrBlock", "172.16.0.0/16")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("CreateVpcResponse.vpc.vpcId");
+
+        String other = given()
+            .formParam("Action", "CreateVpc")
+            .formParam("CidrBlock", "10.9.0.0/16")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("CreateVpcResponse.vpc.vpcId");
+
+        // Filtering on the matching VPC's own primary CIDR returns exactly that VPC, not the
+        // whole account (which, thanks to describeDefaultVpc's default VPC and "other" above,
+        // has at least two others in scope).
+        given()
+            .formParam("Action", "DescribeVpcs")
+            .formParam("Filter.1.Name", "cidr-block")
+            .formParam("Filter.1.Value.1", "172.16.0.0/16")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeVpcsResponse.vpcSet.item.size()", equalTo(1))
+            .body("DescribeVpcsResponse.vpcSet.item[0].vpcId", equalTo(matching));
+
+        // A "cidr-block" value that matches no VPC's primary CIDR must return none, not "the
+        // filter was ignored, return everything".
+        given()
+            .formParam("Action", "DescribeVpcs")
+            .formParam("Filter.1.Name", "cidr-block")
+            .formParam("Filter.1.Value.1", "203.0.113.0/24")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeVpcsResponse.vpcSet.item.size()", equalTo(0));
+
+        given()
+            .formParam("Action", "DeleteVpc")
+            .formParam("VpcId", matching)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/");
+        given()
+            .formParam("Action", "DeleteVpc")
+            .formParam("VpcId", other)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/");
+    }
+
+    @Test
     @Order(150)
     void spotInstanceLifecycle() {
         // 1. Request Spot Instance
