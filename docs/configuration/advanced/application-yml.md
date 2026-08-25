@@ -151,6 +151,7 @@ floci:
     iam:
       enabled: true
       enforcement-enabled: false        # Set to true to enforce IAM policies on all requests
+      enforce-for-test-keys: false      # Set to true to enforce against the "test" access key too
       seed-deployer-principal: false    # Set to true to create a local floci-deployer admin principal
 
     elasticache:

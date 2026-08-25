@@ -280,10 +280,16 @@ These identities always bypass enforcement (backward-compatible defaults):
 
 | Identity | Behaviour |
 |---|---|
-| Access key `test` (the default dev credential) | Always allowed — no policy lookup |
+| Access key `test` (the default dev credential) | Always allowed — no policy lookup, unless `enforce-for-test-keys: true` (see below) |
 | Unknown access key (not in IAM store) | Always allowed — backward-compatible with pre-existing keys |
 | No `Authorization` header | Allowed — unauthenticated path (e.g. health checks) |
 | Unresolvable IAM action for the request | Allowed — unknown mappings are permissive |
+
+By default, `test` bypasses enforcement even with `enforcement-enabled: true`, since every local dev flow and most test harnesses sign as `test`. To evaluate policies against `test` too — e.g. to exercise a condition-scoped Allow/Deny from a test harness without provisioning a separate IAM user — set:
+
+```bash
+FLOCI_SERVICES_IAM_ENFORCE_FOR_TEST_KEYS=true
+```
 
 ### Supported policy features
 
@@ -304,6 +310,20 @@ These identities always bypass enforcement (backward-compatible defaults):
 - Supports `...IfExists` variants for all operators.
 
 **Not yet supported**: `NotPrincipal`, resource-based policies (S3 bucket policy, Lambda resource policy).
+
+#### Condition context keys
+
+A `Condition` operator only has something to compare against when the request supplies a value for that key. Coverage is per (service, action) and grows incrementally — an unsupported key is always absent, which makes any condition that requires it fail to match (an Allow with an unmet condition does not apply; it does not fall back to unconditional).
+
+Currently populated:
+
+| Key | Where it comes from | Actions |
+|---|---|---|
+| `s3:prefix`, `s3:delimiter`, `s3:max-keys` | The request's query parameters | `s3:ListBucket` |
+| `aws:RequestTag/<key>` | Tags named in the request itself, before they are applied | `ec2:RunInstances` (`TagSpecification.N`), `ec2:CreateTags` (`Tag.N`), `s3:PutBucketTagging` (the `<Tagging>` XML body) |
+| `aws:ResourceTag/<key>` | The target resource's current tags | `ec2:CreateTags`, `ec2:DeleteTags`, `ec2:TerminateInstances`, `ec2:DescribeInstances` (by `ResourceId.1` / `InstanceId.1`); `s3:GetBucketTagging`, `s3:DeleteBucketTagging`, `s3:DeleteBucket` (by bucket) |
+
+Two simplifications worth knowing before relying on this for a multi-resource proof: `aws:ResourceTag` is read from only the FIRST resource id named in a request (AWS evaluates the condition once per resource in a batch call; this emulator evaluates one resource ARN per request), and EC2 has no per-instance `Resource` ARN pattern matching yet (`ResourceArnBuilder` returns `*` for `ec2`), so EC2 policies that need to be tag-scoped must express that scoping entirely through the `Condition` block rather than the `Resource` pattern.
 
 ### Assumed roles
 

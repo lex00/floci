@@ -30,7 +30,8 @@ import java.util.regex.Pattern;
  * <p>Bypass rules (request is always allowed through):
  * <ul>
  *   <li>Enforcement is disabled (default)</li>
- *   <li>Access key is {@code "test"} (root/admin stand-in)</li>
+ *   <li>Access key is {@code "test"} (root/admin stand-in), unless
+ *       {@code floci.services.iam.enforce-for-test-keys=true}</li>
  *   <li>Access key is not found in the IAM store (backward-compatible with pre-existing credentials)</li>
  *   <li>The action cannot be resolved (unknown mapping → permissive)</li>
  * </ul>
@@ -98,8 +99,11 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         }
 
         String akid = accountResolver.extractAccessKeyId(auth);
-        if (akid == null || "test".equals(akid)) {
-            return; // root bypass
+        if (akid == null) {
+            return;
+        }
+        if ("test".equals(akid) && !config.services().iam().enforceForTestKeys()) {
+            return; // root bypass — every live/e2e estate signs as "test"
         }
 
         String rawScope = extractCredentialScope(auth);

@@ -117,6 +117,7 @@ floci:
     iam:
       enabled: true
       enforcement-enabled: false
+      enforce-for-test-keys: false
       seed-deployer-principal: false
     msk:
       enabled: true
