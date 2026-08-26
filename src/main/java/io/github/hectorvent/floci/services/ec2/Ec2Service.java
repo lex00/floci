@@ -5006,9 +5006,16 @@ public class Ec2Service implements ContainerTeardown {
 
     public List<Address> describeAddresses(String region, List<String> allocationIds, Map<String, List<String>> filters) {
         ensureDefaultResources(region);
+        // #151: this took `filters` as a parameter and never once referenced it in the
+        // body - every DescribeAddresses filter, including the generic "tag:" family that
+        // works against every other resource here, was silently dropped by the caller before
+        // ever reaching matchesFilters. Unlike a missing case in the switch below (where an
+        // unimplemented filter name at least reaches the default arm), this had no path to
+        // filtering at all.
         return addresses.scan(k -> true).stream()
                 .filter(a -> a.getRegion().equals(region))
                 .filter(a -> allocationIds.isEmpty() || allocationIds.contains(a.getAllocationId()))
+                .filter(a -> matchesFilters(a, filters, region))
                 .collect(Collectors.toList());
     }
 
@@ -5536,6 +5543,28 @@ public class Ec2Service implements ContainerTeardown {
                 case "tenancy" -> matchesValue(values, cr.getTenancy());
                 case "state" -> matchesValue(values, cr.getState());
                 case "instance-platform" -> matchesValue(values, cr.getInstancePlatform());
+                default -> true;
+            };
+        }
+        // #151: describeAddresses() previously never called matchesFilters() at all, so
+        // this arm did not exist and every DescribeAddresses filter - resource-specific or the
+        // generic tag: family above - was a silent no-op. These are the AWS-documented
+        // DescribeAddresses filters this store can actually back with real data; two documented
+        // filters (network-border-group, network-interface-owner-id) are omitted because Address
+        // has no such field and fabricating one would be its own wrong answer.
+        if (resource instanceof Address addr) {
+            return switch (filterName) {
+                case "allocation-id" -> matchesValue(values, addr.getAllocationId());
+                case "public-ip" -> matchesValue(values, addr.getPublicIp());
+                case "domain" -> matchesValue(values, addr.getDomain());
+                case "association-id" -> addr.getAssociationId() != null
+                        && matchesValue(values, addr.getAssociationId());
+                case "instance-id" -> addr.getInstanceId() != null
+                        && matchesValue(values, addr.getInstanceId());
+                case "network-interface-id" -> addr.getNetworkInterfaceId() != null
+                        && matchesValue(values, addr.getNetworkInterfaceId());
+                case "private-ip-address" -> addr.getPrivateIpAddress() != null
+                        && matchesValue(values, addr.getPrivateIpAddress());
                 default -> true;
             };
         }

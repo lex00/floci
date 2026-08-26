@@ -1371,6 +1371,148 @@ class Ec2IntegrationTest {
             .statusCode(200);
     }
 
+    @Test
+    @Order(38)
+    void describeAddressesFiltersByTagAndPublicIp() {
+        // Issue #151: Ec2Service.describeAddresses took a `filters` parameter and never
+        // referenced it anywhere in its body - not a missing case in a switch (like #150,
+        // #152, #153) but the whole parameter dropped before any filtering could happen. This
+        // asserts both halves of the fix: the generic "tag:" family (which needed nothing but
+        // the parameter actually reaching matchesFilters()) and a resource-specific field
+        // filter this fix adds ("public-ip"), each with its positive and negative case. A
+        // no-op filter cannot produce the negative case - it has no way to return fewer
+        // addresses than an unfiltered call would.
+        //
+        // Self-contained: allocates and releases its own two addresses rather than touching
+        // the class's shared `allocationId` static field, and scopes every query with a
+        // per-test tag so pre-existing addresses from other tests can't change the counts.
+        String suiteTag = "eip-filter-suite-151";
+
+        String targetAllocationId = given()
+            .formParam("Action", "AllocateAddress")
+            .formParam("Domain", "vpc")
+            .formParam("TagSpecification.1.ResourceType", "elastic-ip")
+            .formParam("TagSpecification.1.Tag.1.Key", "Role")
+            .formParam("TagSpecification.1.Tag.1.Value", "target")
+            .formParam("TagSpecification.1.Tag.2.Key", "Suite")
+            .formParam("TagSpecification.1.Tag.2.Value", suiteTag)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("AllocateAddressResponse.allocationId");
+
+        String targetPublicIp = given()
+            .formParam("Action", "DescribeAddresses")
+            .formParam("AllocationId.1", targetAllocationId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("DescribeAddressesResponse.addressesSet.item.publicIp");
+
+        String decoyAllocationId = given()
+            .formParam("Action", "AllocateAddress")
+            .formParam("Domain", "vpc")
+            .formParam("TagSpecification.1.ResourceType", "elastic-ip")
+            .formParam("TagSpecification.1.Tag.1.Key", "Role")
+            .formParam("TagSpecification.1.Tag.1.Value", "decoy")
+            .formParam("TagSpecification.1.Tag.2.Key", "Suite")
+            .formParam("TagSpecification.1.Tag.2.Value", suiteTag)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("AllocateAddressResponse.allocationId");
+
+        // Positive, tag: family: narrowed to this suite (Suite=<suiteTag>), then further
+        // narrowed to Role=target, returns exactly the target address.
+        given()
+            .formParam("Action", "DescribeAddresses")
+            .formParam("Filter.1.Name", "tag:Suite")
+            .formParam("Filter.1.Value.1", suiteTag)
+            .formParam("Filter.2.Name", "tag:Role")
+            .formParam("Filter.2.Value.1", "target")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeAddressesResponse.addressesSet.item.size()", equalTo(1))
+            .body("DescribeAddressesResponse.addressesSet.item.allocationId", equalTo(targetAllocationId));
+
+        // Negative, tag: family: a Role value that cannot match anything in this suite must
+        // return zero addresses, not both of them (or all addresses in the account, which is
+        // what the unpatched code returned regardless of any filter).
+        given()
+            .formParam("Action", "DescribeAddresses")
+            .formParam("Filter.1.Name", "tag:Suite")
+            .formParam("Filter.1.Value.1", suiteTag)
+            .formParam("Filter.2.Name", "tag:Role")
+            .formParam("Filter.2.Value.1", "nonexistent-role-xyz")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeAddressesResponse.addressesSet.item.size()", equalTo(0));
+
+        // Positive, resource-specific field filter: "public-ip" narrows to exactly the
+        // address with that public IP.
+        given()
+            .formParam("Action", "DescribeAddresses")
+            .formParam("Filter.1.Name", "tag:Suite")
+            .formParam("Filter.1.Value.1", suiteTag)
+            .formParam("Filter.2.Name", "public-ip")
+            .formParam("Filter.2.Value.1", targetPublicIp)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeAddressesResponse.addressesSet.item.size()", equalTo(1))
+            .body("DescribeAddressesResponse.addressesSet.item.allocationId", equalTo(targetAllocationId));
+
+        // Negative, resource-specific field filter: floci's synthesized public IPs always
+        // start with "54." (Ec2Service.allocateAddress), so an RFC 5737 TEST-NET-3 address is
+        // guaranteed not to match anything this test (or any other) could have allocated.
+        given()
+            .formParam("Action", "DescribeAddresses")
+            .formParam("Filter.1.Name", "tag:Suite")
+            .formParam("Filter.1.Value.1", suiteTag)
+            .formParam("Filter.2.Name", "public-ip")
+            .formParam("Filter.2.Value.1", "203.0.113.99")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeAddressesResponse.addressesSet.item.size()", equalTo(0));
+
+        given()
+            .formParam("Action", "ReleaseAddress")
+            .formParam("AllocationId", targetAllocationId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        given()
+            .formParam("Action", "ReleaseAddress")
+            .formParam("AllocationId", decoyAllocationId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+    }
+
+
+
     // =========================================================================
     // Key Pairs
     // =========================================================================
