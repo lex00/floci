@@ -1276,6 +1276,101 @@ class Ec2IntegrationTest {
             .body(containsString("<ipProtocol>-1</ipProtocol>"));
     }
 
+    @Test
+    @Order(37)
+    void describeSecurityGroupsFiltersByDescription() {
+        // Issue #150: DescribeSecurityGroups' "description" filter (a real, AWS-documented
+        // filter) must actually narrow the result set to groups whose description matches
+        // the given value, not merely accept the filter name and return every group
+        // unconditionally. A permissive no-op would still pass a check that only asserts
+        // "my group is somewhere in the results", so this asserts an exact result set for
+        // both a matching and (crucially) a non-matching value: the negative case is what a
+        // no-op filter fails, since it has no way to return fewer groups than an unfiltered
+        // call would.
+        //
+        // Self-contained (own VPC, not the class's shared `vpcId`/`securityGroupId`): this
+        // lets the test run in isolation (`-Dtest=...#describeSecurityGroupsFiltersByDescription`)
+        // without depending on createVpc/createSecurityGroup at @Order(10)/@Order(30) having
+        // already populated those static fields, and it is how this test was proven
+        // load-bearing against the unfixed code.
+        String testVpcId = given()
+            .formParam("Action", "CreateVpc")
+            .formParam("CidrBlock", "10.99.0.0/16")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("CreateVpcResponse.vpc.vpcId");
+
+        String targetGroupId = given()
+            .formParam("Action", "CreateSecurityGroup")
+            .formParam("GroupName", "description-filter-target")
+            .formParam("GroupDescription", "A security group")
+            .formParam("VpcId", testVpcId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("CreateSecurityGroupResponse.groupId");
+
+        given()
+            .formParam("Action", "CreateSecurityGroup")
+            .formParam("GroupName", "description-filter-decoy")
+            .formParam("GroupDescription", "A totally different description")
+            .formParam("VpcId", testVpcId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        // Positive case: filtering by the exact description of `targetGroupId` returns
+        // exactly that one group out of the three now in this VPC (its own default group,
+        // the decoy, and the target) - not the decoy, and not the default group.
+        given()
+            .formParam("Action", "DescribeSecurityGroups")
+            .formParam("Filter.1.Name", "vpc-id")
+            .formParam("Filter.1.Value.1", testVpcId)
+            .formParam("Filter.2.Name", "description")
+            .formParam("Filter.2.Value.1", "A security group")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeSecurityGroupsResponse.securityGroupInfo.item.size()", equalTo(1))
+            .body("DescribeSecurityGroupsResponse.securityGroupInfo.item.groupId",
+                    equalTo(targetGroupId));
+
+        // Negative case: a description value that cannot match anything in the store must
+        // return zero groups. An unimplemented filter (falling through to a "default ->
+        // true" arm) gets exactly this case wrong: it returns every group in the vpc
+        // regardless of the value asked for, including one guaranteed not to match anything.
+        given()
+            .formParam("Action", "DescribeSecurityGroups")
+            .formParam("Filter.1.Name", "vpc-id")
+            .formParam("Filter.1.Value.1", testVpcId)
+            .formParam("Filter.2.Name", "description")
+            .formParam("Filter.2.Value.1", "nonexistent-string-xyz")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeSecurityGroupsResponse.securityGroupInfo.item.size()", equalTo(0));
+
+        given()
+            .formParam("Action", "DeleteVpc")
+            .formParam("VpcId", testVpcId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+    }
+
     // =========================================================================
     // Key Pairs
     // =========================================================================

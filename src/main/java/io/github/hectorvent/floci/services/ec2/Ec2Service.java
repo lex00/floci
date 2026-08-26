@@ -5376,6 +5376,13 @@ public class Ec2Service implements ContainerTeardown {
                 case "group-id" -> matchesValue(values, sg.getGroupId());
                 case "group-name" -> matchesValue(values, sg.getGroupName());
                 case "vpc-id" -> matchesValue(values, sg.getVpcId());
+                // "description" is a documented DescribeSecurityGroups filter matching the
+                // group's description exactly (wildcards allowed), same as every other
+                // resource-specific field filter here. Before this fix the switch's default
+                // arm silently matched every group regardless of value, which is
+                // indistinguishable from "no filter" and let an order-unspecified list slip
+                // past a caller that assumed the filter had actually narrowed it (#150).
+                case "description" -> matchesValue(values, sg.getDescription());
                 default -> true;
             };
         }
