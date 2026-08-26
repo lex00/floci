@@ -31,8 +31,46 @@ env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/floci
 
 jobs:
+  # Gate: the build/merge jobs below must not run unless the suite is green.
+  # This duplicates ci.yml's test steps rather than depending on the CI
+  # workflow's own run (workflow_run) or calling into it (workflow_call).
+  # Why:
+  #   - ghcr-publish triggers on two event shapes: push-to-main AND
+  #     version-tag push. ci.yml's own trigger has no `tags:` clause at all,
+  #     so a workflow_run chained on "CI"'s completion would never fire for
+  #     tag pushes - the release path would stay permanently ungated. A test
+  #     job inside this workflow runs regardless of which trigger fired.
+  #   - workflow_run also reads the *listening* workflow off the default
+  #     branch and requires an explicit `conclusion == 'success'` check on
+  #     every job that depends on it; forgetting that check silently
+  #     re-opens the exact hole this change closes. A same-run `needs:` has
+  #     no such footgun - the dependent job simply cannot start.
+  #   - workflow_call would avoid duplicating the test steps, but only
+  #     avoids duplicating the *test run* if ci.yml's own push-to-main
+  #     trigger is also removed, which pulls ci.yml into this change and
+  #     couples the two files' trigger design together.
+  # Cost accepted: `mvn test` runs twice on an ordinary push to main (once
+  # here, once in ci.yml's own push trigger) - this is a low-traffic fork
+  # merged in batches, so the CI-minutes cost is worth never publishing red.
+  test:
+    name: Test suite (publish gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-java@v5.6.0
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Run tests
+        run: mvn test -B
+
   build:
     name: build ${{ matrix.platform }}
+    needs: test
     strategy:
       fail-fast: false
       matrix:
