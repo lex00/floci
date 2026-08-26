@@ -5445,7 +5445,18 @@ public class Ec2Service implements ContainerTeardown {
                 case "vpc-endpoint-id" -> matchesValue(values, endpoint.getVpcEndpointId());
                 case "vpc-endpoint-type" -> matchesValue(values, endpoint.getVpcEndpointType());
                 case "vpc-id" -> matchesValue(values, endpoint.getVpcId());
-                case "state" -> matchesValue(values, endpoint.getState());
+                // AWS documents this filter as "vpc-endpoint-state", not "state" (#153; see
+                // DescribeVpcEndpoints in the EC2 API reference). The previous key was a
+                // silent rename: a real caller sending the documented name fell through the
+                // default arm below and got every endpoint back unfiltered, while only a
+                // caller that happened to guess the undocumented "state" key got real
+                // filtering. There is no evidence real AWS accepts "state" as an alias here
+                // (unlike Vpc's confirmed cidr/cidr-block alias below), so this is a rename,
+                // not an addition - a caller relying on the old, non-AWS key now gets the same
+                // permissive default-arm behavior as any other unrecognized filter name, which
+                // is the general fallthrough problem tracked separately, not something this
+                // fix should paper over by inventing a second accepted name.
+                case "vpc-endpoint-state" -> matchesValue(values, endpoint.getState());
                 case "route-table-id" -> endpoint.getRouteTableIds().stream()
                         .anyMatch(routeTableId -> matchesValue(values, routeTableId));
                 case "subnet-id" -> endpoint.getSubnetIds().stream()

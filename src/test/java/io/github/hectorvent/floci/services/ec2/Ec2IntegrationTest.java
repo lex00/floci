@@ -1590,6 +1590,95 @@ class Ec2IntegrationTest {
             .statusCode(200);
     }
 
+    @Test
+    @Order(38)
+    void describeVpcEndpointsFiltersByVpcEndpointState() {
+        // Issue #153: DescribeVpcEndpoints implemented a filter under the key "state", but
+        // AWS documents this filter as "vpc-endpoint-state". That made it a silent rename
+        // rather than a missing case: a real caller sending the AWS-documented name fell
+        // through the default arm and got every endpoint back regardless of its actual state.
+        // This is what the negative case here catches - filtering by a state ("pending") that
+        // this emulator's one synthesized endpoint (always "available") can never be in must
+        // return zero endpoints, not the endpoint anyway.
+        //
+        // Self-contained: its own VPC and its own Gateway endpoint (no RouteTableId needed -
+        // createVpcEndpoint only validates route table ids that are actually supplied), rather
+        // than the class's shared `vpcId`/`vpcEndpointId`.
+        String testVpcId = given()
+            .formParam("Action", "CreateVpc")
+            .formParam("CidrBlock", "10.98.0.0/16")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("CreateVpcResponse.vpc.vpcId");
+
+        String testEndpointId = given()
+            .formParam("Action", "CreateVpcEndpoint")
+            .formParam("VpcId", testVpcId)
+            .formParam("ServiceName", "com.amazonaws.us-east-1.s3")
+            .formParam("VpcEndpointType", "Gateway")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("CreateVpcEndpointResponse.vpcEndpoint.vpcEndpointId");
+
+        // Positive: the endpoint is (and can only ever be, in this emulator) "available", so
+        // filtering this VPC's endpoints by vpc-endpoint-state=available returns exactly it.
+        given()
+            .formParam("Action", "DescribeVpcEndpoints")
+            .formParam("Filter.1.Name", "vpc-id")
+            .formParam("Filter.1.Value.1", testVpcId)
+            .formParam("Filter.2.Name", "vpc-endpoint-state")
+            .formParam("Filter.2.Value.1", "available")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeVpcEndpointsResponse.vpcEndpointSet.item.size()", equalTo(1))
+            .body("DescribeVpcEndpointsResponse.vpcEndpointSet.item.vpcEndpointId",
+                    equalTo(testEndpointId));
+
+        // Negative: a real AWS endpoint state ("pending") that no endpoint in this VPC is
+        // actually in must return zero endpoints. Under the old "state" key with the wrong
+        // documented name, or under any unimplemented filter name, this returns the endpoint
+        // anyway because the default arm ignores the value entirely.
+        given()
+            .formParam("Action", "DescribeVpcEndpoints")
+            .formParam("Filter.1.Name", "vpc-id")
+            .formParam("Filter.1.Value.1", testVpcId)
+            .formParam("Filter.2.Name", "vpc-endpoint-state")
+            .formParam("Filter.2.Value.1", "pending")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeVpcEndpointsResponse.vpcEndpointSet.item.size()", equalTo(0));
+
+        given()
+            .formParam("Action", "DeleteVpcEndpoints")
+            .formParam("VpcEndpointId.1", testEndpointId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        given()
+            .formParam("Action", "DeleteVpc")
+            .formParam("VpcId", testVpcId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+    }
+
     // =========================================================================
     // Key Pairs
     // =========================================================================
