@@ -1276,6 +1276,409 @@ class Ec2IntegrationTest {
             .body(containsString("<ipProtocol>-1</ipProtocol>"));
     }
 
+    @Test
+    @Order(37)
+    void describeSecurityGroupsFiltersByDescription() {
+        // Issue #150: DescribeSecurityGroups' "description" filter (a real, AWS-documented
+        // filter) must actually narrow the result set to groups whose description matches
+        // the given value, not merely accept the filter name and return every group
+        // unconditionally. A permissive no-op would still pass a check that only asserts
+        // "my group is somewhere in the results", so this asserts an exact result set for
+        // both a matching and (crucially) a non-matching value: the negative case is what a
+        // no-op filter fails, since it has no way to return fewer groups than an unfiltered
+        // call would.
+        //
+        // Self-contained (own VPC, not the class's shared `vpcId`/`securityGroupId`): this
+        // lets the test run in isolation (`-Dtest=...#describeSecurityGroupsFiltersByDescription`)
+        // without depending on createVpc/createSecurityGroup at @Order(10)/@Order(30) having
+        // already populated those static fields, and it is how this test was proven
+        // load-bearing against the unfixed code.
+        String testVpcId = given()
+            .formParam("Action", "CreateVpc")
+            .formParam("CidrBlock", "10.99.0.0/16")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("CreateVpcResponse.vpc.vpcId");
+
+        String targetGroupId = given()
+            .formParam("Action", "CreateSecurityGroup")
+            .formParam("GroupName", "description-filter-target")
+            .formParam("GroupDescription", "A security group")
+            .formParam("VpcId", testVpcId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("CreateSecurityGroupResponse.groupId");
+
+        given()
+            .formParam("Action", "CreateSecurityGroup")
+            .formParam("GroupName", "description-filter-decoy")
+            .formParam("GroupDescription", "A totally different description")
+            .formParam("VpcId", testVpcId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        // Positive case: filtering by the exact description of `targetGroupId` returns
+        // exactly that one group out of the three now in this VPC (its own default group,
+        // the decoy, and the target) - not the decoy, and not the default group.
+        given()
+            .formParam("Action", "DescribeSecurityGroups")
+            .formParam("Filter.1.Name", "vpc-id")
+            .formParam("Filter.1.Value.1", testVpcId)
+            .formParam("Filter.2.Name", "description")
+            .formParam("Filter.2.Value.1", "A security group")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeSecurityGroupsResponse.securityGroupInfo.item.size()", equalTo(1))
+            .body("DescribeSecurityGroupsResponse.securityGroupInfo.item.groupId",
+                    equalTo(targetGroupId));
+
+        // Negative case: a description value that cannot match anything in the store must
+        // return zero groups. An unimplemented filter (falling through to a "default ->
+        // true" arm) gets exactly this case wrong: it returns every group in the vpc
+        // regardless of the value asked for, including one guaranteed not to match anything.
+        given()
+            .formParam("Action", "DescribeSecurityGroups")
+            .formParam("Filter.1.Name", "vpc-id")
+            .formParam("Filter.1.Value.1", testVpcId)
+            .formParam("Filter.2.Name", "description")
+            .formParam("Filter.2.Value.1", "nonexistent-string-xyz")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeSecurityGroupsResponse.securityGroupInfo.item.size()", equalTo(0));
+
+        given()
+            .formParam("Action", "DeleteVpc")
+            .formParam("VpcId", testVpcId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+    }
+
+    @Test
+    @Order(38)
+    void describeAddressesFiltersByTagAndPublicIp() {
+        // Issue #151: Ec2Service.describeAddresses took a `filters` parameter and never
+        // referenced it anywhere in its body - not a missing case in a switch (like #150,
+        // #152, #153) but the whole parameter dropped before any filtering could happen. This
+        // asserts both halves of the fix: the generic "tag:" family (which needed nothing but
+        // the parameter actually reaching matchesFilters()) and a resource-specific field
+        // filter this fix adds ("public-ip"), each with its positive and negative case. A
+        // no-op filter cannot produce the negative case - it has no way to return fewer
+        // addresses than an unfiltered call would.
+        //
+        // Self-contained: allocates and releases its own two addresses rather than touching
+        // the class's shared `allocationId` static field, and scopes every query with a
+        // per-test tag so pre-existing addresses from other tests can't change the counts.
+        String suiteTag = "eip-filter-suite-151";
+
+        String targetAllocationId = given()
+            .formParam("Action", "AllocateAddress")
+            .formParam("Domain", "vpc")
+            .formParam("TagSpecification.1.ResourceType", "elastic-ip")
+            .formParam("TagSpecification.1.Tag.1.Key", "Role")
+            .formParam("TagSpecification.1.Tag.1.Value", "target")
+            .formParam("TagSpecification.1.Tag.2.Key", "Suite")
+            .formParam("TagSpecification.1.Tag.2.Value", suiteTag)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("AllocateAddressResponse.allocationId");
+
+        String targetPublicIp = given()
+            .formParam("Action", "DescribeAddresses")
+            .formParam("AllocationId.1", targetAllocationId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("DescribeAddressesResponse.addressesSet.item.publicIp");
+
+        String decoyAllocationId = given()
+            .formParam("Action", "AllocateAddress")
+            .formParam("Domain", "vpc")
+            .formParam("TagSpecification.1.ResourceType", "elastic-ip")
+            .formParam("TagSpecification.1.Tag.1.Key", "Role")
+            .formParam("TagSpecification.1.Tag.1.Value", "decoy")
+            .formParam("TagSpecification.1.Tag.2.Key", "Suite")
+            .formParam("TagSpecification.1.Tag.2.Value", suiteTag)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("AllocateAddressResponse.allocationId");
+
+        // Positive, tag: family: narrowed to this suite (Suite=<suiteTag>), then further
+        // narrowed to Role=target, returns exactly the target address.
+        given()
+            .formParam("Action", "DescribeAddresses")
+            .formParam("Filter.1.Name", "tag:Suite")
+            .formParam("Filter.1.Value.1", suiteTag)
+            .formParam("Filter.2.Name", "tag:Role")
+            .formParam("Filter.2.Value.1", "target")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeAddressesResponse.addressesSet.item.size()", equalTo(1))
+            .body("DescribeAddressesResponse.addressesSet.item.allocationId", equalTo(targetAllocationId));
+
+        // Negative, tag: family: a Role value that cannot match anything in this suite must
+        // return zero addresses, not both of them (or all addresses in the account, which is
+        // what the unpatched code returned regardless of any filter).
+        given()
+            .formParam("Action", "DescribeAddresses")
+            .formParam("Filter.1.Name", "tag:Suite")
+            .formParam("Filter.1.Value.1", suiteTag)
+            .formParam("Filter.2.Name", "tag:Role")
+            .formParam("Filter.2.Value.1", "nonexistent-role-xyz")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeAddressesResponse.addressesSet.item.size()", equalTo(0));
+
+        // Positive, resource-specific field filter: "public-ip" narrows to exactly the
+        // address with that public IP.
+        given()
+            .formParam("Action", "DescribeAddresses")
+            .formParam("Filter.1.Name", "tag:Suite")
+            .formParam("Filter.1.Value.1", suiteTag)
+            .formParam("Filter.2.Name", "public-ip")
+            .formParam("Filter.2.Value.1", targetPublicIp)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeAddressesResponse.addressesSet.item.size()", equalTo(1))
+            .body("DescribeAddressesResponse.addressesSet.item.allocationId", equalTo(targetAllocationId));
+
+        // Negative, resource-specific field filter: floci's synthesized public IPs always
+        // start with "54." (Ec2Service.allocateAddress), so an RFC 5737 TEST-NET-3 address is
+        // guaranteed not to match anything this test (or any other) could have allocated.
+        given()
+            .formParam("Action", "DescribeAddresses")
+            .formParam("Filter.1.Name", "tag:Suite")
+            .formParam("Filter.1.Value.1", suiteTag)
+            .formParam("Filter.2.Name", "public-ip")
+            .formParam("Filter.2.Value.1", "203.0.113.99")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeAddressesResponse.addressesSet.item.size()", equalTo(0));
+
+        given()
+            .formParam("Action", "ReleaseAddress")
+            .formParam("AllocationId", targetAllocationId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        given()
+            .formParam("Action", "ReleaseAddress")
+            .formParam("AllocationId", decoyAllocationId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+    }
+
+    @Test
+    @Order(38)
+    void describeInstancesFiltersByImageId() {
+        // Issue #152: DescribeInstances' "image-id" filter (a real, AWS-documented filter -
+        // "The ID of the image used to launch the instance") fell through matchesFilter's
+        // Instance arm's `default -> true`, so it matched every instance in the region
+        // regardless of the AMI it was launched from. Same shape as #150: positive case plus
+        // the negative case a permissive no-op filter cannot pass.
+        //
+        // Self-contained: launches its own two instances with made-up ImageIds unique to this
+        // test (so no other fixture's instances can be mistaken for a match) and terminates
+        // both at the end, rather than touching the class's shared `instanceId` static field.
+        String targetInstanceId = given()
+            .formParam("Action", "RunInstances")
+            .formParam("ImageId", "ami-filter-target-152")
+            .formParam("InstanceType", "t3.micro")
+            .formParam("MinCount", "1")
+            .formParam("MaxCount", "1")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("RunInstancesResponse.instancesSet.item.instanceId");
+
+        String decoyInstanceId = given()
+            .formParam("Action", "RunInstances")
+            .formParam("ImageId", "ami-filter-decoy-152")
+            .formParam("InstanceType", "t3.micro")
+            .formParam("MinCount", "1")
+            .formParam("MaxCount", "1")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("RunInstancesResponse.instancesSet.item.instanceId");
+
+        // Positive: filtering by the target's exact image-id returns exactly that instance,
+        // not the decoy (launched from a different image-id) and not any other instance
+        // already running from earlier tests in this suite.
+        given()
+            .formParam("Action", "DescribeInstances")
+            .formParam("Filter.1.Name", "image-id")
+            .formParam("Filter.1.Value.1", "ami-filter-target-152")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeInstancesResponse.reservationSet.item.instancesSet.item.instanceId",
+                    equalTo(targetInstanceId));
+
+        // Negative: an image-id that was never used to launch anything must return zero
+        // instances. An unimplemented filter (falling through to `default -> true`) gets
+        // exactly this case wrong: it returns every instance in the region regardless of the
+        // value asked for.
+        given()
+            .formParam("Action", "DescribeInstances")
+            .formParam("Filter.1.Name", "image-id")
+            .formParam("Filter.1.Value.1", "ami-does-not-exist-anywhere-152")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeInstancesResponse.reservationSet.item.size()", equalTo(0));
+
+        given()
+            .formParam("Action", "TerminateInstances")
+            .formParam("InstanceId.1", targetInstanceId)
+            .formParam("InstanceId.2", decoyInstanceId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+    }
+
+    @Test
+    @Order(38)
+    void describeVpcEndpointsFiltersByVpcEndpointState() {
+        // Issue #153: DescribeVpcEndpoints implemented a filter under the key "state", but
+        // AWS documents this filter as "vpc-endpoint-state". That made it a silent rename
+        // rather than a missing case: a real caller sending the AWS-documented name fell
+        // through the default arm and got every endpoint back regardless of its actual state.
+        // This is what the negative case here catches - filtering by a state ("pending") that
+        // this emulator's one synthesized endpoint (always "available") can never be in must
+        // return zero endpoints, not the endpoint anyway.
+        //
+        // Self-contained: its own VPC and its own Gateway endpoint (no RouteTableId needed -
+        // createVpcEndpoint only validates route table ids that are actually supplied), rather
+        // than the class's shared `vpcId`/`vpcEndpointId`.
+        String testVpcId = given()
+            .formParam("Action", "CreateVpc")
+            .formParam("CidrBlock", "10.98.0.0/16")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("CreateVpcResponse.vpc.vpcId");
+
+        String testEndpointId = given()
+            .formParam("Action", "CreateVpcEndpoint")
+            .formParam("VpcId", testVpcId)
+            .formParam("ServiceName", "com.amazonaws.us-east-1.s3")
+            .formParam("VpcEndpointType", "Gateway")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("CreateVpcEndpointResponse.vpcEndpoint.vpcEndpointId");
+
+        // Positive: the endpoint is (and can only ever be, in this emulator) "available", so
+        // filtering this VPC's endpoints by vpc-endpoint-state=available returns exactly it.
+        given()
+            .formParam("Action", "DescribeVpcEndpoints")
+            .formParam("Filter.1.Name", "vpc-id")
+            .formParam("Filter.1.Value.1", testVpcId)
+            .formParam("Filter.2.Name", "vpc-endpoint-state")
+            .formParam("Filter.2.Value.1", "available")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeVpcEndpointsResponse.vpcEndpointSet.item.size()", equalTo(1))
+            .body("DescribeVpcEndpointsResponse.vpcEndpointSet.item.vpcEndpointId",
+                    equalTo(testEndpointId));
+
+        // Negative: a real AWS endpoint state ("pending") that no endpoint in this VPC is
+        // actually in must return zero endpoints. Under the old "state" key with the wrong
+        // documented name, or under any unimplemented filter name, this returns the endpoint
+        // anyway because the default arm ignores the value entirely.
+        given()
+            .formParam("Action", "DescribeVpcEndpoints")
+            .formParam("Filter.1.Name", "vpc-id")
+            .formParam("Filter.1.Value.1", testVpcId)
+            .formParam("Filter.2.Name", "vpc-endpoint-state")
+            .formParam("Filter.2.Value.1", "pending")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeVpcEndpointsResponse.vpcEndpointSet.item.size()", equalTo(0));
+
+        given()
+            .formParam("Action", "DeleteVpcEndpoints")
+            .formParam("VpcEndpointId.1", testEndpointId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        given()
+            .formParam("Action", "DeleteVpc")
+            .formParam("VpcId", testVpcId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+    }
+
     // =========================================================================
     // Key Pairs
     // =========================================================================

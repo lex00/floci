@@ -5006,9 +5006,16 @@ public class Ec2Service implements ContainerTeardown {
 
     public List<Address> describeAddresses(String region, List<String> allocationIds, Map<String, List<String>> filters) {
         ensureDefaultResources(region);
+        // #151: this took `filters` as a parameter and never once referenced it in the
+        // body - every DescribeAddresses filter, including the generic "tag:" family that
+        // works against every other resource here, was silently dropped by the caller before
+        // ever reaching matchesFilters. Unlike a missing case in the switch below (where an
+        // unimplemented filter name at least reaches the default arm), this had no path to
+        // filtering at all.
         return addresses.scan(k -> true).stream()
                 .filter(a -> a.getRegion().equals(region))
                 .filter(a -> allocationIds.isEmpty() || allocationIds.contains(a.getAllocationId()))
+                .filter(a -> matchesFilters(a, filters, region))
                 .collect(Collectors.toList());
     }
 
@@ -5376,6 +5383,13 @@ public class Ec2Service implements ContainerTeardown {
                 case "group-id" -> matchesValue(values, sg.getGroupId());
                 case "group-name" -> matchesValue(values, sg.getGroupName());
                 case "vpc-id" -> matchesValue(values, sg.getVpcId());
+                // "description" is a documented DescribeSecurityGroups filter matching the
+                // group's description exactly (wildcards allowed), same as every other
+                // resource-specific field filter here. Before this fix the switch's default
+                // arm silently matched every group regardless of value, which is
+                // indistinguishable from "no filter" and let an order-unspecified list slip
+                // past a caller that assumed the filter had actually narrowed it (#150).
+                case "description" -> matchesValue(values, sg.getDescription());
                 default -> true;
             };
         }
@@ -5386,6 +5400,12 @@ public class Ec2Service implements ContainerTeardown {
                 case "instance-type" -> matchesValue(values, inst.getInstanceType());
                 case "vpc-id" -> matchesValue(values, inst.getVpcId());
                 case "subnet-id" -> matchesValue(values, inst.getSubnetId());
+                // "image-id" is a documented DescribeInstances filter matching the AMI the
+                // instance was launched from. Before this fix (#152) it fell through the
+                // default arm below like every other unhandled filter name, so filtering by
+                // image-id silently returned every instance in the account rather than
+                // narrowing to the requested AMI.
+                case "image-id" -> matchesValue(values, inst.getImageId());
                 default -> true;
             };
         }
@@ -5425,7 +5445,18 @@ public class Ec2Service implements ContainerTeardown {
                 case "vpc-endpoint-id" -> matchesValue(values, endpoint.getVpcEndpointId());
                 case "vpc-endpoint-type" -> matchesValue(values, endpoint.getVpcEndpointType());
                 case "vpc-id" -> matchesValue(values, endpoint.getVpcId());
-                case "state" -> matchesValue(values, endpoint.getState());
+                // AWS documents this filter as "vpc-endpoint-state", not "state" (#153; see
+                // DescribeVpcEndpoints in the EC2 API reference). The previous key was a
+                // silent rename: a real caller sending the documented name fell through the
+                // default arm below and got every endpoint back unfiltered, while only a
+                // caller that happened to guess the undocumented "state" key got real
+                // filtering. There is no evidence real AWS accepts "state" as an alias here
+                // (unlike Vpc's confirmed cidr/cidr-block alias below), so this is a rename,
+                // not an addition - a caller relying on the old, non-AWS key now gets the same
+                // permissive default-arm behavior as any other unrecognized filter name, which
+                // is the general fallthrough problem tracked separately, not something this
+                // fix should paper over by inventing a second accepted name.
+                case "vpc-endpoint-state" -> matchesValue(values, endpoint.getState());
                 case "route-table-id" -> endpoint.getRouteTableIds().stream()
                         .anyMatch(routeTableId -> matchesValue(values, routeTableId));
                 case "subnet-id" -> endpoint.getSubnetIds().stream()
@@ -5529,6 +5560,28 @@ public class Ec2Service implements ContainerTeardown {
                 case "tenancy" -> matchesValue(values, cr.getTenancy());
                 case "state" -> matchesValue(values, cr.getState());
                 case "instance-platform" -> matchesValue(values, cr.getInstancePlatform());
+                default -> true;
+            };
+        }
+        // #151: describeAddresses() previously never called matchesFilters() at all, so
+        // this arm did not exist and every DescribeAddresses filter - resource-specific or the
+        // generic tag: family above - was a silent no-op. These are the AWS-documented
+        // DescribeAddresses filters this store can actually back with real data; two documented
+        // filters (network-border-group, network-interface-owner-id) are omitted because Address
+        // has no such field and fabricating one would be its own wrong answer.
+        if (resource instanceof Address addr) {
+            return switch (filterName) {
+                case "allocation-id" -> matchesValue(values, addr.getAllocationId());
+                case "public-ip" -> matchesValue(values, addr.getPublicIp());
+                case "domain" -> matchesValue(values, addr.getDomain());
+                case "association-id" -> addr.getAssociationId() != null
+                        && matchesValue(values, addr.getAssociationId());
+                case "instance-id" -> addr.getInstanceId() != null
+                        && matchesValue(values, addr.getInstanceId());
+                case "network-interface-id" -> addr.getNetworkInterfaceId() != null
+                        && matchesValue(values, addr.getNetworkInterfaceId());
+                case "private-ip-address" -> addr.getPrivateIpAddress() != null
+                        && matchesValue(values, addr.getPrivateIpAddress());
                 default -> true;
             };
         }
