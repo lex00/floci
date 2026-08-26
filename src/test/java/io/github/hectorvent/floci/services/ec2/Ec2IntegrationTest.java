@@ -1511,7 +1511,84 @@ class Ec2IntegrationTest {
             .statusCode(200);
     }
 
+    @Test
+    @Order(38)
+    void describeInstancesFiltersByImageId() {
+        // Issue #152: DescribeInstances' "image-id" filter (a real, AWS-documented filter -
+        // "The ID of the image used to launch the instance") fell through matchesFilter's
+        // Instance arm's `default -> true`, so it matched every instance in the region
+        // regardless of the AMI it was launched from. Same shape as #150: positive case plus
+        // the negative case a permissive no-op filter cannot pass.
+        //
+        // Self-contained: launches its own two instances with made-up ImageIds unique to this
+        // test (so no other fixture's instances can be mistaken for a match) and terminates
+        // both at the end, rather than touching the class's shared `instanceId` static field.
+        String targetInstanceId = given()
+            .formParam("Action", "RunInstances")
+            .formParam("ImageId", "ami-filter-target-152")
+            .formParam("InstanceType", "t3.micro")
+            .formParam("MinCount", "1")
+            .formParam("MaxCount", "1")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("RunInstancesResponse.instancesSet.item.instanceId");
 
+        String decoyInstanceId = given()
+            .formParam("Action", "RunInstances")
+            .formParam("ImageId", "ami-filter-decoy-152")
+            .formParam("InstanceType", "t3.micro")
+            .formParam("MinCount", "1")
+            .formParam("MaxCount", "1")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("RunInstancesResponse.instancesSet.item.instanceId");
+
+        // Positive: filtering by the target's exact image-id returns exactly that instance,
+        // not the decoy (launched from a different image-id) and not any other instance
+        // already running from earlier tests in this suite.
+        given()
+            .formParam("Action", "DescribeInstances")
+            .formParam("Filter.1.Name", "image-id")
+            .formParam("Filter.1.Value.1", "ami-filter-target-152")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeInstancesResponse.reservationSet.item.instancesSet.item.instanceId",
+                    equalTo(targetInstanceId));
+
+        // Negative: an image-id that was never used to launch anything must return zero
+        // instances. An unimplemented filter (falling through to `default -> true`) gets
+        // exactly this case wrong: it returns every instance in the region regardless of the
+        // value asked for.
+        given()
+            .formParam("Action", "DescribeInstances")
+            .formParam("Filter.1.Name", "image-id")
+            .formParam("Filter.1.Value.1", "ami-does-not-exist-anywhere-152")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeInstancesResponse.reservationSet.item.size()", equalTo(0));
+
+        given()
+            .formParam("Action", "TerminateInstances")
+            .formParam("InstanceId.1", targetInstanceId)
+            .formParam("InstanceId.2", decoyInstanceId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+    }
 
     // =========================================================================
     // Key Pairs

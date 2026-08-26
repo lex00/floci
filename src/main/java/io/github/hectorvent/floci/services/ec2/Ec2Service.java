@@ -5400,6 +5400,12 @@ public class Ec2Service implements ContainerTeardown {
                 case "instance-type" -> matchesValue(values, inst.getInstanceType());
                 case "vpc-id" -> matchesValue(values, inst.getVpcId());
                 case "subnet-id" -> matchesValue(values, inst.getSubnetId());
+                // "image-id" is a documented DescribeInstances filter matching the AMI the
+                // instance was launched from. Before this fix (#152) it fell through the
+                // default arm below like every other unhandled filter name, so filtering by
+                // image-id silently returned every instance in the account rather than
+                // narrowing to the requested AMI.
+                case "image-id" -> matchesValue(values, inst.getImageId());
                 default -> true;
             };
         }
