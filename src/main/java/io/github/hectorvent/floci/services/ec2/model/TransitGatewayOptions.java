@@ -6,27 +6,21 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * The option block a transit gateway echoes back on every describe.
- *
- * <p>Defaults match what AWS applies when {@code CreateTransitGateway} omits an option, so a
- * caller that sends nothing still gets a fully populated block back.
- */
 @RegisterForReflection
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class TransitGatewayOptions {
 
-    private Long amazonSideAsn = 64512L;
+    private Long amazonSideAsn;
     private List<String> transitGatewayCidrBlocks = new ArrayList<>();
-    private String autoAcceptSharedAttachments = "disable";
-    private String defaultRouteTableAssociation = "enable";
+    private String autoAcceptSharedAttachments;
+    private String defaultRouteTableAssociation;
     private String associationDefaultRouteTableId;
-    private String defaultRouteTablePropagation = "enable";
+    private String defaultRouteTablePropagation;
     private String propagationDefaultRouteTableId;
-    private String vpnEcmpSupport = "enable";
-    private String dnsSupport = "enable";
-    private String securityGroupReferencingSupport = "disable";
-    private String multicastSupport = "disable";
+    private String vpnEcmpSupport;
+    private String dnsSupport;
+    private String securityGroupReferencingSupport;
+    private String multicastSupport;
 
     public TransitGatewayOptions() {}
 

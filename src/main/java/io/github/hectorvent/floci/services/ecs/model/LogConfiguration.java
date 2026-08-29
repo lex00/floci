@@ -7,13 +7,11 @@ import java.util.Map;
 
 /**
  * The {@code logConfiguration} of an ECS container definition:
- * {@code {"logDriver": "awslogs", "options": {"awslogs-group": ..., "awslogs-region": ...,
- * "awslogs-stream-prefix": ...}, "secretOptions": [{"name": ..., "valueFrom": ...}]}}.
+ * {@code {"logDriver": "awslogs", "options": {...}, "secretOptions": [{"name": ..., "valueFrom": ...}]}}.
  *
- * <p>Floci does not ship logs anywhere; this is modelled purely for
- * RegisterTaskDefinition/DescribeTaskDefinition round-trip fidelity so a real log
- * driver configuration (most commonly {@code awslogs}) does not disappear on read
- * and force a spurious replace plan.
+ * <p>Modelled for RegisterTaskDefinition/DescribeTaskDefinition round-trip fidelity. Floci does not
+ * route container output to the configured driver — a local task's logs stay with its Docker
+ * container — so the {@code awslogs} options are stored and returned rather than acted upon.
  */
 @RegisterForReflection
 public record LogConfiguration(String logDriver, Map<String, String> options, List<Secret> secretOptions) {

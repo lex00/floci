@@ -3,15 +3,14 @@ package io.github.hectorvent.floci.services.ec2.model;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
-/** Per-attachment option block. Defaults match what AWS applies for an omitted option. */
 @RegisterForReflection
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class TransitGatewayVpcAttachmentOptions {
 
-    private String dnsSupport = "enable";
-    private String securityGroupReferencingSupport = "disable";
-    private String ipv6Support = "disable";
-    private String applianceModeSupport = "disable";
+    private String dnsSupport;
+    private String securityGroupReferencingSupport;
+    private String ipv6Support;
+    private String applianceModeSupport;
 
     public TransitGatewayVpcAttachmentOptions() {}
 

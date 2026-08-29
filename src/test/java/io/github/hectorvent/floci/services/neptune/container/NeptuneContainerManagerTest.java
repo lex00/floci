@@ -9,6 +9,7 @@ import io.github.hectorvent.floci.core.common.docker.ContainerLogStreamer;
 import io.github.hectorvent.floci.core.common.docker.ContainerSpec;
 import io.github.hectorvent.floci.services.neptune.model.NeptuneDbType;
 import com.github.dockerjava.api.DockerClient;
+import org.jboss.logging.Logger;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -31,6 +32,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class NeptuneContainerManagerTest {
+
+    private static final Logger LOG = Logger.getLogger(NeptuneContainerManagerTest.class);
 
     @Test
     void stopByClusterIdRemovesByDeterministicNameWhenNothingRegistered() {
@@ -93,8 +96,9 @@ class NeptuneContainerManagerTest {
                     OutputStream out = socket.getOutputStream();
                     out.write("HTTP/1.1 400 Bad Request\r\n\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
                     out.flush();
-                } catch (IOException ignored) {
+                } catch (IOException e) {
                     // Test teardown races the socket close; nothing left to assert on.
+                    LOG.debugv(e, "Acceptor socket closed during test teardown");
                 }
             });
             responder.setDaemon(true);
@@ -113,6 +117,54 @@ class NeptuneContainerManagerTest {
             assertEquals("container-id", handle.getContainerId());
             assertEquals(serverSocket.getLocalPort(), handle.getPort());
             responder.join(5000);
+        }
+    }
+
+    @Test
+    void startLabelsContainerWithResourceIdentity() throws IOException {
+        try (ServerSocket serverSocket = new ServerSocket(0)) {
+            Thread responder = new Thread(() -> {
+                try (Socket socket = serverSocket.accept()) {
+                    socket.getInputStream().read(new byte[64]);
+                    OutputStream out = socket.getOutputStream();
+                    out.write("HTTP/1.1 400 Bad Request\r\n\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    out.flush();
+                } catch (IOException e) {
+                    LOG.debugv(e, "Acceptor socket closed during test teardown");
+                }
+            });
+            responder.setDaemon(true);
+            responder.start();
+
+            ContainerLifecycleManager lifecycleManager = mock(ContainerLifecycleManager.class);
+            when(lifecycleManager.createAndStart(any())).thenReturn(new ContainerLifecycleManager.ContainerInfo(
+                    "container-id", Map.of(8182, new ContainerLifecycleManager.EndpointInfo(
+                            "127.0.0.1", serverSocket.getLocalPort()))));
+
+            ContainerBuilder containerBuilder = mock(ContainerBuilder.class);
+            ContainerBuilder.Builder builder = mock(ContainerBuilder.Builder.class, Mockito.RETURNS_SELF);
+            when(containerBuilder.newContainer(anyString())).thenReturn(builder);
+            when(builder.build()).thenReturn(mock(ContainerSpec.class));
+
+            EmulatorConfig config = mock(EmulatorConfig.class);
+            EmulatorConfig.ServicesConfig services = mock(EmulatorConfig.ServicesConfig.class);
+            EmulatorConfig.NeptuneServiceConfig neptune = mock(EmulatorConfig.NeptuneServiceConfig.class);
+            when(config.services()).thenReturn(services);
+            when(services.neptune()).thenReturn(neptune);
+            when(neptune.dockerNetwork()).thenReturn(Optional.empty());
+
+            NeptuneContainerManager manager = new NeptuneContainerManager(containerBuilder, lifecycleManager,
+                    mock(ContainerLogStreamer.class), mock(ContainerDetector.class), config,
+                    new RegionResolver("us-east-1", "000000000000"));
+
+            manager.start("cluster1", "tinkerpop/gremlin-server:3.7.3", NeptuneDbType.GREMLIN);
+
+            verify(builder).withLabels(Map.of(
+                    "io.floci", "aws",
+                    "io.floci.service", "neptune",
+                    "io.floci.resource-id", "cluster1",
+                    "io.floci.account", "000000000000",
+                    "io.floci.region", "us-east-1"));
         }
     }
 

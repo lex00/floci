@@ -10,6 +10,7 @@ import io.github.hectorvent.floci.services.cloudwatch.metrics.CloudWatchMetricsJ
 import io.github.hectorvent.floci.services.dynamodb.DynamoDbJsonHandler;
 import io.github.hectorvent.floci.services.dynamodb.DynamoDbResponses;
 import io.github.hectorvent.floci.services.dynamodb.DynamoDbStreamsJsonHandler;
+import io.github.hectorvent.floci.services.networkfirewall.NetworkFirewallJsonHandler;
 import io.github.hectorvent.floci.services.sns.SnsJsonHandler;
 import io.github.hectorvent.floci.services.sqs.SqsJsonHandler;
 import io.github.hectorvent.floci.services.stepfunctions.StepFunctionsJsonHandler;
@@ -49,6 +50,7 @@ public class AwsJsonController {
     private final CloudControlJsonHandler cloudControlJsonHandler;
     private final SwfJsonHandler swfJsonHandler;
     private final AppRunnerJsonHandler appRunnerJsonHandler;
+    private final NetworkFirewallJsonHandler networkFirewallJsonHandler;
 
     @Inject
     public AwsJsonController(ObjectMapper objectMapper, ResolvedServiceCatalog catalog,
@@ -60,7 +62,8 @@ public class AwsJsonController {
                              CloudWatchMetricsJsonHandler cloudWatchMetricsJsonHandler,
                              CloudControlJsonHandler cloudControlJsonHandler,
                              SwfJsonHandler swfJsonHandler,
-                             AppRunnerJsonHandler appRunnerJsonHandler) {
+                             AppRunnerJsonHandler appRunnerJsonHandler,
+                             NetworkFirewallJsonHandler networkFirewallJsonHandler) {
         this.objectMapper = objectMapper;
         this.strictBodyReader = objectMapper.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         this.catalog = catalog;
@@ -74,6 +77,7 @@ public class AwsJsonController {
         this.cloudControlJsonHandler = cloudControlJsonHandler;
         this.swfJsonHandler = swfJsonHandler;
         this.appRunnerJsonHandler = appRunnerJsonHandler;
+        this.networkFirewallJsonHandler = networkFirewallJsonHandler;
     }
 
     @POST
@@ -122,6 +126,8 @@ public class AwsJsonController {
                 case "monitoring" -> cloudWatchMetricsJsonHandler.handle(action, request, region);
                 case "cloudcontrol" -> cloudControlJsonHandler.handle(action, request, region);
                 case "apprunner" -> appRunnerJsonHandler.handle(action, request, region);
+                case "network-firewall" -> networkFirewallJsonHandler.handle(
+                        action, request, region, regionResolver.getAccountId());
                 default -> null;
             };
             // catalog.matchTarget is protocol-agnostic: a JSON 1.1 target

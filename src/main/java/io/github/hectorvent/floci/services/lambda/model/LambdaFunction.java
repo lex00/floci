@@ -41,13 +41,6 @@ public class LambdaFunction {
     // including the "configured then cleared" case, which AWS keeps returning.
     private Map<String, String> environment;
     private Map<String, String> tags = new HashMap<>();
-    // LoggingConfig - AWS always returns this block, defaulting to Text format
-    // and /aws/lambda/<function-name>. null fields here mean "use the default",
-    // not "omit the block".
-    private String loggingConfigLogFormat;
-    private String loggingConfigLogGroup;
-    private String loggingConfigApplicationLogLevel;
-    private String loggingConfigSystemLogLevel;
     private List<Map<String, Object>> policies = new ArrayList<>();
     private long lastModified;
     private String revisionId;
@@ -61,6 +54,16 @@ public class LambdaFunction {
     private List<String> layers = new ArrayList<>();
     private String kmsKeyArn;
     private Map<String, Object> vpcConfig;
+    /**
+     * Resolved at attach time from the first VpcConfig subnet. Response-only: the AWS model's
+     * VpcConfigResponse carries VpcId, while the VpcConfig request shape does not.
+     */
+    private String vpcId;
+    private String snapStartApplyOn = "None";
+    private String logFormat = "Text";
+    private String applicationLogLevel;
+    private String systemLogLevel;
+    private String logGroup;
     private List<LambdaFileSystemConfig> fileSystemConfigs = new ArrayList<>();
     private String codeSha256;
 
@@ -139,18 +142,6 @@ public class LambdaFunction {
     public Map<String, String> getEnvironment() { return environment; }
     public void setEnvironment(Map<String, String> environment) { this.environment = environment; }
 
-    public String getLoggingConfigLogFormat() { return loggingConfigLogFormat; }
-    public void setLoggingConfigLogFormat(String loggingConfigLogFormat) { this.loggingConfigLogFormat = loggingConfigLogFormat; }
-
-    public String getLoggingConfigLogGroup() { return loggingConfigLogGroup; }
-    public void setLoggingConfigLogGroup(String loggingConfigLogGroup) { this.loggingConfigLogGroup = loggingConfigLogGroup; }
-
-    public String getLoggingConfigApplicationLogLevel() { return loggingConfigApplicationLogLevel; }
-    public void setLoggingConfigApplicationLogLevel(String loggingConfigApplicationLogLevel) { this.loggingConfigApplicationLogLevel = loggingConfigApplicationLogLevel; }
-
-    public String getLoggingConfigSystemLogLevel() { return loggingConfigSystemLogLevel; }
-    public void setLoggingConfigSystemLogLevel(String loggingConfigSystemLogLevel) { this.loggingConfigSystemLogLevel = loggingConfigSystemLogLevel; }
-
     public Map<String, String> getTags() { return tags; }
     public void setTags(Map<String, String> tags) { this.tags = tags; }
 
@@ -192,6 +183,24 @@ public class LambdaFunction {
 
     public Map<String, Object> getVpcConfig() { return vpcConfig; }
     public void setVpcConfig(Map<String, Object> vpcConfig) { this.vpcConfig = vpcConfig; }
+
+    public String getVpcId() { return vpcId; }
+    public void setVpcId(String vpcId) { this.vpcId = vpcId; }
+
+    public String getSnapStartApplyOn() { return snapStartApplyOn; }
+    public void setSnapStartApplyOn(String snapStartApplyOn) { this.snapStartApplyOn = snapStartApplyOn; }
+
+    public String getLogFormat() { return logFormat; }
+    public void setLogFormat(String logFormat) { this.logFormat = logFormat; }
+
+    public String getApplicationLogLevel() { return applicationLogLevel; }
+    public void setApplicationLogLevel(String applicationLogLevel) { this.applicationLogLevel = applicationLogLevel; }
+
+    public String getSystemLogLevel() { return systemLogLevel; }
+    public void setSystemLogLevel(String systemLogLevel) { this.systemLogLevel = systemLogLevel; }
+
+    public String getLogGroup() { return logGroup; }
+    public void setLogGroup(String logGroup) { this.logGroup = logGroup; }
 
     public List<LambdaFileSystemConfig> getFileSystemConfigs() { return fileSystemConfigs; }
     public void setFileSystemConfigs(List<LambdaFileSystemConfig> fileSystemConfigs) {

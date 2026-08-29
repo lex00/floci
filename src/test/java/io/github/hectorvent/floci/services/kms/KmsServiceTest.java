@@ -163,6 +163,113 @@ class KmsServiceTest {
     }
 
     @Test
+    void createGrantUnknownOperationThrowsValidation() {
+        KmsKey key = kmsService.createKey("grant key", REGION);
+
+        AwsException ex = assertThrows(AwsException.class, () ->
+                kmsService.createGrant(key.getKeyId(), "arn:aws:iam::000000000000:user/grantee",
+                        List.of("Encrypt", "NotARealOperation"), REGION));
+
+        assertEquals("ValidationException", ex.getErrorCode());
+        assertTrue(ex.getMessage().contains("NotARealOperation"),
+                "message should name the rejected operation, was: " + ex.getMessage());
+    }
+
+    @Test
+    void createGrantInvalidNameCharacterThrowsValidation() {
+        KmsKey key = kmsService.createKey("grant key", REGION);
+
+        AwsException ex = assertThrows(AwsException.class, () ->
+                kmsService.createGrant(key.getKeyId(), "arn:aws:iam::000000000000:user/grantee",
+                        List.of("Encrypt"), null, "invalid name with spaces", null, REGION));
+
+        assertEquals("ValidationException", ex.getErrorCode());
+        assertTrue(ex.getMessage().contains("'name'"),
+                "message should name the rejected field, was: " + ex.getMessage());
+    }
+
+    @Test
+    void createGrantNameTooLongThrowsValidation() {
+        KmsKey key = kmsService.createKey("grant key", REGION);
+        String tooLong = "a".repeat(257);
+
+        AwsException ex = assertThrows(AwsException.class, () ->
+                kmsService.createGrant(key.getKeyId(), "arn:aws:iam::000000000000:user/grantee",
+                        List.of("Encrypt"), null, tooLong, null, REGION));
+
+        assertEquals("ValidationException", ex.getErrorCode());
+        assertTrue(ex.getMessage().contains("less than or equal to 256"),
+                "too-long-name message should cite the max-length constraint, was: " + ex.getMessage());
+    }
+
+    @Test
+    void createGrantEmptyNameThrowsValidationWithMinLengthMessage() {
+        KmsKey key = kmsService.createKey("grant key", REGION);
+
+        AwsException ex = assertThrows(AwsException.class, () ->
+                kmsService.createGrant(key.getKeyId(), "arn:aws:iam::000000000000:user/grantee",
+                        List.of("Encrypt"), null, "", null, REGION));
+
+        assertEquals("ValidationException", ex.getErrorCode());
+        assertTrue(ex.getMessage().contains("greater than or equal to 1"),
+                "empty-name message should cite the min-length constraint, was: " + ex.getMessage());
+    }
+
+    @Test
+    void createGrantConstraintsUnknownMemberThrowsValidation() {
+        KmsKey key = kmsService.createKey("grant key", REGION);
+        Map<String, Object> constraints = new LinkedHashMap<>();
+        constraints.put("NotARealConstraint", "value");
+
+        AwsException ex = assertThrows(AwsException.class, () ->
+                kmsService.createGrant(key.getKeyId(), "arn:aws:iam::000000000000:user/grantee",
+                        List.of("Encrypt"), null, null, constraints, REGION));
+
+        assertEquals("ValidationException", ex.getErrorCode());
+    }
+
+    @Test
+    void createGrantConstraintsStringValuedEncryptionContextEqualsThrowsValidation() {
+        KmsKey key = kmsService.createKey("grant key", REGION);
+        Map<String, Object> constraints = new LinkedHashMap<>();
+        constraints.put("EncryptionContextEquals", "not-a-map");
+
+        AwsException ex = assertThrows(AwsException.class, () ->
+                kmsService.createGrant(key.getKeyId(), "arn:aws:iam::000000000000:user/grantee",
+                        List.of("Encrypt"), null, null, constraints, REGION));
+
+        assertEquals("ValidationException", ex.getErrorCode());
+    }
+
+    @Test
+    void createGrantConstraintsInvalidSourceArnThrowsValidation() {
+        KmsKey key = kmsService.createKey("grant key", REGION);
+        Map<String, Object> constraints = new LinkedHashMap<>();
+        constraints.put("SourceArn", "not-an-arn");
+
+        AwsException ex = assertThrows(AwsException.class, () ->
+                kmsService.createGrant(key.getKeyId(), "arn:aws:iam::000000000000:user/grantee",
+                        List.of("Encrypt"), null, null, constraints, REGION));
+
+        assertEquals("ValidationException", ex.getErrorCode());
+    }
+
+    @Test
+    void createGrantConstraintsValidEncryptionContextRoundTrips() {
+        KmsKey key = kmsService.createKey("grant key", REGION);
+        Map<String, Object> constraints = new LinkedHashMap<>();
+        Map<String, String> encryptionContext = new LinkedHashMap<>();
+        encryptionContext.put("purpose", "test");
+        constraints.put("EncryptionContextEquals", encryptionContext);
+        constraints.put("SourceArn", "arn:aws:iam::123456789012:role/test-role");
+
+        KmsGrant grant = kmsService.createGrant(key.getKeyId(), "arn:aws:iam::000000000000:user/grantee",
+                List.of("Encrypt"), null, null, constraints, REGION);
+
+        assertEquals(constraints, grant.getConstraints());
+    }
+
+    @Test
     void createGrantUnknownKeyThrowsNotFound() {
         AwsException ex = assertThrows(AwsException.class, () ->
                 kmsService.createGrant("non-existent-id", "arn:aws:iam::000000000000:user/grantee", List.of("Encrypt"), REGION));
@@ -499,6 +606,102 @@ class KmsServiceTest {
     void createAliasForNonExistentKeyThrows() {
         assertThrows(AwsException.class, () ->
                 kmsService.createAlias("alias/test", "no-such-key", REGION));
+    }
+
+    @Test
+    void updateAlias() {
+        KmsKey keyA = kmsService.createKey(null, REGION);
+        KmsKey keyB = kmsService.createKey(null, REGION);
+        kmsService.createAlias("alias/my-key", keyA.getKeyId(), REGION);
+
+        kmsService.updateAlias("alias/my-key", keyB.getKeyId(), REGION);
+
+        List<KmsAlias> aliases = kmsService.listAliases(REGION);
+        assertEquals(1, aliases.size());
+        assertEquals(keyB.getKeyId(), aliases.getFirst().getTargetKeyId());
+    }
+
+    @Test
+    void updateAliasNotFoundThrows() {
+        KmsKey key = kmsService.createKey(null, REGION);
+        AwsException ex = assertThrows(AwsException.class, () ->
+                kmsService.updateAlias("alias/missing", key.getKeyId(), REGION));
+
+        assertEquals("NotFoundException", ex.getErrorCode());
+    }
+
+    @Test
+    void updateAliasForNonExistentTargetKeyThrows() {
+        KmsKey key = kmsService.createKey(null, REGION);
+        kmsService.createAlias("alias/my-key", key.getKeyId(), REGION);
+
+        AwsException ex = assertThrows(AwsException.class, () ->
+                kmsService.updateAlias("alias/my-key", "no-such-key", REGION));
+
+        assertEquals("NotFoundException", ex.getErrorCode());
+        assertEquals(key.getKeyId(), kmsService.listAliases(REGION).getFirst().getTargetKeyId());
+    }
+
+    @Test
+    void updateAliasForPendingDeletionTargetThrows() {
+        KmsKey keyA = kmsService.createKey(null, REGION);
+        KmsKey keyB = kmsService.createKey(null, REGION);
+        kmsService.createAlias("alias/my-key", keyA.getKeyId(), REGION);
+        kmsService.scheduleKeyDeletion(keyB.getKeyId(), 7, REGION);
+
+        AwsException ex = assertThrows(AwsException.class, () ->
+                kmsService.updateAlias("alias/my-key", keyB.getKeyId(), REGION));
+
+        assertEquals("KMSInvalidStateException", ex.getErrorCode());
+        assertEquals(keyA.getKeyId(), kmsService.listAliases(REGION).getFirst().getTargetKeyId());
+    }
+
+    @Test
+    void updateAliasForIncompatibleKeyUsageThrows() {
+        KmsKey symmetricKey = kmsService.createKey(null, REGION);
+        KmsKey hmacKey = kmsService.createKey("hmac key", "GENERATE_VERIFY_MAC", "HMAC_256", null, Map.of(), REGION);
+        kmsService.createAlias("alias/my-key", symmetricKey.getKeyId(), REGION);
+
+        AwsException ex = assertThrows(AwsException.class, () ->
+                kmsService.updateAlias("alias/my-key", hmacKey.getKeyId(), REGION));
+
+        assertEquals("ValidationException", ex.getErrorCode());
+        assertEquals(symmetricKey.getKeyId(), kmsService.listAliases(REGION).getFirst().getTargetKeyId());
+    }
+
+    @Test
+    void updateAliasAllowsSameTypeDifferentSpec() {
+        KmsKey rsa2048 = kmsService.createKey("rsa 2048", "SIGN_VERIFY", "RSA_2048", null, Map.of(), REGION);
+        KmsKey rsa3072 = kmsService.createKey("rsa 3072", "SIGN_VERIFY", "RSA_3072", null, Map.of(), REGION);
+        kmsService.createAlias("alias/my-key", rsa2048.getKeyId(), REGION);
+
+        kmsService.updateAlias("alias/my-key", rsa3072.getKeyId(), REGION);
+
+        assertEquals(rsa3072.getKeyId(), kmsService.listAliases(REGION).getFirst().getTargetKeyId());
+    }
+
+    @Test
+    void updateAliasAllowsSameUsageDifferentAsymmetricFamily() {
+        KmsKey rsaKey = kmsService.createKey("rsa key", "SIGN_VERIFY", "RSA_2048", null, Map.of(), REGION);
+        KmsKey eccKey = kmsService.createKey("ecc key", "SIGN_VERIFY", "ECC_NIST_P256", null, Map.of(), REGION);
+        kmsService.createAlias("alias/my-key", rsaKey.getKeyId(), REGION);
+
+        kmsService.updateAlias("alias/my-key", eccKey.getKeyId(), REGION);
+
+        assertEquals(eccKey.getKeyId(), kmsService.listAliases(REGION).getFirst().getTargetKeyId());
+    }
+
+    @Test
+    void updateAliasRejectsSymmetricToAsymmetricEvenWithSameUsage() {
+        KmsKey symmetricKey = kmsService.createKey(null, REGION);
+        KmsKey rsaEncryptKey = kmsService.createKey("rsa encrypt key", "ENCRYPT_DECRYPT", "RSA_2048", null, Map.of(), REGION);
+        kmsService.createAlias("alias/my-key", symmetricKey.getKeyId(), REGION);
+
+        AwsException ex = assertThrows(AwsException.class, () ->
+                kmsService.updateAlias("alias/my-key", rsaEncryptKey.getKeyId(), REGION));
+
+        assertEquals("ValidationException", ex.getErrorCode());
+        assertEquals(symmetricKey.getKeyId(), kmsService.listAliases(REGION).getFirst().getTargetKeyId());
     }
 
     @Test

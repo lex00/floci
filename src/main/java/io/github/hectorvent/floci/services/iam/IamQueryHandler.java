@@ -2,13 +2,13 @@ package io.github.hectorvent.floci.services.iam;
 
 import io.github.hectorvent.floci.core.common.*;
 import io.github.hectorvent.floci.services.iam.model.AccessKey;
+import io.github.hectorvent.floci.services.iam.model.AccountPasswordPolicy;
 import io.github.hectorvent.floci.services.iam.model.IamGroup;
 import io.github.hectorvent.floci.services.iam.model.IamPolicy;
 import io.github.hectorvent.floci.services.iam.model.IamRole;
 import io.github.hectorvent.floci.services.iam.model.IamUser;
 import io.github.hectorvent.floci.services.iam.model.InstanceProfile;
 import io.github.hectorvent.floci.services.iam.model.OpenIDConnectProvider;
-import io.github.hectorvent.floci.services.iam.model.PasswordPolicy;
 import io.github.hectorvent.floci.services.iam.model.PolicyVersion;
 import io.github.hectorvent.floci.services.iam.model.CallerContext;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -85,13 +85,14 @@ public class IamQueryHandler {
             case "DeleteAccountAlias" -> handleDeleteAccountAlias(params);
 
             // Account Password Policy
-            case "UpdateAccountPasswordPolicy" -> handleUpdateAccountPasswordPolicy(params);
             case "GetAccountPasswordPolicy" -> handleGetAccountPasswordPolicy(params);
+            case "UpdateAccountPasswordPolicy" -> handleUpdateAccountPasswordPolicy(params);
             case "DeleteAccountPasswordPolicy" -> handleDeleteAccountPasswordPolicy(params);
 
             // Groups
             case "CreateGroup" -> handleCreateGroup(params);
             case "GetGroup" -> handleGetGroup(params);
+            case "UpdateGroup" -> handleUpdateGroup(params);
             case "DeleteGroup" -> handleDeleteGroup(params);
             case "ListGroups" -> handleListGroups(params);
             case "AddUserToGroup" -> handleAddUserToGroup(params);
@@ -110,6 +111,8 @@ public class IamQueryHandler {
             case "UpdateAssumeRolePolicy" -> handleUpdateAssumeRolePolicy(params);
             case "TagRole" -> handleTagRole(params);
             case "UntagRole" -> handleUntagRole(params);
+            case "TagInstanceProfile" -> handleTagInstanceProfile(params);
+            case "UntagInstanceProfile" -> handleUntagInstanceProfile(params);
             case "ListRoleTags" -> handleListRoleTags(params);
 
             // Managed Policies
@@ -168,6 +171,12 @@ public class IamQueryHandler {
             case "UpdateAccessKey" -> handleUpdateAccessKey(params);
             case "GetAccessKeyLastUsed" -> handleGetAccessKeyLastUsed(params);
 
+            case "ListOrganizationsFeatures" -> handleListOrganizationsFeatures(params);
+            case "EnableOrganizationsRootCredentialsManagement" -> handleEnableOrganizationsRootCredentialsManagement(params);
+            case "EnableOrganizationsRootSessions" -> handleEnableOrganizationsRootSessions(params);
+            case "DisableOrganizationsRootCredentialsManagement" -> handleDisableOrganizationsRootCredentialsManagement(params);
+            case "DisableOrganizationsRootSessions" -> handleDisableOrganizationsRootSessions(params);
+
             // Instance Profiles
             case "CreateInstanceProfile" -> handleCreateInstanceProfile(params);
             case "GetInstanceProfile" -> handleGetInstanceProfile(params);
@@ -176,8 +185,6 @@ public class IamQueryHandler {
             case "AddRoleToInstanceProfile" -> handleAddRoleToInstanceProfile(params);
             case "RemoveRoleFromInstanceProfile" -> handleRemoveRoleFromInstanceProfile(params);
             case "ListInstanceProfilesForRole" -> handleListInstanceProfilesForRole(params);
-            case "TagInstanceProfile" -> handleTagInstanceProfile(params);
-            case "UntagInstanceProfile" -> handleUntagInstanceProfile(params);
             case "ListInstanceProfileTags" -> handleListInstanceProfileTags(params);
 
             // Permission Boundaries
@@ -444,25 +451,42 @@ public class IamQueryHandler {
     // Account Password Policy
     // =========================================================================
 
-    // UpdateAccountPasswordPolicy is a whole-value PUT: every field the caller omits from the
-    // request resolves to its documented default here, rather than falling back to whatever the
-    // stored policy already had, matching real IAM's own semantics.
-    private Response handleUpdateAccountPasswordPolicy(MultivaluedMap<String, String> params) {
-        iamService.updateAccountPasswordPolicy(
-                getIntParam(params, "MinimumPasswordLength", 6),
-                getBooleanParam(params, "RequireSymbols", false),
-                getBooleanParam(params, "RequireNumbers", false),
-                getBooleanParam(params, "RequireUppercaseCharacters", false),
-                getBooleanParam(params, "RequireLowercaseCharacters", false),
-                getBooleanParam(params, "AllowUsersToChangePassword", false),
-                getOptionalIntParam(params, "MaxPasswordAge"),
-                getOptionalIntParam(params, "PasswordReusePrevention"),
-                getOptionalBooleanParam(params, "HardExpiry"));
-        return Response.ok(AwsQueryResponse.envelopeNoResult("UpdateAccountPasswordPolicy", AwsNamespaces.IAM)).build();
+    // AWS raises NoSuchEntity (404) when the account has never had a policy set — a documented,
+    // expected result, the same shape GetLoginProfile answers when a user has no console password.
+    private Response handleGetAccountPasswordPolicy(MultivaluedMap<String, String> params) {
+        AccountPasswordPolicy policy = iamService.getAccountPasswordPolicy()
+                .orElse(null);
+        if (policy == null) {
+            return AwsQueryResponse.error("NoSuchEntity",
+                    "The account policy with name PasswordPolicy cannot be found.", AwsNamespaces.IAM, 404);
+        }
+        return Response.ok(AwsQueryResponse.envelope(
+                "GetAccountPasswordPolicy", AwsNamespaces.IAM, passwordPolicyXml(policy))).build();
     }
 
-    private Response handleGetAccountPasswordPolicy(MultivaluedMap<String, String> params) {
-        PasswordPolicy policy = iamService.getAccountPasswordPolicy();
+    private Response handleUpdateAccountPasswordPolicy(MultivaluedMap<String, String> params) {
+        AccountPasswordPolicy policy = new AccountPasswordPolicy();
+        policy.setMinimumPasswordLength(getStrictIntParam(params, "MinimumPasswordLength", 6));
+        policy.setRequireSymbols(getBooleanParam(params, "RequireSymbols", false));
+        policy.setRequireNumbers(getBooleanParam(params, "RequireNumbers", false));
+        policy.setRequireUppercaseCharacters(getBooleanParam(params, "RequireUppercaseCharacters", false));
+        policy.setRequireLowercaseCharacters(getBooleanParam(params, "RequireLowercaseCharacters", false));
+        policy.setAllowUsersToChangePassword(getBooleanParam(params, "AllowUsersToChangePassword", false));
+        policy.setMaxPasswordAge(getOptionalIntParam(params, "MaxPasswordAge"));
+        policy.setPasswordReusePrevention(getOptionalIntParam(params, "PasswordReusePrevention"));
+        policy.setHardExpiry(getBooleanParam(params, "HardExpiry", false));
+        iamService.updateAccountPasswordPolicy(policy);
+        return Response.ok(AwsQueryResponse.envelopeNoResult("UpdateAccountPasswordPolicy", AwsNamespaces.IAM))
+                .build();
+    }
+
+    private Response handleDeleteAccountPasswordPolicy(MultivaluedMap<String, String> params) {
+        iamService.deleteAccountPasswordPolicy();
+        return Response.ok(AwsQueryResponse.envelopeNoResult("DeleteAccountPasswordPolicy", AwsNamespaces.IAM))
+                .build();
+    }
+
+    private String passwordPolicyXml(AccountPasswordPolicy policy) {
         var xml = new XmlBuilder().start("PasswordPolicy")
                 .elem("MinimumPasswordLength", policy.getMinimumPasswordLength())
                 .elem("RequireSymbols", policy.isRequireSymbols())
@@ -470,25 +494,63 @@ public class IamQueryHandler {
                 .elem("RequireUppercaseCharacters", policy.isRequireUppercaseCharacters())
                 .elem("RequireLowercaseCharacters", policy.isRequireLowercaseCharacters())
                 .elem("AllowUsersToChangePassword", policy.isAllowUsersToChangePassword())
-                // AWS computes ExpirePasswords rather than storing it: true whenever a max
-                // password age is set, false otherwise — never omitted like the three fields below.
-                .elem("ExpirePasswords", policy.getMaxPasswordAge() != null && policy.getMaxPasswordAge() > 0);
+                .elem("ExpirePasswords", policy.isExpirePasswords())
+                .elem("HardExpiry", policy.isHardExpiry());
         if (policy.getMaxPasswordAge() != null) {
             xml.elem("MaxPasswordAge", policy.getMaxPasswordAge());
         }
         if (policy.getPasswordReusePrevention() != null) {
             xml.elem("PasswordReusePrevention", policy.getPasswordReusePrevention());
         }
-        if (policy.getHardExpiry() != null) {
-            xml.elem("HardExpiry", policy.getHardExpiry());
-        }
-        xml.end("PasswordPolicy");
-        return Response.ok(AwsQueryResponse.envelope("GetAccountPasswordPolicy", AwsNamespaces.IAM, xml.build())).build();
+        return xml.end("PasswordPolicy").build();
     }
 
-    private Response handleDeleteAccountPasswordPolicy(MultivaluedMap<String, String> params) {
-        iamService.deleteAccountPasswordPolicy();
-        return Response.ok(AwsQueryResponse.envelopeNoResult("DeleteAccountPasswordPolicy", AwsNamespaces.IAM)).build();
+    /** Unlike {@link #getIntParam}, absence is meaningful here — it must not collapse to a default. */
+    private Integer getOptionalIntParam(MultivaluedMap<String, String> params, String name) {
+        String value = params.getFirst(name);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            throw new AwsException("ValidationError", "Invalid value for " + name + ": " + value, 400);
+        }
+    }
+
+    // Unlike getIntParam's silent fallback, an integer parameter that is present but not
+    // parseable is a caller mistake, not an absence — it must be rejected rather than coerced
+    // to the default.
+    private int getStrictIntParam(MultivaluedMap<String, String> params, String name, int defaultValue) {
+        String value = params.getFirst(name);
+        if (value == null) {
+            return defaultValue;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            throw new AwsException("ValidationError", "Invalid value for " + name + ": " + value, 400);
+        }
+    }
+
+    // Unlike getIntParam's silent fallback, a boolean parameter that is present but not "true"/
+    // "false" is a caller mistake, not an absence — it must be rejected rather than coerced to false.
+    private boolean getBooleanParam(MultivaluedMap<String, String> params, String name, boolean defaultValue) {
+        String value = params.getFirst(name);
+        if (value == null) {
+            return defaultValue;
+        }
+        return parseStrictBoolean(name, value);
+    }
+
+    private boolean parseStrictBoolean(String name, String value) {
+        if ("true".equalsIgnoreCase(value)) {
+            return true;
+        }
+        if ("false".equalsIgnoreCase(value)) {
+            return false;
+        }
+        throw new AwsException("ValidationError", "Invalid value for " + name + ": " + value, 400);
     }
 
     // =========================================================================
@@ -522,6 +584,12 @@ public class IamQueryHandler {
         }
         xml.end("Users").elem("IsTruncated", false);
         return Response.ok(AwsQueryResponse.envelope("GetGroup", AwsNamespaces.IAM, xml.build())).build();
+    }
+
+    private Response handleUpdateGroup(MultivaluedMap<String, String> params) {
+        iamService.updateGroup(getParam(params, "GroupName"),
+                getParam(params, "NewGroupName"), getParam(params, "NewPath"));
+        return Response.ok(AwsQueryResponse.envelopeNoResult("UpdateGroup", AwsNamespaces.IAM)).build();
     }
 
     private Response handleDeleteGroup(MultivaluedMap<String, String> params) {
@@ -984,6 +1052,49 @@ public class IamQueryHandler {
     }
 
     // =========================================================================
+    // Centralized root access management (org-scoped, IAM Query endpoint)
+    // =========================================================================
+
+    private Response handleListOrganizationsFeatures(MultivaluedMap<String, String> params) {
+        return rootFeaturesResponse("ListOrganizationsFeatures", iamService.listOrganizationsFeatures());
+    }
+
+    private Response handleEnableOrganizationsRootCredentialsManagement(MultivaluedMap<String, String> params) {
+        return rootFeaturesResponse("EnableOrganizationsRootCredentialsManagement",
+                iamService.enableOrganizationsRootCredentialsManagement());
+    }
+
+    private Response handleEnableOrganizationsRootSessions(MultivaluedMap<String, String> params) {
+        return rootFeaturesResponse("EnableOrganizationsRootSessions",
+                iamService.enableOrganizationsRootSessions());
+    }
+
+    private Response handleDisableOrganizationsRootCredentialsManagement(MultivaluedMap<String, String> params) {
+        return rootFeaturesResponse("DisableOrganizationsRootCredentialsManagement",
+                iamService.disableOrganizationsRootCredentialsManagement());
+    }
+
+    private Response handleDisableOrganizationsRootSessions(MultivaluedMap<String, String> params) {
+        return rootFeaturesResponse("DisableOrganizationsRootSessions",
+                iamService.disableOrganizationsRootSessions());
+    }
+
+    /**
+     * Builds the shared {@code <EnabledFeatures><member>..</member></EnabledFeatures>} result used by
+     * both {@code ListOrganizationsFeatures} and the enable/disable ops. The org-scoped
+     * {@code OrganizationId} is intentionally omitted — LZA's root-user-management module reads only
+     * the enabled-feature set, and omitting it avoids coupling the IAM endpoint to Organizations.
+     */
+    private Response rootFeaturesResponse(String action, List<String> features) {
+        XmlBuilder xml = new XmlBuilder().start("EnabledFeatures");
+        for (String feature : features) {
+            xml.elem("member", feature);
+        }
+        String result = xml.end("EnabledFeatures").build();
+        return Response.ok(AwsQueryResponse.envelope(action, AwsNamespaces.IAM, result)).build();
+    }
+
+    // =========================================================================
     // Instance Profiles
     // =========================================================================
 
@@ -1119,21 +1230,22 @@ public class IamQueryHandler {
     // XML serialization helpers
     // =========================================================================
 
-    // Tags belong on the User/Role/Policy structures returned by the Get* and Create*
-    // operations. The resource-listing operations (ListUsers, ListRoles, ListPolicies,
-    // GetGroup) deliberately return a subset of the attributes and must not carry Tags —
-    // the IAM API reference documents that exclusion on each List* action.
-    private String userXml(IamUser u, boolean includeTags) {
-        var xml = new XmlBuilder()
+    /**
+     * {@code detailed} is per-operation, not per-user: ListUsers documents that "IAM
+     * resource-listing operations return a subset of the available attributes for the resource.
+     * This operation does not return the following attributes, even though they are an attribute
+     * of the returned object: PermissionsBoundary, Tags". GetGroup likewise lists its members
+     * without tags.
+     */
+    private String userXml(IamUser u, boolean detailed) {
+        return new XmlBuilder()
                 .elem("Path", u.getPath())
                 .elem("UserName", u.getUserName())
                 .elem("UserId", u.getUserId())
                 .elem("Arn", u.getArn())
-                .elem("CreateDate", isoDate(u.getCreateDate()));
-        if (includeTags) {
-            appendTags(xml, u.getTags());
-        }
-        return xml.build();
+                .elem("CreateDate", isoDate(u.getCreateDate()))
+                .raw(detailed ? tagsElement(u.getTags()) : "")
+                .build();
     }
 
     private String groupXml(IamGroup g) {
@@ -1146,8 +1258,16 @@ public class IamQueryHandler {
                 .build();
     }
 
-    private String roleXml(IamRole r, boolean includeTags) {
-        var xml = new XmlBuilder()
+    /**
+     * {@code detailed} is per-operation, not per-role: ListRoles documents that "IAM
+     * resource-listing operations return a subset of the available attributes for the resource.
+     * This operation does not return the following attributes, even though they are an attribute
+     * of the returned object: PermissionsBoundary, RoleLastUsed, Tags". {@code Description} is
+     * deliberately not gated — it is absent from that exclusion list. Roles embedded in an
+     * instance profile are a subset too, as GetInstanceProfile's own example response shows.
+     */
+    private String roleXml(IamRole r, boolean detailed) {
+        return new XmlBuilder()
                 .elem("Path", r.getPath())
                 .elem("RoleName", r.getRoleName())
                 .elem("RoleId", r.getRoleId())
@@ -1155,22 +1275,21 @@ public class IamQueryHandler {
                 .elem("CreateDate", isoDate(r.getCreateDate()))
                 .elem("MaxSessionDuration", (long) r.getMaxSessionDuration())
                 .elem("AssumeRolePolicyDocument", r.getAssumeRolePolicyDocument())
-                .elem("Description", r.getDescription());
-        if (includeTags) {
-            appendTags(xml, r.getTags());
-        }
-        return xml.build();
+                .elem("Description", r.getDescription())
+                .raw(detailed ? tagsElement(r.getTags()) : "")
+                .build();
     }
 
     /**
-     * {@code full} is per-operation, not per-policy: AWS's own {@code Policy} model documents
-     * that {@code Description} "is included in the response to the GetPolicy operation. It is
-     * not included in the response to the ListPolicies operation" — CreatePolicy documents
-     * neither inclusion nor exclusion, so it's treated the same as GetPolicy. Tags follow the
-     * same split: ListPolicies carries none, GetPolicy/CreatePolicy return them.
+     * {@code detailed} is per-operation, not per-policy: AWS's own {@code Policy} model documents
+     * that {@code Description} "is included in the response to the GetPolicy operation. It is not
+     * included in the response to the ListPolicies operation" — CreatePolicy documents neither
+     * inclusion nor exclusion, so it's treated the same as GetPolicy. ListPolicies excludes
+     * {@code Tags} on the same grounds ("this operation does not return tags"), so one flag
+     * governs both.
      */
-    private String policyXml(IamPolicy p, boolean full) {
-        var xml = new XmlBuilder()
+    private String policyXml(IamPolicy p, boolean detailed) {
+        return new XmlBuilder()
                 .elem("PolicyName", p.getPolicyName())
                 .elem("PolicyId", p.getPolicyId())
                 .elem("Arn", p.getArn())
@@ -1180,11 +1299,9 @@ public class IamQueryHandler {
                 .elem("IsAttachable", true)
                 .elem("CreateDate", isoDate(p.getCreateDate()))
                 .elem("UpdateDate", isoDate(p.getUpdateDate()))
-                .elem("Description", full ? p.getDescription() : null);
-        if (full) {
-            appendTags(xml, p.getTags());
-        }
-        return xml.build();
+                .elem("Description", detailed ? p.getDescription() : null)
+                .raw(detailed ? tagsElement(p.getTags()) : "")
+                .build();
     }
 
     private String policyVersionXml(PolicyVersion v) {
@@ -1223,7 +1340,7 @@ public class IamQueryHandler {
         }
         xml.end("Roles");
         if (includeTags) {
-            appendTags(xml, p.getTags());
+            xml.raw(tagsElement(p.getTags()));
         }
         return xml.build();
     }
@@ -1247,12 +1364,20 @@ public class IamQueryHandler {
         return xml.end("PolicyNames").elem("IsTruncated", false).build();
     }
 
-    /** Appends a {@code <Tags>} block, omitting it entirely when the resource has no tags. */
-    private void appendTags(XmlBuilder xml, Map<String, String> tags) {
+    /**
+     * Renders the {@code <Tags>} wrapper for a resource, or nothing when it has no tags.
+     *
+     * <p>The AWS SDKs and the Terraform provider read a role's, policy's or user's tags off the
+     * Get/Create response rather than by calling List*Tags, so omitting this element makes every
+     * tagged resource read back untagged and diff on every plan. Emitting nothing rather than an
+     * empty {@code <Tags/>} keeps an untagged resource from reading back as having an empty tag
+     * set, which would be a diff of its own.
+     */
+    private String tagsElement(Map<String, String> tags) {
         if (tags == null || tags.isEmpty()) {
-            return;
+            return "";
         }
-        xml.start("Tags").raw(tagsXml(tags)).end("Tags");
+        return new XmlBuilder().start("Tags").raw(tagsXml(tags)).end("Tags").build();
     }
 
     private String tagsXml(Map<String, String> tags) {
@@ -1336,21 +1461,6 @@ public class IamQueryHandler {
         } catch (NumberFormatException e) {
             return defaultValue;
         }
-    }
-
-    private Integer getOptionalIntParam(MultivaluedMap<String, String> params, String name) {
-        String value = params.getFirst(name);
-        if (value == null) return null;
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private boolean getBooleanParam(MultivaluedMap<String, String> params, String name, boolean defaultValue) {
-        String value = params.getFirst(name);
-        return value == null ? defaultValue : Boolean.parseBoolean(value);
     }
 
     private Boolean getOptionalBooleanParam(MultivaluedMap<String, String> params, String name) {

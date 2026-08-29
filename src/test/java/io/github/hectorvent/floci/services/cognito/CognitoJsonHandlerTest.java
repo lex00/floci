@@ -109,58 +109,30 @@ class CognitoJsonHandlerTest {
     }
 
     @Test
-    void createUserPoolMatchesRealAwsDefaultsForUnconfiguredBlocks() {
-        // Verified 2026-08-24 against real AWS (CreateUserPool, name only,
-        // us-east-2, account 354867293429): this is what a fresh,
-        // unconfigured user pool actually gets back. Real AWS computes real
-        // defaults for the "always-on" concepts (password policy, email
-        // delivery, admin-create behavior, account recovery, the
-        // verification message template) and OMITS the key entirely for
-        // the opt-in feature blocks (device tracking, SMS MFA, advanced
-        // security add-ons, username configuration) instead of returning an
-        // empty placeholder object for any of them.
+    void createAndDescribeUserPoolAgreeOnUnconfiguredOptionalBlocks() {
+        // #2200: CreateUserPool and a later DescribeUserPool disagreed on DeviceConfiguration,
+        // EmailConfiguration, and UserPoolAddOns when the request never configured them - an
+        // empty object one moment, filled in or absent the next - so a Terraform apply looked
+        // clean and the very next plan reported perpetual drift.
         ObjectNode request = mapper.createObjectNode();
-        request.put("PoolName", "defaults-pool");
+        request.put("PoolName", "minimal-pool");
 
-        Response response = handler.handle("CreateUserPool", request, "us-east-1");
-        assertEquals(200, response.getStatus());
-        JsonNode pool = ((JsonNode) response.getEntity()).get("UserPool");
+        JsonNode created = (JsonNode) handler.handle("CreateUserPool", request, "us-east-1").getEntity();
+        JsonNode createdPool = created.get("UserPool");
 
-        // Populated real defaults, not an empty {}.
-        assertEquals(8, pool.get("Policies").get("PasswordPolicy").get("MinimumLength").asInt(),
-                "real AWS's default password policy requires an 8-character minimum");
-        assertTrue(pool.get("Policies").get("PasswordPolicy").get("RequireUppercase").asBoolean());
-        assertTrue(pool.get("Policies").get("PasswordPolicy").get("RequireLowercase").asBoolean());
-        assertTrue(pool.get("Policies").get("PasswordPolicy").get("RequireNumbers").asBoolean());
-        assertTrue(pool.get("Policies").get("PasswordPolicy").get("RequireSymbols").asBoolean());
-        assertEquals(7, pool.get("Policies").get("PasswordPolicy").get("TemporaryPasswordValidityDays").asInt());
+        ObjectNode describeReq = mapper.createObjectNode();
+        describeReq.put("UserPoolId", createdPool.get("Id").asText());
+        JsonNode described = (JsonNode) handler.handle("DescribeUserPool", describeReq, "us-east-1").getEntity();
+        JsonNode describedPool = described.get("UserPool");
 
-        assertEquals("COGNITO_DEFAULT", pool.get("EmailConfiguration").get("EmailSendingAccount").asText(),
-                "real AWS always computes EmailSendingAccount, even with no email_configuration block written");
-
-        assertFalse(pool.get("AdminCreateUserConfig").get("AllowAdminCreateUserOnly").asBoolean());
-        assertEquals(7, pool.get("AdminCreateUserConfig").get("UnusedAccountValidityDays").asInt());
-
-        assertEquals("CONFIRM_WITH_CODE", pool.get("VerificationMessageTemplate").get("DefaultEmailOption").asText());
-
-        JsonNode mechanisms = pool.get("AccountRecoverySetting").get("RecoveryMechanisms");
-        assertEquals(2, mechanisms.size());
-        assertEquals("verified_email", mechanisms.get(0).get("Name").asText());
-        assertEquals(1, mechanisms.get(0).get("Priority").asInt());
-        assertEquals("verified_phone_number", mechanisms.get(1).get("Name").asText());
-        assertEquals(2, mechanisms.get(1).get("Priority").asInt());
-
-        // Opt-in blocks real AWS never mentions for an unconfigured pool:
-        // the key itself is absent, not present with an empty value. A
-        // provider read that turns "absent" into "present but empty"
-        // manufactures a nested block that Terraform's own plan then
-        // proposes to remove on every subsequent plan, forever - the exact
-        // churn this test guards against (gauntlet
-        // corpus-alb-complete/test_plan, family 4).
-        assertFalse(pool.has("DeviceConfiguration"), "DeviceConfiguration must be omitted, not {}, when never configured");
-        assertFalse(pool.has("SmsConfiguration"), "SmsConfiguration must be omitted, not {}, when never configured");
-        assertFalse(pool.has("UserPoolAddOns"), "UserPoolAddOns must be omitted, not {}, when never configured");
-        assertFalse(pool.has("UsernameConfiguration"), "UsernameConfiguration must be omitted, not {}, when never configured");
+        for (JsonNode pool : java.util.List.of(createdPool, describedPool)) {
+            // AWS's JSON protocol serializes only members with a value provided - an
+            // unconfigured pool omits these keys entirely, it doesn't write a JSON null
+            // (confirmed against moto's DescribeUserPool, which never emits either key unset).
+            assertFalse(pool.has("DeviceConfiguration"));
+            assertFalse(pool.has("UserPoolAddOns"));
+            assertEquals("COGNITO_DEFAULT", pool.get("EmailConfiguration").get("EmailSendingAccount").asText());
+        }
     }
 
     @Test

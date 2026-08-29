@@ -1,9 +1,13 @@
 package io.github.hectorvent.floci.services.s3;
 
+import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.AwsNamespaces;
+import io.github.hectorvent.floci.core.common.RequestContext;
 import io.github.hectorvent.floci.core.common.XmlBuilder;
 import io.github.hectorvent.floci.core.common.XmlParser;
+import jakarta.enterprise.context.ContextNotActiveException;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
@@ -45,10 +49,16 @@ public class S3ControlController {
     private static final String AMZ_ID_2 = "x-amz-id-2";
 
     private final S3Service s3Service;
+    private final Instance<RequestContext> requestContextInstance;
+    private final String defaultAccountId;
 
     @Inject
-    public S3ControlController(S3Service s3Service) {
+    public S3ControlController(S3Service s3Service,
+                               Instance<RequestContext> requestContextInstance,
+                               EmulatorConfig config) {
         this.s3Service = s3Service;
+        this.requestContextInstance = requestContextInstance;
+        this.defaultAccountId = config.defaultAccountId();
     }
 
     /**
@@ -116,23 +126,154 @@ public class S3ControlController {
     }
 
     /**
+     * PutPublicAccessBlock — sets the account-level S3 Block Public Access configuration.
+     *
+     * <p>Account-scoped (keyed by the {@code x-amz-account-id} header), distinct from the
+     * bucket-level operation. AWS LZA's {@code Custom::PutPublicAccessBlock} custom resource
+     * calls this for every governed account during the LoggingStack deploy; without it the
+     * custom-resource Lambda reports FAILED and the stack rolls back.
+     *
+     * PUT /v20180820/configuration/publicAccessBlock
+     * Header: x-amz-account-id
+     * Body: {@code <PublicAccessBlockConfiguration>} with the four boolean flags
+     */
+    @PUT
+    @Path("/configuration/publicAccessBlock")
+    @Consumes(MediaType.WILDCARD)
+    public Response putPublicAccessBlock(
+            @HeaderParam("x-amz-account-id") String accountId,
+            String body) {
+        try {
+            requireCallerMayActOnAccount(accountId);
+            if (!"PublicAccessBlockConfiguration".equals(XmlParser.rootElementName(body))) {
+                throw new AwsException("MalformedXML",
+                        "The XML you provided was not well-formed or did not validate against our published schema.",
+                        400);
+            }
+            s3Service.putAccountPublicAccessBlock(accountId, canonicalPublicAccessBlockXml(body));
+            return Response.ok().build();
+        } catch (AwsException e) {
+            return xmlErrorResponse(e);
+        }
+    }
+
+    /**
+     * GetPublicAccessBlock — returns the account-level S3 Block Public Access configuration.
+     *
+     * GET /v20180820/configuration/publicAccessBlock
+     * Header: x-amz-account-id
+     */
+    @GET
+    @Path("/configuration/publicAccessBlock")
+    public Response getPublicAccessBlock(
+            @HeaderParam("x-amz-account-id") String accountId) {
+        try {
+            requireCallerMayActOnAccount(accountId);
+            return Response.ok(s3Service.getAccountPublicAccessBlock(accountId)).build();
+        } catch (AwsException e) {
+            return xmlErrorResponse(e);
+        }
+    }
+
+    /**
+     * DeletePublicAccessBlock — removes the account-level S3 Block Public Access configuration.
+     *
+     * DELETE /v20180820/configuration/publicAccessBlock
+     * Header: x-amz-account-id
+     */
+    @DELETE
+    @Path("/configuration/publicAccessBlock")
+    public Response deletePublicAccessBlock(
+            @HeaderParam("x-amz-account-id") String accountId) {
+        try {
+            requireCallerMayActOnAccount(accountId);
+            s3Service.deleteAccountPublicAccessBlock(accountId);
+            return Response.noContent().build();
+        } catch (AwsException e) {
+            return xmlErrorResponse(e);
+        }
+    }
+
+    /**
+     * Rejects an {@code x-amz-account-id} that names an account the caller has no claim on.
+     *
+     * <p>Block Public Access is a security control, and the header alone decides which account's
+     * configuration an operation reads, overwrites or deletes. Without this check any caller could
+     * manage any account's configuration by setting one header. AWS s3control answers
+     * {@code AccessDenied} when the header does not match the caller's own account, because there
+     * a cross-account call is made with credentials assumed <em>into</em> the target account, so
+     * the header and the caller always agree.
+     *
+     * <p>The emulator keeps one deliberate exception: the configured default (management) account
+     * may act on any account. Floci's launched Lambdas run on placeholder credentials that resolve
+     * to the management account rather than assuming a role in the target account, so LZA's
+     * {@code Custom::PutPublicAccessBlock} resource legitimately arrives as management-caller,
+     * governed-account-header. This is the same allowance {@code S3Service.mutateBucket} already
+     * makes for {@code Custom::S3PutBucketReplication}. Every other cross-account combination is
+     * denied.
+     *
+     * <p>A blank header is left to the service, which raises the modelled {@code InvalidRequest}.
+     */
+    private void requireCallerMayActOnAccount(String accountId) {
+        if (accountId == null || accountId.isBlank()) {
+            return;
+        }
+        String caller = callerAccountId();
+        if (accountId.equals(caller) || defaultAccountId.equals(caller)) {
+            return;
+        }
+        throw new AwsException("AccessDenied", "Access Denied", 403);
+    }
+
+    /**
+     * The caller's account as resolved by {@code AccountContextFilter}, falling back to the
+     * configured default outside a request scope — the same resolution
+     * {@code AccountAwareStorageBackend} uses to pick a storage partition.
+     */
+    private String callerAccountId() {
+        if (requestContextInstance != null) {
+            try {
+                String accountId = requestContextInstance.get().getAccountId();
+                if (accountId != null && !accountId.isBlank()) {
+                    return accountId;
+                }
+            } catch (ContextNotActiveException ignored) {
+                // outside request scope — fall through to the default account
+            }
+        }
+        return defaultAccountId;
+    }
+
+    /**
+     * Normalises an incoming PublicAccessBlockConfiguration body into a canonical, namespaced
+     * document so read-back is well-formed regardless of the client's request formatting or
+     * namespace. Absent flags default to false, matching the AWS API.
+     */
+    private static String canonicalPublicAccessBlockXml(String requestXml) {
+        String xml = requestXml == null ? "" : requestXml;
+        return new XmlBuilder()
+                .raw("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+                .start("PublicAccessBlockConfiguration", AwsNamespaces.S3_CONTROL)
+                .elem("BlockPublicAcls", XmlParser.extractFirst(xml, "BlockPublicAcls", "false"))
+                .elem("IgnorePublicAcls", XmlParser.extractFirst(xml, "IgnorePublicAcls", "false"))
+                .elem("BlockPublicPolicy", XmlParser.extractFirst(xml, "BlockPublicPolicy", "false"))
+                .elem("RestrictPublicBuckets", XmlParser.extractFirst(xml, "RestrictPublicBuckets", "false"))
+                .end("PublicAccessBlockConfiguration")
+                .build();
+    }
+
+    /**
      * TagResource — adds or updates the given tags on the specified S3
      * bucket, leaving every other existing tag untouched.
      *
      * Real S3 Control's TagResource is a merge/upsert, not a replace: it is
      * the resource-tagging counterpart to UntagResource below, which already
      * does a read-modify-write rather than overwriting the whole tag set.
-     * This handler used to call {@link S3Service#putBucketTagging} directly
-     * with only the tags in the request body, which - because
-     * putBucketTagging implements the classic S3 PutBucketTagging API's
-     * genuinely-replace-all semantics - silently deleted every tag not named
-     * in this particular request. The AWS provider (v6.58+) calls this
-     * endpoint with only the tags that changed, trusting TagResource's real
-     * merge behavior to leave the rest alone; against the old replace-all
-     * handler here, any out-of-band or previously-set tag not part of the
-     * current delta (choudoufu's own tofu-estate/tofu-address ownership
-     * markers among them - see intentius/choudoufu#306) was wiped out by
-     * the very next incremental tag update.
+     * Calling {@link S3Service#putBucketTagging} with only the request-body
+     * tags would silently delete every tag not named in this particular
+     * request; the AWS provider (v6.58+) calls this endpoint with only the
+     * tags that changed, trusting TagResource's real merge behavior to leave
+     * the rest alone (see intentius/choudoufu#306).
      *
      * POST /v20180820/tags/{resourceArn+}
      * Header: x-amz-account-id
@@ -181,67 +322,6 @@ public class S3ControlController {
         } catch (AwsException e) {
             return xmlErrorResponse(e);
         }
-    }
-
-    /**
-     * PutPublicAccessBlock — sets the account-level S3 Block Public Access configuration.
-     *
-     * <p>Distinct from the bucket-level {@code PutBucketPublicAccessBlock} in
-     * {@link S3Controller}: this one is account-scoped — {@code /configuration/publicAccessBlock},
-     * no bucket anywhere in the path. Before this route existed, {@code aws_s3_account_public_access_block}
-     * 404'd on create (lex00/floci#73). Like {@link S3Controller}'s bucket-level handler, the
-     * request body is stored and echoed back verbatim rather than parsed field-by-field —
-     * the same {@code <PublicAccessBlockConfiguration>} XML the AWS provider sends is exactly
-     * what it expects back from Get.
-     *
-     * PUT /v20180820/configuration/publicAccessBlock
-     * Header: x-amz-account-id
-     * Body: XML {@code <PublicAccessBlockConfiguration>...</PublicAccessBlockConfiguration>}
-     */
-    @PUT
-    @Path("/configuration/publicAccessBlock")
-    @Consumes(MediaType.WILDCARD)
-    public Response putPublicAccessBlock(
-            @HeaderParam("x-amz-account-id") String accountId,
-            byte[] body) {
-        try {
-            s3Service.putAccountPublicAccessBlock(new String(body, StandardCharsets.UTF_8));
-            return Response.ok().build();
-        } catch (AwsException e) {
-            return xmlErrorResponse(e);
-        }
-    }
-
-    /**
-     * GetPublicAccessBlock — returns the account-level S3 Block Public Access configuration.
-     * Errors {@code NoSuchPublicAccessBlockConfiguration} (404) when the account has never
-     * called PutPublicAccessBlock, the same not-configured signal the bucket-level Get uses.
-     *
-     * GET /v20180820/configuration/publicAccessBlock
-     * Header: x-amz-account-id
-     */
-    @GET
-    @Path("/configuration/publicAccessBlock")
-    public Response getPublicAccessBlock(@HeaderParam("x-amz-account-id") String accountId) {
-        try {
-            return Response.ok(s3Service.getAccountPublicAccessBlock()).build();
-        } catch (AwsException e) {
-            return xmlErrorResponse(e);
-        }
-    }
-
-    /**
-     * DeletePublicAccessBlock — removes the account-level S3 Block Public Access configuration.
-     * Idempotent, matching real AWS: succeeds whether or not a configuration is currently set.
-     *
-     * DELETE /v20180820/configuration/publicAccessBlock
-     * Header: x-amz-account-id
-     */
-    @DELETE
-    @Path("/configuration/publicAccessBlock")
-    public Response deletePublicAccessBlock(@HeaderParam("x-amz-account-id") String accountId) {
-        s3Service.deleteAccountPublicAccessBlock();
-        return Response.noContent().build();
     }
 
     /**

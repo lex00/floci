@@ -1,6 +1,7 @@
 package io.github.hectorvent.floci.core.common;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
@@ -21,44 +22,48 @@ import jakarta.ws.rs.core.UriInfo;
  * Dispatcher for AWS services that share the REST {@code /tags/{resourceArn}} path
  * (API Gateway, EventBridge Scheduler, EKS, ...).
  *
- * <p>The routing itself lives in {@link SharedTagsDispatcher}, which resolves the owning
- * service from the {@code service} segment of the request ARN and looks the handler up
- * under this controller's own path prefix. Services whose tag endpoints hang off a
- * different prefix have their own controller over the same dispatcher
- * ({@link SharedTagsV1Controller}).
+ * <p>AWS distinguishes these services by hostname, but floci serves every service on a
+ * single port, so the path alone is ambiguous. This controller resolves the owning
+ * service from the {@code service} segment of the request ARN
+ * ({@code arn:aws:<service>:<region>:<account>:<resource>}) and dispatches to the
+ * matching {@link TagHandler}.
+ *
+ * <p>The resolution and wire-shape logic lives in {@link TagDispatcher}, shared with
+ * {@link V1TagsController}, which does the same job for the services AWS puts on
+ * {@code /v1/tags/{resourceArn}} instead.
  */
 @Path("/tags")
 @Produces(MediaType.APPLICATION_JSON)
 public class SharedTagsController {
 
-    /** The {@link TagHandler#tagPathPrefix()} this controller serves. */
-    public static final String PREFIX = "/tags";
-
-    private final SharedTagsDispatcher dispatcher;
-    private final ObjectMapper objectMapper;
+    private final TagDispatcher dispatcher;
 
     @Inject
-    public SharedTagsController(SharedTagsDispatcher dispatcher, ObjectMapper objectMapper) {
-        this.dispatcher = dispatcher;
-        this.objectMapper = objectMapper;
+    public SharedTagsController(Instance<TagHandler> handlers,
+                                RegionResolver regionResolver,
+                                ObjectMapper objectMapper) {
+        this.dispatcher = new TagDispatcher(handlers, regionResolver, objectMapper);
     }
 
     @GET
     public Response listTagsByQuery(@Context HttpHeaders headers,
                                     @QueryParam("resourceArn") String arn) {
-        return dispatcher.listTags(PREFIX, headers, arn);
+        return dispatcher.listTagsForArn(headers, arn);
     }
 
     @GET
     @Path("/{arn: .+}")
     public Response listTags(@Context HttpHeaders headers, @PathParam("arn") String arn) {
-        return dispatcher.listTags(PREFIX, headers, arn);
+        return dispatcher.listTagsForArn(headers, arn);
     }
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     public Response tagResourceByBody(@Context HttpHeaders headers, String body) {
-        return dispatcher.tagResourceByBody(PREFIX, headers, body);
+        String arn = dispatcher.readResourceArn(body);
+        TagHandler handler = dispatcher.resolveHandler(arn);
+        return dispatcher.doTagResource(headers, handler, arn, body,
+                Response.ok(dispatcher.emptyObject()).build());
     }
 
     @POST
@@ -67,7 +72,9 @@ public class SharedTagsController {
     public Response tagResourcePost(@Context HttpHeaders headers,
                                     @PathParam("arn") String arn,
                                     String body) {
-        return dispatcher.tagResourcePost(PREFIX, headers, arn, body);
+        TagHandler handler = dispatcher.resolveHandler(arn);
+        return dispatcher.tagResourcePost(headers, arn, body,
+                Response.status(handler.tagResourceSuccessStatus()).build());
     }
 
     @PUT
@@ -76,22 +83,26 @@ public class SharedTagsController {
     public Response tagResourcePut(@Context HttpHeaders headers,
                                    @PathParam("arn") String arn,
                                    String body) {
-        return dispatcher.tagResourcePut(PREFIX, headers, arn, body);
+        TagHandler handler = dispatcher.resolveHandler(arn);
+        return dispatcher.tagResourcePut(headers, arn, body,
+                Response.status(handler.tagResourceSuccessStatus()).build());
     }
 
     @DELETE
     public Response untagResourceByQuery(@Context HttpHeaders headers,
                                          @Context UriInfo uriInfo,
                                          @QueryParam("resourceArn") String arn) {
-        return dispatcher.untagResource(PREFIX, headers, uriInfo, arn,
-                Response.ok(objectMapper.createObjectNode()).build());
+        return dispatcher.untagResourceForArn(headers, uriInfo, arn,
+                Response.ok(dispatcher.emptyObject()).build());
     }
 
     @DELETE
     @Path("/{arn: .+}")
     public Response untagResource(@Context HttpHeaders headers,
-                                  @Context UriInfo uriInfo,
-                                  @PathParam("arn") String arn) {
-        return dispatcher.untagResource(PREFIX, headers, uriInfo, arn, Response.noContent().build());
+                                   @Context UriInfo uriInfo,
+                                   @PathParam("arn") String arn) {
+        TagHandler handler = dispatcher.resolveHandler(arn);
+        return dispatcher.untagResourceForArn(headers, uriInfo, arn,
+                Response.status(handler.untagResourceSuccessStatus()).build(), handler);
     }
 }

@@ -137,7 +137,7 @@ class ElastiCacheCacheSubnetGroupIntegrationTest {
         .when()
             .post("/")
         .then()
-            .statusCode(404)
+            .statusCode(400)
             .body("ErrorResponse.Error.Code", equalTo("CacheSubnetGroupNotFoundFault"));
     }
 
@@ -272,7 +272,7 @@ class ElastiCacheCacheSubnetGroupIntegrationTest {
         .when()
             .post("/")
         .then()
-            .statusCode(404)
+            .statusCode(400)
             .body("ErrorResponse.Error.Code", equalTo("CacheSubnetGroupNotFoundFault"));
     }
 
@@ -286,7 +286,7 @@ class ElastiCacheCacheSubnetGroupIntegrationTest {
         .when()
             .post("/")
         .then()
-            .statusCode(404)
+            .statusCode(400)
             .body("ErrorResponse.Error.Code", equalTo("CacheSubnetGroupNotFoundFault"));
     }
 }

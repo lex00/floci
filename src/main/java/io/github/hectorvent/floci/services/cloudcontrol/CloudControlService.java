@@ -24,7 +24,7 @@ import io.github.hectorvent.floci.services.ec2.model.Vpc;
 import io.github.hectorvent.floci.services.iam.IamService;
 import io.github.hectorvent.floci.services.iam.model.IamRole;
 import io.github.hectorvent.floci.services.iam.model.IamUser;
-import io.github.hectorvent.floci.services.amp.AmpService;
+import io.github.hectorvent.floci.services.aps.ApsService;
 import io.github.hectorvent.floci.services.ivs.IvsService;
 import io.github.hectorvent.floci.services.ivschat.IvschatService;
 import io.github.hectorvent.floci.services.medialive.MediaLiveService;
@@ -50,7 +50,7 @@ public class CloudControlService {
     private final Ec2Service ec2Service;
     private final IamService iamService;
     private final CloudFormationResourceProvisioner provisioner;
-    private final AmpService ampService;
+    private final ApsService apsService;
     private final IvsService ivsService;
     private final IvschatService ivschatService;
     private final MediaLiveService mediaLiveService;
@@ -97,13 +97,13 @@ public class CloudControlService {
     @Inject
     public CloudControlService(S3Service s3Service, Ec2Service ec2Service,
                                IamService iamService, CloudFormationResourceProvisioner provisioner,
-                               AmpService ampService, IvsService ivsService,
+                               ApsService apsService, IvsService ivsService,
                                IvschatService ivschatService,
                                MediaLiveService mediaLiveService,
                                CloudFrontService cloudFrontService,
                                CloudControlStoreLister storeLister, ObjectMapper mapper) {
         this.storeLister = storeLister;
-        this.ampService = ampService;
+        this.apsService = apsService;
         this.s3Service = s3Service;
         this.ec2Service = ec2Service;
         this.iamService = iamService;
@@ -305,10 +305,8 @@ public class CloudControlService {
             case "AWS::MediaLive::Multiplex" -> multiplexes();
             case "AWS::CloudFront::CachePolicy" -> cachePolicies();
             case "AWS::CloudFront::OriginRequestPolicy" -> originRequestPolicies();
-            case "AWS::APS::Workspace" -> arnListed(ampService.listWorkspaces(null, region),
+            case "AWS::APS::Workspace" -> arnListed(apsService.listWorkspaces(region, null, null, null).items(),
                     w -> w.getArn(), w -> w.getAlias(), w -> w.getTags());
-            case "AWS::APS::Scraper" -> arnListed(ampService.listScrapers(region),
-                    sc -> sc.getArn(), sc -> sc.getAlias(), sc -> sc.getTags());
             // Everything else is read from the owning service's own store. The cases above stay
             // ahead of it because they shape a type's model exactly; this covers the rest.
             default -> storeLister == null ? List.of() : storeLister.list(region, typeName);

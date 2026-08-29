@@ -8,32 +8,29 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.not;
-import static org.hamcrest.Matchers.containsString;
 
 /**
- * Integration tests for lex00/floci#74: {@code UpdateAccountPasswordPolicy} had no case in
- * {@link IamQueryHandler}'s action switch at all, so {@code aws_iam_account_password_policy}
- * failed on create with {@code UnsupportedOperation}. Covers the full HTTP stack through
- * {@link AwsQueryController} → {@link IamQueryHandler} → {@link IamService}, the same shape
- * {@link IamAccountAliasIntegrationTest} uses for the account alias.
+ * Integration tests for the IAM account password policy via the Query Protocol, covering the full
+ * HTTP stack through {@link AwsQueryController} → {@link IamQueryHandler}.
  *
- * <p>Ordered: the password policy is a single per-account value, so these cases share state
- * deliberately — reject a read before any policy is set, set one, read it back, update it as
- * a whole-value replace (an omitted field reverts to its default rather than keeping the old
- * value), then delete it (idempotently) and confirm the read-back error returns.
+ * <p>Ordered: the policy is a single per-account value, so these cases share state deliberately —
+ * missing before any update, get-after-update, wholesale replace, range rejection, delete.
  */
 @QuarkusTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class IamAccountPasswordPolicyIntegrationTest {
 
+    // The Query-protocol controller resolves the target service from the credential scope,
+    // so every IAM call carries one.
     private static final String IAM_CREDENTIAL =
             "AWS4-HMAC-SHA256 Credential=test/20260227/us-east-1/iam/aws4_request";
 
     @Test
     @Order(1)
-    void getBeforeAnyUpdateIsRejected() {
+    void getBeforeAnyUpdateIsNoSuchEntity() {
         given()
             .formParam("Action", "GetAccountPasswordPolicy")
             .header("Authorization", IAM_CREDENTIAL)
@@ -46,10 +43,23 @@ class IamAccountPasswordPolicyIntegrationTest {
 
     @Test
     @Order(2)
-    void updateAccountPasswordPolicy() {
+    void deleteBeforeAnyUpdateIsNoSuchEntity() {
+        given()
+            .formParam("Action", "DeleteAccountPasswordPolicy")
+            .header("Authorization", IAM_CREDENTIAL)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(404)
+            .body("ErrorResponse.Error.Code", equalTo("NoSuchEntity"));
+    }
+
+    @Test
+    @Order(3)
+    void updateSetsThePolicy() {
         given()
             .formParam("Action", "UpdateAccountPasswordPolicy")
-            .formParam("MinimumPasswordLength", "14")
+            .formParam("MinimumPasswordLength", "12")
             .formParam("RequireSymbols", "true")
             .formParam("RequireNumbers", "true")
             .formParam("RequireUppercaseCharacters", "true")
@@ -67,8 +77,8 @@ class IamAccountPasswordPolicyIntegrationTest {
     }
 
     @Test
-    @Order(3)
-    void getAccountPasswordPolicyReturnsWhatWasSet() {
+    @Order(4)
+    void getReturnsThePolicyJustSet() {
         given()
             .formParam("Action", "GetAccountPasswordPolicy")
             .header("Authorization", IAM_CREDENTIAL)
@@ -76,22 +86,31 @@ class IamAccountPasswordPolicyIntegrationTest {
             .post("/")
         .then()
             .statusCode(200)
-            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy.MinimumPasswordLength", equalTo("14"))
-            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy.RequireSymbols", equalTo("true"))
-            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy.MaxPasswordAge", equalTo("90"))
-            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy.PasswordReusePrevention", equalTo("5"))
-            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy.HardExpiry", equalTo("true"))
-            // Computed, not stored: true because MaxPasswordAge is set.
-            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy.ExpirePasswords", equalTo("true"));
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "MinimumPasswordLength", equalTo("12"))
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "RequireSymbols", equalTo("true"))
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "RequireNumbers", equalTo("true"))
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "RequireUppercaseCharacters", equalTo("true"))
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "RequireLowercaseCharacters", equalTo("true"))
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "AllowUsersToChangePassword", equalTo("true"))
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "ExpirePasswords", equalTo("true"))
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "MaxPasswordAge", equalTo("90"))
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "PasswordReusePrevention", equalTo("5"))
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "HardExpiry", equalTo("true"));
     }
 
     @Test
-    @Order(4)
-    void updateIsAWholeValueReplaceNotAPartialPatch() {
-        // Omits every optional field this time - real IAM reverts each to its documented
-        // default rather than keeping what Order(2) set, and MaxPasswordAge/
-        // PasswordReusePrevention/HardExpiry go missing from the response entirely (they are
-        // genuinely absent on the wire when unset, not rendered as 0/false).
+    @Order(5)
+    void updateReplacesTheEntirePolicyRatherThanMerging() {
         given()
             .formParam("Action", "UpdateAccountPasswordPolicy")
             .formParam("MinimumPasswordLength", "8")
@@ -108,21 +127,26 @@ class IamAccountPasswordPolicyIntegrationTest {
             .post("/")
         .then()
             .statusCode(200)
-            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy.MinimumPasswordLength", equalTo("8"))
-            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy.RequireSymbols", equalTo("false"))
-            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy.ExpirePasswords", equalTo("false"))
-            // MaxPasswordAge is genuinely absent from the response (not an empty element) when
-            // unset - XmlPath has no clean "child is absent" matcher for a leaf that was never
-            // rendered at all, so assert on the raw body directly.
-            .body(not(containsString("MaxPasswordAge")));
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "MinimumPasswordLength", equalTo("8"))
+            // RequireSymbols was true from the previous update; an omitted field resets rather
+            // than carries over.
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "RequireSymbols", equalTo("false"))
+            // MaxPasswordAge was set previously; omitted here it must not be echoed back at all.
+            .body(not(containsString("MaxPasswordAge")))
+            // HardExpiry was true from the previous update; omitted here it must reset to its
+            // AWS-documented default of false, not be echoed back as true nor omitted entirely.
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "HardExpiry", equalTo("false"));
     }
 
     @Test
-    @Order(5)
-    void invalidMinimumPasswordLengthIsRejected() {
+    @Order(6)
+    void updateWithMinimumLengthOutOfRangeIsRejected() {
         given()
             .formParam("Action", "UpdateAccountPasswordPolicy")
-            .formParam("MinimumPasswordLength", "200")
+            .formParam("MinimumPasswordLength", "129")
             .header("Authorization", IAM_CREDENTIAL)
         .when()
             .post("/")
@@ -133,7 +157,134 @@ class IamAccountPasswordPolicyIntegrationTest {
 
     @Test
     @Order(6)
-    void deleteAccountPasswordPolicy() {
+    void updateWithMaxPasswordAgeOutOfRangeIsRejected() {
+        given()
+            .formParam("Action", "UpdateAccountPasswordPolicy")
+            .formParam("MaxPasswordAge", "1096")
+            .header("Authorization", IAM_CREDENTIAL)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("ErrorResponse.Error.Code", equalTo("ValidationError"));
+    }
+
+    @Test
+    @Order(6)
+    void updateWithPasswordReusePreventionOutOfRangeIsRejected() {
+        given()
+            .formParam("Action", "UpdateAccountPasswordPolicy")
+            .formParam("PasswordReusePrevention", "25")
+            .header("Authorization", IAM_CREDENTIAL)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("ErrorResponse.Error.Code", equalTo("ValidationError"));
+    }
+
+    @Test
+    @Order(6)
+    void updateWithMalformedRequireSymbolsIsRejected() {
+        given()
+            .formParam("Action", "UpdateAccountPasswordPolicy")
+            .formParam("RequireSymbols", "banana")
+            .header("Authorization", IAM_CREDENTIAL)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("ErrorResponse.Error.Code", equalTo("ValidationError"));
+    }
+
+    @Test
+    @Order(6)
+    void updateWithMalformedHardExpiryIsRejected() {
+        given()
+            .formParam("Action", "UpdateAccountPasswordPolicy")
+            .formParam("HardExpiry", "banana")
+            .header("Authorization", IAM_CREDENTIAL)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("ErrorResponse.Error.Code", equalTo("ValidationError"));
+    }
+
+    @Test
+    @Order(6)
+    void updateWithMalformedMinimumPasswordLengthIsRejected() {
+        // A non-numeric MinimumPasswordLength must be rejected outright, not silently coerced
+        // to the field's default (6) — that would let a caller's typo succeed with 200 while
+        // quietly ignoring the value they asked for.
+        given()
+            .formParam("Action", "UpdateAccountPasswordPolicy")
+            .formParam("MinimumPasswordLength", "abc")
+            .header("Authorization", IAM_CREDENTIAL)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("ErrorResponse.Error.Code", equalTo("ValidationError"));
+    }
+
+    @Test
+    @Order(6)
+    void updateWithMalformedMaxPasswordAgeIsRejected() {
+        given()
+            .formParam("Action", "UpdateAccountPasswordPolicy")
+            .formParam("MaxPasswordAge", "abc")
+            .header("Authorization", IAM_CREDENTIAL)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("ErrorResponse.Error.Code", equalTo("ValidationError"));
+    }
+
+    @Test
+    @Order(6)
+    void updateWithMalformedPasswordReusePreventionIsRejected() {
+        given()
+            .formParam("Action", "UpdateAccountPasswordPolicy")
+            .formParam("PasswordReusePrevention", "abc")
+            .header("Authorization", IAM_CREDENTIAL)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("ErrorResponse.Error.Code", equalTo("ValidationError"));
+    }
+
+    @Test
+    @Order(6)
+    void updateWithHardExpiryOmittedDefaultsToFalseInResponse() {
+        // HardExpiry has no "optional/absent" state on the wire — AWS documents it as a boolean
+        // that always defaults to false, unlike MaxPasswordAge/PasswordReusePrevention which stay
+        // absent when unset.
+        given()
+            .formParam("Action", "UpdateAccountPasswordPolicy")
+            .formParam("MinimumPasswordLength", "10")
+            .header("Authorization", IAM_CREDENTIAL)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        given()
+            .formParam("Action", "GetAccountPasswordPolicy")
+            .header("Authorization", IAM_CREDENTIAL)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("GetAccountPasswordPolicyResponse.GetAccountPasswordPolicyResult.PasswordPolicy."
+                    + "HardExpiry", equalTo("false"));
+    }
+
+    @Test
+    @Order(7)
+    void deleteRemovesThePolicy() {
         given()
             .formParam("Action", "DeleteAccountPasswordPolicy")
             .header("Authorization", IAM_CREDENTIAL)
@@ -150,17 +301,5 @@ class IamAccountPasswordPolicyIntegrationTest {
         .then()
             .statusCode(404)
             .body("ErrorResponse.Error.Code", equalTo("NoSuchEntity"));
-    }
-
-    @Test
-    @Order(7)
-    void deleteIsIdempotentWhenNoPolicyIsSet() {
-        given()
-            .formParam("Action", "DeleteAccountPasswordPolicy")
-            .header("Authorization", IAM_CREDENTIAL)
-        .when()
-            .post("/")
-        .then()
-            .statusCode(200);
     }
 }

@@ -3,7 +3,6 @@ package io.github.hectorvent.floci.services.ec2.model;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -13,10 +12,10 @@ public class TransitGateway {
 
     private String transitGatewayId;
     private String transitGatewayArn;
-    private String state = "available";
+    private String state;
     private String ownerId;
     private String description;
-    private Instant creationTime;
+    private String creationTime;
     private String region;
     private TransitGatewayOptions options = new TransitGatewayOptions();
     private List<Tag> tags = new ArrayList<>();
@@ -38,8 +37,8 @@ public class TransitGateway {
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
 
-    public Instant getCreationTime() { return creationTime; }
-    public void setCreationTime(Instant creationTime) { this.creationTime = creationTime; }
+    public String getCreationTime() { return creationTime; }
+    public void setCreationTime(String creationTime) { this.creationTime = creationTime; }
 
     public String getRegion() { return region; }
     public void setRegion(String region) { this.region = region; }

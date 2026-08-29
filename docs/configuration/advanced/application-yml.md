@@ -76,6 +76,8 @@ floci:
         flush-interval-ms: 5000
       opensearch:
         flush-interval-ms: 5000
+      fis:
+        flush-interval-ms: 5000
 
   dns:
     # Extra hostname suffixes resolved to Floci's container IP by the embedded DNS server.
@@ -87,7 +89,7 @@ floci:
     #   - localhost.localstack.cloud
 
   auth:
-    validate-signatures: false               # Set to true to enforce AWS SigV4 validation
+    validate-signatures: false               # Set to true to verify S3 presigned URL signatures
     presign-secret: local-emulator-secret    # HMAC secret for S3 pre-signed URL verification
 
   tls:
@@ -129,8 +131,8 @@ floci:
       ephemeral: false                        # true = remove container after each invocation
       default-memory-mb: 128
       default-timeout-seconds: 3
-      runtime-api-base-port: 9200             # Port range for Lambda Runtime API
-      runtime-api-max-port: 9299
+      runtime-api-base-port: 12000            # Port range for Lambda Runtime API
+      runtime-api-max-port: 12499             # One port per running container = concurrency ceiling
       code-path: ./data/lambda-code           # Where ZIP archives are stored
       poll-interval-ms: 1000
       container-idle-timeout-seconds: 300     # Remove idle containers after this
@@ -153,6 +155,15 @@ floci:
       enforcement-enabled: false        # Set to true to enforce IAM policies on all requests
       enforce-for-test-keys: false      # Set to true to enforce against the "test" access key too
       seed-deployer-principal: false    # Set to true to create a local floci-deployer admin principal
+
+    networkfirewall:
+      enabled: true
+
+    servicequotas:
+      enabled: true
+
+    ram:
+      enabled: true
 
     elasticache:
       enabled: true
@@ -232,6 +243,9 @@ floci:
     ec2:
       enabled: true
 
+    efs:
+      enabled: true
+
     ecs:
       enabled: true
       mock: false                             # true = tasks go to RUNNING without Docker (useful for CI)
@@ -243,6 +257,9 @@ floci:
       enabled: true
 
     appconfigdata:
+      enabled: true
+
+    fis:
       enabled: true
 
     ecr:

@@ -32,6 +32,9 @@ class SsmServicePublicAmiParameterTest {
         ssmService = new SsmService(
                 new InMemoryStorage<>(),
                 new InMemoryStorage<>(),
+                new InMemoryStorage<>(),
+                new InMemoryStorage<>(),
+                new InMemoryStorage<>(),
                 5,
                 new RegionResolver("eu-west-1", "000000000000"),
                 new Ec2ImageCatalog());

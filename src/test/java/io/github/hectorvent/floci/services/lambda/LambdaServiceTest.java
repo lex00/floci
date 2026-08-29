@@ -14,9 +14,15 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -214,6 +220,68 @@ class LambdaServiceTest {
 
         assertEquals("InvalidParameterValueException", error.getErrorCode());
         assertEquals(vpcConfig(), service.getFunction(REGION, "update-efs-vpc-function").getVpcConfig());
+    }
+
+    @Test
+    void updateFunctionConfigurationRejectsMalformedRoleArn() {
+        service.createFunction(REGION, baseRequest("update-role-function"));
+
+        AwsException error = assertThrows(AwsException.class,
+                () -> service.updateFunctionConfiguration(REGION, "update-role-function",
+                        Map.of("Role", "not-an-arn")));
+
+        assertEquals("InvalidParameterValueException", error.getErrorCode());
+        assertEquals("arn:aws:iam::000000000000:role/test-role",
+                service.getFunction(REGION, "update-role-function").getRole());
+    }
+
+    @Test
+    void updateFunctionConfigurationAcceptsValidRoleArn() {
+        service.createFunction(REGION, baseRequest("update-role-valid-function"));
+
+        LambdaFunction updated = service.updateFunctionConfiguration(REGION, "update-role-valid-function",
+                Map.of("Role", "arn:aws:iam::000000000000:role/new-role"));
+
+        assertEquals("arn:aws:iam::000000000000:role/new-role", updated.getRole());
+    }
+
+    @Test
+    void updateFunctionConfigurationRejectsHandlerWithWhitespace() {
+        service.createFunction(REGION, baseRequest("update-handler-function"));
+
+        AwsException error = assertThrows(AwsException.class,
+                () -> service.updateFunctionConfiguration(REGION, "update-handler-function",
+                        Map.of("Handler", "index handler")));
+
+        assertEquals("InvalidParameterValueException", error.getErrorCode());
+        assertEquals("index.handler",
+                service.getFunction(REGION, "update-handler-function").getHandler());
+    }
+
+    @Test
+    void updateFunctionConfigurationRejectsHandlerLongerThan128Chars() {
+        service.createFunction(REGION, baseRequest("update-handler-length-function"));
+
+        AwsException error = assertThrows(AwsException.class,
+                () -> service.updateFunctionConfiguration(REGION, "update-handler-length-function",
+                        Map.of("Handler", "h".repeat(129))));
+
+        assertEquals("InvalidParameterValueException", error.getErrorCode());
+    }
+
+    @Test
+    void updateFunctionConfigurationRejectsExplicitNullHandler() {
+        service.createFunction(REGION, baseRequest("update-handler-null-function"));
+        Map<String, Object> request = new java.util.HashMap<>();
+        request.put("Handler", null);
+
+        AwsException error = assertThrows(AwsException.class,
+                () -> service.updateFunctionConfiguration(REGION, "update-handler-null-function", request));
+
+        assertEquals("InvalidParameterValueException", error.getErrorCode());
+        assertEquals("index.handler",
+                service.getFunction(REGION, "update-handler-null-function").getHandler(),
+                "an explicit null must not silently clear the handler");
     }
 
     @Test
@@ -805,6 +873,122 @@ class LambdaServiceTest {
                         "limiter totalReserved must match persisted reserved value");
             }
         } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void concurrentPolicyRestoreAddAndReadPreserveAllStatements() throws Exception {
+        LambdaFunction function = service.createFunction(REGION, baseRequest("policy-race-fn"));
+        service.addPermission(REGION, function.getFunctionName(), null, Map.of(
+                "StatementId", "baseline",
+                "Action", "lambda:InvokeFunction",
+                "Principal", "events.amazonaws.com"));
+
+        int mutationCount = 16;
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(8);
+        List<Future<?>> futures = new java.util.ArrayList<>();
+        Set<String> expectedStatementIds = new HashSet<>();
+        expectedStatementIds.add("baseline");
+
+        try {
+            for (int i = 0; i < mutationCount; i++) {
+                String addedId = "added-" + i;
+                String restoredId = "restored-" + i;
+                expectedStatementIds.add(addedId);
+                expectedStatementIds.add(restoredId);
+
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    service.addPermission(REGION, function.getFunctionName(), null, Map.of(
+                            "StatementId", addedId,
+                            "Action", "lambda:InvokeFunction",
+                            "Principal", "events.amazonaws.com"));
+                    return null;
+                }));
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    service.restorePermissionStatement(REGION, function.getFunctionName(), Map.of(
+                            "Sid", restoredId,
+                            "Effect", "Allow",
+                            "Principal", Map.of("Service", "events.amazonaws.com"),
+                            "Action", "lambda:InvokeFunction",
+                            "Resource", function.getFunctionArn()));
+                    return null;
+                }));
+            }
+            futures.add(pool.submit(() -> {
+                start.await();
+                for (int i = 0; i < mutationCount; i++) {
+                    service.getPolicy(REGION, function.getFunctionName(), null);
+                }
+                return null;
+            }));
+
+            start.countDown();
+            for (Future<?> future : futures) {
+                future.get();
+            }
+        } finally {
+            start.countDown();
+            pool.shutdownNow();
+        }
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> policy = (Map<String, Object>) service
+                .getPolicy(REGION, function.getFunctionName(), null)
+                .get("policy");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> statements = (List<Map<String, Object>>) policy.get("Statement");
+        Set<String> actualStatementIds = statements.stream()
+                .map(statement -> (String) statement.get("Sid"))
+                .collect(java.util.stream.Collectors.toSet());
+
+        assertEquals(expectedStatementIds, actualStatementIds);
+    }
+
+    @Test
+    void publishVersionWaitsForAConcurrentHolderOfTheFunctionsConcurrencyLock() throws Exception {
+        // publishVersion reads codeLocalPath and persists a snapshot of it with no
+        // synchronization against extractZipCodeBytes's own reclaim-the-legacy-directory
+        // decision (which runs under this same per-function lock, e.g. from deleteFunction).
+        // Without publishVersion also taking that lock, a version could be published in the
+        // narrow window between that decision and the actual delete, persisting a snapshot
+        // that references a directory which is about to be removed as "unused". Proving
+        // publishVersion blocks on this lock closes that window regardless of the exact
+        // interleaving, rather than relying on timing to catch it in the act.
+        LambdaFunction fn = service.createFunction(REGION, baseRequest("lock-race-fn"));
+        Object lock = service.lockForConcurrencyOp(fn.getFunctionArn());
+
+        ExecutorService pool = Executors.newFixedThreadPool(1);
+        CountDownLatch acquired = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Thread holder = new Thread(() -> {
+            synchronized (lock) {
+                acquired.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        try {
+            holder.start();
+            assertTrue(acquired.await(2, java.util.concurrent.TimeUnit.SECONDS));
+
+            Future<LambdaFunction> publishFuture = pool.submit(
+                    () -> service.publishVersion(REGION, "lock-race-fn", null));
+            assertThrows(java.util.concurrent.TimeoutException.class,
+                    () -> publishFuture.get(200, java.util.concurrent.TimeUnit.MILLISECONDS),
+                    "publishVersion must block while another operation holds this function's lock");
+
+            release.countDown();
+            holder.join();
+            assertNotNull(publishFuture.get(2, java.util.concurrent.TimeUnit.SECONDS));
+        } finally {
+            release.countDown();
             pool.shutdownNow();
         }
     }

@@ -14,7 +14,7 @@ public class HostedZone {
     private String comment;
     private boolean privateZone;
     private int resourceRecordSetCount;
-    private List<HostedZoneVpc> vpcs = new ArrayList<>();
+    private List<VpcAssociation> vpcAssociations = new ArrayList<>();
 
     public HostedZone() {}
 
@@ -26,6 +26,14 @@ public class HostedZone {
         this.comment = comment;
         this.privateZone = privateZone;
         this.resourceRecordSetCount = 2;
+    }
+
+    public HostedZone(String id, String name, String callerReference,
+                      String comment, VpcAssociation vpcAssociation) {
+        this(id, name, callerReference, comment, vpcAssociation != null);
+        if (vpcAssociation != null) {
+            this.vpcAssociations.add(vpcAssociation);
+        }
     }
 
     public String getId() { return id; }
@@ -48,14 +56,8 @@ public class HostedZone {
         this.resourceRecordSetCount = resourceRecordSetCount;
     }
 
-    public List<HostedZoneVpc> getVpcs() {
-        if (vpcs == null) {
-            vpcs = new ArrayList<>();
-        }
-        return vpcs;
-    }
-
-    public void setVpcs(List<HostedZoneVpc> vpcs) {
-        this.vpcs = vpcs == null ? new ArrayList<>() : new ArrayList<>(vpcs);
+    public List<VpcAssociation> getVpcAssociations() { return vpcAssociations; }
+    public void setVpcAssociations(List<VpcAssociation> vpcAssociations) {
+        this.vpcAssociations = vpcAssociations != null ? vpcAssociations : new ArrayList<>();
     }
 }

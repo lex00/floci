@@ -182,7 +182,9 @@ class Route53PrivateZoneVpcIntegrationTest {
 
     @Test
     @Order(9)
-    void explicitPrivateZoneFlagStillWorksWithoutAVpc() {
+    void explicitPrivateZoneFlagAloneDoesNotMakeAZonePrivate() {
+        // Attaching a VPC is what makes a zone private; the bare HostedZoneConfig flag
+        // without one is ignored, mirroring upstream's CreateHostedZone semantics.
         given()
                 .contentType(XML)
                 .body(createRequest("flagonly.internal", "vpc-ref-003",
@@ -190,6 +192,6 @@ class Route53PrivateZoneVpcIntegrationTest {
                 .when().post("/2013-04-01/hostedzone")
                 .then()
                 .statusCode(201)
-                .body("CreateHostedZoneResponse.HostedZone.Config.PrivateZone", equalTo("true"));
+                .body("CreateHostedZoneResponse.HostedZone.Config.PrivateZone", equalTo("false"));
     }
 }

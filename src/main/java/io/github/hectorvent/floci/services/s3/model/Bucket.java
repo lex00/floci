@@ -26,17 +26,19 @@ public class Bucket {
     private String transitionDefaultMinimumObjectSize; // x-amz-transition-default-minimum-object-size header value
     private String acl; // XML representation or JSON stub
     private String encryptionConfiguration; // XML string
+    private String replicationConfiguration; // XML string
     private String publicAccessBlockConfiguration; // XML string
     private String ownershipControlsConfiguration; // XML string
     private String requestPaymentPayer; // "BucketOwner" (default) or "Requester"; null until first PUT
-    private String accelerateStatus; // "Enabled" or "Suspended"; null until first PUT (real S3 omits <Status> then)
+    private String accelerateStatus; // "Enabled" or "Suspended"; null until first PUT
     private String region;
     private WebsiteConfiguration websiteConfiguration;
     // Per-bucket configuration sub-resources, keyed by their configuration id.
     // Values are the raw XML documents supplied on PUT so they round-trip verbatim.
     private Map<String, String> inventoryConfigurations = new LinkedHashMap<>();
     private Map<String, String> analyticsConfigurations = new LinkedHashMap<>();
-    private Map<String, String> metricsConfigurations = new LinkedHashMap<>();
+    /** CloudWatch request metrics configurations; null until the first PUT, like real S3. */
+    private Map<String, String> metricsConfigurations;
     private Map<String, String> intelligentTieringConfigurations = new LinkedHashMap<>();
 
     public Bucket() {
@@ -103,6 +105,9 @@ public class Bucket {
     public String getEncryptionConfiguration() { return encryptionConfiguration; }
     public void setEncryptionConfiguration(String encryptionConfiguration) { this.encryptionConfiguration = encryptionConfiguration; }
 
+    public String getReplicationConfiguration() { return replicationConfiguration; }
+    public void setReplicationConfiguration(String replicationConfiguration) { this.replicationConfiguration = replicationConfiguration; }
+
     public String getPublicAccessBlockConfiguration() { return publicAccessBlockConfiguration; }
     public void setPublicAccessBlockConfiguration(String publicAccessBlockConfiguration) {
         this.publicAccessBlockConfiguration = publicAccessBlockConfiguration;
@@ -112,6 +117,7 @@ public class Bucket {
     public void setOwnershipControlsConfiguration(String ownershipControlsConfiguration) {
         this.ownershipControlsConfiguration = ownershipControlsConfiguration;
     }
+
 
     public String getRequestPaymentPayer() { return requestPaymentPayer; }
     public void setRequestPaymentPayer(String requestPaymentPayer) { this.requestPaymentPayer = requestPaymentPayer; }
@@ -137,7 +143,7 @@ public class Bucket {
 
     public Map<String, String> getMetricsConfigurations() { return metricsConfigurations; }
     public void setMetricsConfigurations(Map<String, String> metricsConfigurations) {
-        this.metricsConfigurations = metricsConfigurations != null ? metricsConfigurations : new LinkedHashMap<>();
+        this.metricsConfigurations = metricsConfigurations;
     }
 
     public Map<String, String> getIntelligentTieringConfigurations() { return intelligentTieringConfigurations; }

@@ -453,13 +453,8 @@ public class AppSyncController {
         return Response.noContent().build();
     }
 
-    // ──────────────────────────── Tags ────────────────────────────
-    //
-    // AppSync's TagResource/UntagResource/ListTagsForResource are served by
-    // SharedTagsV1Controller via AppSyncTagHandler. They used to live here, on
-    // @Path("/v1/tags/{resourceArn: .+}") - a path AWS Batch shares, so every Batch
-    // TagResource call landed in AppSync's handler and came back 404 "GraphQL API not
-    // found" (lex00/floci#72).
+    // Tags moved to AppSyncTagHandler: MSK and Batch share the /v1/tags/{arn} path
+    // (lex00/floci#72), so it is served by the ARN-dispatching V1TagsController now.
 
     // ──────────────────────────── Environment Variables ────────────────────────────
 

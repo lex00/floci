@@ -1,7 +1,7 @@
 package io.github.hectorvent.floci.services.batch;
 
-import io.github.hectorvent.floci.core.common.SharedTagsV1Controller;
 import io.github.hectorvent.floci.core.common.TagHandler;
+import io.github.hectorvent.floci.core.common.V1Tags;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -18,6 +18,7 @@ import java.util.Map;
  * {@code tagKeys} query parameter.
  */
 @ApplicationScoped
+@V1Tags
 public class BatchTagHandler implements TagHandler {
 
     private final BatchService service;
@@ -30,11 +31,6 @@ public class BatchTagHandler implements TagHandler {
     @Override
     public String serviceKey() {
         return "batch";
-    }
-
-    @Override
-    public String tagPathPrefix() {
-        return SharedTagsV1Controller.PREFIX;
     }
 
     @Override

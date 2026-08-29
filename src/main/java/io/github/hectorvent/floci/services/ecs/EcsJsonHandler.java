@@ -27,6 +27,7 @@ import io.github.hectorvent.floci.services.ecs.model.NetworkConfiguration;
 import io.github.hectorvent.floci.services.ecs.model.NetworkMode;
 import io.github.hectorvent.floci.services.ecs.model.PortMapping;
 import io.github.hectorvent.floci.services.ecs.model.ProtectedTask;
+import io.github.hectorvent.floci.services.ecs.model.RuntimePlatform;
 import io.github.hectorvent.floci.services.ecs.model.ServiceDeployment;
 import io.github.hectorvent.floci.services.ecs.model.ServiceRevision;
 import io.github.hectorvent.floci.services.ecs.model.Secret;
@@ -233,14 +234,17 @@ public class EcsJsonHandler {
 
         TaskDefinition td = service.registerTaskDefinition(family, containerDefs, networkMode, cpu, memory,
                 taskRoleArn, executionRoleArn, requiresCompatibilities, tags, region);
-        // Task-level volumes are not part of registerTaskDefinition's signature; set them on the
-        // returned (and stored) task definition so they round-trip and reach RunTask launches.
+        // Task-level volumes and runtimePlatform are not part of registerTaskDefinition's signature;
+        // set them on the returned (and stored) task definition so they round-trip and reach RunTask
+        // launches, then write the mutated definition back so it also survives a restart.
         td.setVolumes(parseVolumes(req.path("volumes")));
         // Same store-and-echo reasoning as ContainerDefinition.raw: this keeps runtimePlatform
         // (a required, ForceNew Fargate field with no typed field on TaskDefinition) and every
         // other top-level RegisterTaskDefinition input round-tripping through Describe, without
         // hand-modeling each one.
         td.setRaw(req.deepCopy());
+        td.setRuntimePlatform(parseRuntimePlatform(req.path("runtimePlatform")));
+        service.persistTaskDefinition(td);
 
         ObjectNode resp = objectMapper.createObjectNode();
         resp.set("taskDefinition", taskDefinitionNode(td));
@@ -1122,6 +1126,17 @@ public class EcsJsonHandler {
         if (td.getMemory() != null) { n.put("memory", td.getMemory()); }
         if (td.getTaskRoleArn() != null) { n.put("taskRoleArn", td.getTaskRoleArn()); }
         if (td.getExecutionRoleArn() != null) { n.put("executionRoleArn", td.getExecutionRoleArn()); }
+        if (td.getRuntimePlatform() != null) {
+            RuntimePlatform platform = td.getRuntimePlatform();
+            ObjectNode platformNode = objectMapper.createObjectNode();
+            if (platform.cpuArchitecture() != null) {
+                platformNode.put("cpuArchitecture", platform.cpuArchitecture());
+            }
+            if (platform.operatingSystemFamily() != null) {
+                platformNode.put("operatingSystemFamily", platform.operatingSystemFamily());
+            }
+            n.set("runtimePlatform", platformNode);
+        }
         if (td.getRequiresCompatibilities() != null && !td.getRequiresCompatibilities().isEmpty()) {
             ArrayNode arr = objectMapper.createArrayNode();
             td.getRequiresCompatibilities().forEach(arr::add);
@@ -1220,6 +1235,18 @@ public class EcsJsonHandler {
                 pms.add(pmNode);
             }
             n.set("portMappings", pms);
+        }
+
+        if (def.getEntryPoint() != null && !def.getEntryPoint().isEmpty()) {
+            ArrayNode entryPoint = objectMapper.createArrayNode();
+            def.getEntryPoint().forEach(entryPoint::add);
+            n.set("entryPoint", entryPoint);
+        }
+
+        if (def.getCommand() != null && !def.getCommand().isEmpty()) {
+            ArrayNode command = objectMapper.createArrayNode();
+            def.getCommand().forEach(command::add);
+            n.set("command", command);
         }
 
         if (def.getEnvironment() != null && !def.getEnvironment().isEmpty()) {
@@ -1749,6 +1776,7 @@ public class EcsJsonHandler {
                 def.setSecrets(parseSecrets(item.path("secrets")));
             }
             def.setMountPoints(parseMountPoints(item.path("mountPoints")));
+            def.setLogConfiguration(parseLogConfiguration(item.path("logConfiguration")));
 
             if (item.has("command") && item.path("command").isArray()) {
                 List<String> cmd = new ArrayList<>();
@@ -1767,29 +1795,6 @@ public class EcsJsonHandler {
             result.add(def);
         }
         return result;
-    }
-
-    private LogConfiguration parseLogConfiguration(JsonNode node) {
-        if (node == null || !node.isObject()) {
-            return null;
-        }
-        String logDriver = node.path("logDriver").asText(null);
-        if (logDriver == null) {
-            return null;
-        }
-        Map<String, String> options = null;
-        JsonNode optionsNode = node.path("options");
-        if (optionsNode.isObject()) {
-            options = new LinkedHashMap<>();
-            var fields = optionsNode.fields();
-            while (fields.hasNext()) {
-                var entry = fields.next();
-                options.put(entry.getKey(), entry.getValue().asText());
-            }
-        }
-        List<Secret> secretOptions = node.has("secretOptions")
-                ? parseSecrets(node.path("secretOptions")) : null;
-        return new LogConfiguration(logDriver, options, secretOptions);
     }
 
     private List<DaemonContainerDefinition> parseDaemonContainerDefinitions(JsonNode node) {
@@ -1866,6 +1871,37 @@ public class EcsJsonHandler {
             result.add(new Secret(item.path("name").asText(), item.path("valueFrom").asText()));
         }
         return result;
+    }
+
+    private RuntimePlatform parseRuntimePlatform(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return null;
+        }
+        String cpuArchitecture = node.path("cpuArchitecture").asText(null);
+        String operatingSystemFamily = node.path("operatingSystemFamily").asText(null);
+        if (cpuArchitecture == null && operatingSystemFamily == null) {
+            return null;
+        }
+        return new RuntimePlatform(cpuArchitecture, operatingSystemFamily);
+    }
+
+    private LogConfiguration parseLogConfiguration(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return null;
+        }
+        String logDriver = node.path("logDriver").asText(null);
+        if (logDriver == null) {
+            return null;
+        }
+        Map<String, String> options = null;
+        if (node.path("options").isObject()) {
+            Map<String, String> parsed = new LinkedHashMap<>();
+            node.path("options").fields()
+                    .forEachRemaining(entry -> parsed.put(entry.getKey(), entry.getValue().asText()));
+            options = parsed;
+        }
+        List<Secret> secretOptions = node.has("secretOptions") ? parseSecrets(node.path("secretOptions")) : null;
+        return new LogConfiguration(logDriver, options, secretOptions);
     }
 
     private List<Volume> parseVolumes(JsonNode node) {

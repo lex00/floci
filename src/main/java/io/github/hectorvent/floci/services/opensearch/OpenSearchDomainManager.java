@@ -1,6 +1,7 @@
 package io.github.hectorvent.floci.services.opensearch;
 
 import io.github.hectorvent.floci.config.EmulatorConfig;
+import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.common.docker.ContainerBuilder;
 import io.github.hectorvent.floci.core.common.docker.ContainerDetector;
 import io.github.hectorvent.floci.core.common.docker.ContainerLifecycleManager;
@@ -36,18 +37,21 @@ public class OpenSearchDomainManager {
     private final PortAllocator portAllocator;
     private final EmulatorConfig config;
     private volatile boolean dockerUnavailableLogged;
+    private final RegionResolver regionResolver;
 
     @Inject
     public OpenSearchDomainManager(ContainerBuilder containerBuilder,
                                    ContainerLifecycleManager lifecycleManager,
                                    ContainerDetector containerDetector,
                                    PortAllocator portAllocator,
-                                   EmulatorConfig config) {
+                                   EmulatorConfig config,
+                                   RegionResolver regionResolver) {
         this.containerBuilder = containerBuilder;
         this.lifecycleManager = lifecycleManager;
         this.containerDetector = containerDetector;
         this.portAllocator = portAllocator;
         this.config = config;
+        this.regionResolver = regionResolver;
     }
 
     /**
@@ -107,7 +111,10 @@ public class OpenSearchDomainManager {
                 .withName(containerName)
                 .withEnv("discovery.type", "single-node")
                 .withDockerNetwork(config.services().dockerNetwork())
-                .withLogRotation();
+                .withLogRotation()
+                .withLabels(ContainerStorageHelper.resourceIdentityLabels(
+                        "opensearch", domain.getDomainName(), regionResolver.getAccountId(),
+                        regionResolver.getDefaultRegion()));
 
         // Container-name DNS only resolves on a user-defined Docker network, and
         // nothing in this codebase's own container-orchestration idiom guarantees

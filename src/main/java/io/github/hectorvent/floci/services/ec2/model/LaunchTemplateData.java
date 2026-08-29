@@ -1,11 +1,24 @@
 package io.github.hectorvent.floci.services.ec2.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonSetter;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * The subset of EC2 {@code RequestLaunchTemplateData} / {@code ResponseLaunchTemplateData} that
+ * Floci round-trips. Members the service model declares but this class omits are listed in
+ * {@code docs/services/ec2.md}; they are accepted and ignored rather than rejected.
+ *
+ * <p>A version persisted before this class existed in its current shape stored the instance
+ * profile as a bare {@code iamInstanceProfileArn} string and instance tags as a flat
+ * {@code instanceTags} list, rather than the {@link IamInstanceProfile} / {@link TagSpecification}
+ * shapes below. Both old keys are mapped onto the new fields at load time (see the legacy setters
+ * near the bottom of this class), so ignoreUnknown never has to silently drop them.
+ */
 @RegisterForReflection
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class LaunchTemplateData {
@@ -15,36 +28,27 @@ public class LaunchTemplateData {
     private String keyName;
     private String userData;
     private String encodedUserData;
-    private String iamInstanceProfileArn;
-    private List<String> securityGroupIds = new ArrayList<>();
-    private List<Tag> instanceTags = new ArrayList<>();
-    private MetadataOptions metadataOptions;
-    private Boolean monitoringEnabled;
-
-    // lex00/floci#119: LaunchTemplateData modeled only ~6 of AWS's ~30
-    // documented RequestLaunchTemplateData/ResponseLaunchTemplateData fields,
-    // so CreateLaunchTemplate/CreateLaunchTemplateVersion accepted and then
-    // DROPPED the rest, and DescribeLaunchTemplateVersions could not echo
-    // them back. Fields below close the gaps the issue named. Oracle:
-    // botocore's ec2/2016-11-15/service-2.json RequestLaunchTemplateData /
-    // ResponseLaunchTemplateData shapes.
-    //
-    // versionDescription isn't actually part of AWS's LaunchTemplateData
-    // shape - it's CreateLaunchTemplate[Version]'s own top-level
-    // VersionDescription, which floci models per-version by piggybacking it
-    // on this class (the same class already serves as the per-version
-    // record via LaunchTemplate.versions).
-    private String versionDescription;
+    private String kernelId;
+    private String ramDiskId;
+    private String instanceInitiatedShutdownBehavior;
     private Boolean ebsOptimized;
-    private List<BlockDeviceMapping> blockDeviceMappings = new ArrayList<>();
-    private CapacityReservationSpecification capacityReservationSpecification;
-    private CpuOptions cpuOptions;
-    private InstanceMarketOptions instanceMarketOptions;
-    private MaintenanceOptions maintenanceOptions;
-    private List<NetworkInterfaceSpecification> networkInterfaces = new ArrayList<>();
+    private Boolean disableApiTermination;
+    private Boolean disableApiStop;
+    private IamInstanceProfile iamInstanceProfile;
+    private MetadataOptions metadataOptions;
+    private Monitoring monitoring;
     private Placement placement;
+    private CpuOptions cpuOptions;
+    private CreditSpecification creditSpecification;
+    private EnclaveOptions enclaveOptions;
+    private HibernationOptions hibernationOptions;
+    private MaintenanceOptions maintenanceOptions;
+    private PrivateDnsNameOptions privateDnsNameOptions;
+    private CapacityReservationSpecification capacityReservationSpecification;
+    private List<String> securityGroupIds = new ArrayList<>();
+    private List<BlockDeviceMapping> blockDeviceMappings = new ArrayList<>();
+    private List<NetworkInterface> networkInterfaces = new ArrayList<>();
     private List<TagSpecification> tagSpecifications = new ArrayList<>();
-    private InstanceRequirements instanceRequirements;
 
     public LaunchTemplateData() {}
 
@@ -54,22 +58,116 @@ public class LaunchTemplateData {
         this.keyName = source.keyName;
         this.userData = source.userData;
         this.encodedUserData = source.encodedUserData;
-        this.iamInstanceProfileArn = source.iamInstanceProfileArn;
-        this.securityGroupIds = new ArrayList<>(source.securityGroupIds);
-        this.instanceTags = new ArrayList<>(source.instanceTags);
-        this.metadataOptions = source.metadataOptions;
-        this.monitoringEnabled = source.monitoringEnabled;
-        this.versionDescription = source.versionDescription;
+        this.kernelId = source.kernelId;
+        this.ramDiskId = source.ramDiskId;
+        this.instanceInitiatedShutdownBehavior = source.instanceInitiatedShutdownBehavior;
         this.ebsOptimized = source.ebsOptimized;
-        this.blockDeviceMappings = new ArrayList<>(source.blockDeviceMappings);
-        this.capacityReservationSpecification = source.capacityReservationSpecification;
-        this.cpuOptions = source.cpuOptions;
-        this.instanceMarketOptions = source.instanceMarketOptions;
-        this.maintenanceOptions = source.maintenanceOptions;
-        this.networkInterfaces = new ArrayList<>(source.networkInterfaces);
+        this.disableApiTermination = source.disableApiTermination;
+        this.disableApiStop = source.disableApiStop;
+        this.iamInstanceProfile = source.iamInstanceProfile;
+        this.metadataOptions = source.metadataOptions;
+        this.monitoring = source.monitoring;
         this.placement = source.placement;
+        this.cpuOptions = source.cpuOptions;
+        this.creditSpecification = source.creditSpecification;
+        this.enclaveOptions = source.enclaveOptions;
+        this.hibernationOptions = source.hibernationOptions;
+        this.maintenanceOptions = source.maintenanceOptions;
+        this.privateDnsNameOptions = source.privateDnsNameOptions;
+        this.capacityReservationSpecification = source.capacityReservationSpecification;
+        this.securityGroupIds = new ArrayList<>(source.securityGroupIds);
+        this.blockDeviceMappings = new ArrayList<>(source.blockDeviceMappings);
+        this.networkInterfaces = new ArrayList<>(source.networkInterfaces);
         this.tagSpecifications = new ArrayList<>(source.tagSpecifications);
-        this.instanceRequirements = source.instanceRequirements;
+    }
+
+    /**
+     * Members present on {@code override} replace those inherited from this instance, which is how
+     * {@code CreateLaunchTemplateVersion} layers a new version onto its source version.
+     */
+    public LaunchTemplateData mergedWith(LaunchTemplateData override) {
+        LaunchTemplateData merged = new LaunchTemplateData(this);
+        if (isPresent(override.imageId)) {
+            merged.imageId = override.imageId;
+        }
+        if (isPresent(override.instanceType)) {
+            merged.instanceType = override.instanceType;
+        }
+        if (isPresent(override.keyName)) {
+            merged.keyName = override.keyName;
+        }
+        if (isPresent(override.userData) || isPresent(override.encodedUserData)) {
+            merged.userData = override.userData;
+            merged.encodedUserData = override.encodedUserData;
+        }
+        if (isPresent(override.kernelId)) {
+            merged.kernelId = override.kernelId;
+        }
+        if (isPresent(override.ramDiskId)) {
+            merged.ramDiskId = override.ramDiskId;
+        }
+        if (isPresent(override.instanceInitiatedShutdownBehavior)) {
+            merged.instanceInitiatedShutdownBehavior = override.instanceInitiatedShutdownBehavior;
+        }
+        if (override.ebsOptimized != null) {
+            merged.ebsOptimized = override.ebsOptimized;
+        }
+        if (override.disableApiTermination != null) {
+            merged.disableApiTermination = override.disableApiTermination;
+        }
+        if (override.disableApiStop != null) {
+            merged.disableApiStop = override.disableApiStop;
+        }
+        if (override.iamInstanceProfile != null) {
+            merged.iamInstanceProfile = override.iamInstanceProfile;
+        }
+        if (override.metadataOptions != null) {
+            merged.metadataOptions = override.metadataOptions;
+        }
+        if (override.monitoring != null) {
+            merged.monitoring = override.monitoring;
+        }
+        if (override.placement != null) {
+            merged.placement = override.placement;
+        }
+        if (override.cpuOptions != null) {
+            merged.cpuOptions = override.cpuOptions;
+        }
+        if (override.creditSpecification != null) {
+            merged.creditSpecification = override.creditSpecification;
+        }
+        if (override.enclaveOptions != null) {
+            merged.enclaveOptions = override.enclaveOptions;
+        }
+        if (override.hibernationOptions != null) {
+            merged.hibernationOptions = override.hibernationOptions;
+        }
+        if (override.maintenanceOptions != null) {
+            merged.maintenanceOptions = override.maintenanceOptions;
+        }
+        if (override.privateDnsNameOptions != null) {
+            merged.privateDnsNameOptions = override.privateDnsNameOptions;
+        }
+        if (override.capacityReservationSpecification != null) {
+            merged.capacityReservationSpecification = override.capacityReservationSpecification;
+        }
+        if (!override.securityGroupIds.isEmpty()) {
+            merged.securityGroupIds = new ArrayList<>(override.securityGroupIds);
+        }
+        if (!override.blockDeviceMappings.isEmpty()) {
+            merged.blockDeviceMappings = new ArrayList<>(override.blockDeviceMappings);
+        }
+        if (!override.networkInterfaces.isEmpty()) {
+            merged.networkInterfaces = new ArrayList<>(override.networkInterfaces);
+        }
+        if (!override.tagSpecifications.isEmpty()) {
+            merged.tagSpecifications = new ArrayList<>(override.tagSpecifications);
+        }
+        return merged;
+    }
+
+    private static boolean isPresent(String value) {
+        return value != null && !value.isBlank();
     }
 
     public String getImageId() { return imageId; }
@@ -87,312 +185,320 @@ public class LaunchTemplateData {
     public String getEncodedUserData() { return encodedUserData; }
     public void setEncodedUserData(String encodedUserData) { this.encodedUserData = encodedUserData; }
 
-    public String getIamInstanceProfileArn() { return iamInstanceProfileArn; }
-    public void setIamInstanceProfileArn(String iamInstanceProfileArn) { this.iamInstanceProfileArn = iamInstanceProfileArn; }
+    public String getKernelId() { return kernelId; }
+    public void setKernelId(String kernelId) { this.kernelId = kernelId; }
+
+    public String getRamDiskId() { return ramDiskId; }
+    public void setRamDiskId(String ramDiskId) { this.ramDiskId = ramDiskId; }
+
+    public String getInstanceInitiatedShutdownBehavior() { return instanceInitiatedShutdownBehavior; }
+    public void setInstanceInitiatedShutdownBehavior(String instanceInitiatedShutdownBehavior) {
+        this.instanceInitiatedShutdownBehavior = instanceInitiatedShutdownBehavior;
+    }
+
+    public Boolean getEbsOptimized() { return ebsOptimized; }
+    public void setEbsOptimized(Boolean ebsOptimized) { this.ebsOptimized = ebsOptimized; }
+
+    public Boolean getDisableApiTermination() { return disableApiTermination; }
+    public void setDisableApiTermination(Boolean disableApiTermination) { this.disableApiTermination = disableApiTermination; }
+
+    public Boolean getDisableApiStop() { return disableApiStop; }
+    public void setDisableApiStop(Boolean disableApiStop) { this.disableApiStop = disableApiStop; }
+
+    public IamInstanceProfile getIamInstanceProfile() { return iamInstanceProfile; }
+    public void setIamInstanceProfile(IamInstanceProfile iamInstanceProfile) { this.iamInstanceProfile = iamInstanceProfile; }
+
+    public MetadataOptions getMetadataOptions() { return metadataOptions; }
+    public void setMetadataOptions(MetadataOptions metadataOptions) { this.metadataOptions = metadataOptions; }
+
+    public Monitoring getMonitoring() { return monitoring; }
+    public void setMonitoring(Monitoring monitoring) { this.monitoring = monitoring; }
+
+    public Placement getPlacement() { return placement; }
+    public void setPlacement(Placement placement) { this.placement = placement; }
+
+    public CpuOptions getCpuOptions() { return cpuOptions; }
+    public void setCpuOptions(CpuOptions cpuOptions) { this.cpuOptions = cpuOptions; }
+
+    public CreditSpecification getCreditSpecification() { return creditSpecification; }
+    public void setCreditSpecification(CreditSpecification creditSpecification) { this.creditSpecification = creditSpecification; }
+
+    public EnclaveOptions getEnclaveOptions() { return enclaveOptions; }
+    public void setEnclaveOptions(EnclaveOptions enclaveOptions) { this.enclaveOptions = enclaveOptions; }
+
+    public HibernationOptions getHibernationOptions() { return hibernationOptions; }
+    public void setHibernationOptions(HibernationOptions hibernationOptions) { this.hibernationOptions = hibernationOptions; }
+
+    public MaintenanceOptions getMaintenanceOptions() { return maintenanceOptions; }
+    public void setMaintenanceOptions(MaintenanceOptions maintenanceOptions) { this.maintenanceOptions = maintenanceOptions; }
+
+    public PrivateDnsNameOptions getPrivateDnsNameOptions() { return privateDnsNameOptions; }
+    public void setPrivateDnsNameOptions(PrivateDnsNameOptions privateDnsNameOptions) {
+        this.privateDnsNameOptions = privateDnsNameOptions;
+    }
+
+    public CapacityReservationSpecification getCapacityReservationSpecification() {
+        return capacityReservationSpecification;
+    }
+    public void setCapacityReservationSpecification(CapacityReservationSpecification capacityReservationSpecification) {
+        this.capacityReservationSpecification = capacityReservationSpecification;
+    }
 
     public List<String> getSecurityGroupIds() { return securityGroupIds; }
     public void setSecurityGroupIds(List<String> securityGroupIds) {
         this.securityGroupIds = securityGroupIds != null ? new ArrayList<>(securityGroupIds) : new ArrayList<>();
     }
 
-    // lex00/floci#123: getSecurityGroupIds() above must stay the literal,
-    // as-set top-level SecurityGroupIds list - DescribeLaunchTemplateVersions
-    // echoes it back verbatim, and real AWS keeps it and
-    // NetworkInterfaces[].Groups mutually exclusive (the terraform
-    // provider's own docs describe vpc_security_group_ids and
-    // network_interfaces.security_groups that way). RunInstances resolving
-    // a launch template into an actual instance's security groups, though,
-    // legitimately needs the UNION of both - a template that only ever set
-    // groups per-network-interface still has to launch into those groups -
-    // so that internal-only resolution gets its own method rather than
-    // reusing (and re-polluting) the wire-facing field.
-    public List<String> getEffectiveSecurityGroupIds() {
-        java.util.LinkedHashSet<String> effective = new java.util.LinkedHashSet<>(securityGroupIds);
-        for (NetworkInterfaceSpecification ni : networkInterfaces) {
-            effective.addAll(ni.getGroups());
-        }
-        return new ArrayList<>(effective);
-    }
-
-    public List<Tag> getInstanceTags() { return instanceTags; }
-    public void setInstanceTags(List<Tag> instanceTags) {
-        this.instanceTags = instanceTags != null ? new ArrayList<>(instanceTags) : new ArrayList<>();
-    }
-
-    public MetadataOptions getMetadataOptions() { return metadataOptions; }
-    public void setMetadataOptions(MetadataOptions metadataOptions) { this.metadataOptions = metadataOptions; }
-
-    public Boolean getMonitoringEnabled() { return monitoringEnabled; }
-    public void setMonitoringEnabled(Boolean monitoringEnabled) { this.monitoringEnabled = monitoringEnabled; }
-
-    public String getVersionDescription() { return versionDescription; }
-    public void setVersionDescription(String versionDescription) { this.versionDescription = versionDescription; }
-
-    public Boolean getEbsOptimized() { return ebsOptimized; }
-    public void setEbsOptimized(Boolean ebsOptimized) { this.ebsOptimized = ebsOptimized; }
-
     public List<BlockDeviceMapping> getBlockDeviceMappings() { return blockDeviceMappings; }
     public void setBlockDeviceMappings(List<BlockDeviceMapping> blockDeviceMappings) {
         this.blockDeviceMappings = blockDeviceMappings != null ? new ArrayList<>(blockDeviceMappings) : new ArrayList<>();
     }
 
-    public CapacityReservationSpecification getCapacityReservationSpecification() { return capacityReservationSpecification; }
-    public void setCapacityReservationSpecification(CapacityReservationSpecification v) { this.capacityReservationSpecification = v; }
-
-    public CpuOptions getCpuOptions() { return cpuOptions; }
-    public void setCpuOptions(CpuOptions cpuOptions) { this.cpuOptions = cpuOptions; }
-
-    public InstanceMarketOptions getInstanceMarketOptions() { return instanceMarketOptions; }
-    public void setInstanceMarketOptions(InstanceMarketOptions v) { this.instanceMarketOptions = v; }
-
-    public MaintenanceOptions getMaintenanceOptions() { return maintenanceOptions; }
-    public void setMaintenanceOptions(MaintenanceOptions maintenanceOptions) { this.maintenanceOptions = maintenanceOptions; }
-
-    public List<NetworkInterfaceSpecification> getNetworkInterfaces() { return networkInterfaces; }
-    public void setNetworkInterfaces(List<NetworkInterfaceSpecification> networkInterfaces) {
+    public List<NetworkInterface> getNetworkInterfaces() { return networkInterfaces; }
+    public void setNetworkInterfaces(List<NetworkInterface> networkInterfaces) {
         this.networkInterfaces = networkInterfaces != null ? new ArrayList<>(networkInterfaces) : new ArrayList<>();
     }
-
-    public Placement getPlacement() { return placement; }
-    public void setPlacement(Placement placement) { this.placement = placement; }
 
     public List<TagSpecification> getTagSpecifications() { return tagSpecifications; }
     public void setTagSpecifications(List<TagSpecification> tagSpecifications) {
         this.tagSpecifications = tagSpecifications != null ? new ArrayList<>(tagSpecifications) : new ArrayList<>();
     }
 
-    public InstanceRequirements getInstanceRequirements() { return instanceRequirements; }
-    public void setInstanceRequirements(InstanceRequirements instanceRequirements) { this.instanceRequirements = instanceRequirements; }
+    /** The tags a launch from this template applies to the instance it creates. */
+    @JsonIgnore
+    public List<Tag> getInstanceTags() {
+        return tagsForResource("instance");
+    }
 
-    // aws_launch_template's metadata_options and monitoring blocks
-    // (DescribeLaunchTemplateVersions.LaunchTemplateData.MetadataOptions /
-    // .Monitoring in the real API) had no field on this model at all, so
-    // @JsonIgnoreProperties(ignoreUnknown = true) silently dropped both on
-    // create and DescribeLaunchTemplateVersions echoed back neither -
-    // confirmed directly against this floci build with the AWS CLI, no
-    // Terraform in the loop: CreateLaunchTemplate accepted both, and the
-    // immediate DescribeLaunchTemplateVersions omitted them entirely.
-    // Surfaced by live/e2e/corpus-autoscaling-complete: every module call
-    // in that crossing's example sets metadata_options (the module's own
-    // variable default is non-null), so a stateless replan proposed
-    // `+ metadata_options {...}` and `+ monitoring {...}` on every launch
-    // template, forever.
+    // ── Pre-unified-data schema migration ────────────────────────────────────────────────
+    //
+    // A version persisted before this PR stored the instance profile and instance tags under
+    // these two keys directly on this class, rather than nested inside iamInstanceProfile /
+    // tagSpecifications. Without the setters below, ignoreUnknown silently drops both keys and
+    // an upgraded Floci launches from that version with no IAM profile and no instance tags.
+    // Deserialize-only: there is no getter for either key, so a file saved today never writes
+    // this shape back out. Guarded so a current-schema record — which never carries these keys —
+    // can't have a stray legacy key fight the real field, whichever order they load in.
+
+    @JsonSetter("iamInstanceProfileArn")
+    public void setLegacyIamInstanceProfileArn(String arn) {
+        if (arn != null && !arn.isBlank() && iamInstanceProfile == null) {
+            iamInstanceProfile = new IamInstanceProfile(arn, null);
+        }
+    }
+
+    @JsonSetter("instanceTags")
+    public void setLegacyInstanceTags(List<Tag> tags) {
+        if (tags != null && !tags.isEmpty() && tagSpecifications.isEmpty()) {
+            tagSpecifications.add(new TagSpecification("instance", tags));
+        }
+    }
+
+    @JsonIgnore
+    public List<Tag> tagsForResource(String resourceType) {
+        List<Tag> result = new ArrayList<>();
+        for (TagSpecification spec : tagSpecifications) {
+            if (resourceType.equals(spec.getResourceType())) {
+                result.addAll(spec.getTags());
+            }
+        }
+        return result;
+    }
+
+    /**
+     * The security groups a launch from this template applies. On AWS, top-level
+     * {@code SecurityGroupIds} and {@code NetworkInterfaces[].Groups} are mutually exclusive, so at
+     * most one of the two is populated. Resolving them here — rather than folding the interface
+     * groups into the stored top-level list — is what keeps a NetworkInterfaces block readable back
+     * as a NetworkInterfaces block.
+     */
+    @JsonIgnore
+    public List<String> effectiveSecurityGroupIds() {
+        if (!securityGroupIds.isEmpty()) {
+            return List.copyOf(securityGroupIds);
+        }
+        List<String> fromInterfaces = new ArrayList<>();
+        for (NetworkInterface networkInterface : networkInterfaces) {
+            for (String group : networkInterface.getGroups()) {
+                if (!fromInterfaces.contains(group)) {
+                    fromInterfaces.add(group);
+                }
+            }
+        }
+        return fromInterfaces;
+    }
+
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class IamInstanceProfile {
+        private String arn;
+        private String name;
+
+        public IamInstanceProfile() {}
+
+        public IamInstanceProfile(String arn, String name) {
+            this.arn = arn;
+            this.name = name;
+        }
+
+        public String getArn() { return arn; }
+        public void setArn(String arn) { this.arn = arn; }
+
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+    }
+
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class BlockDeviceMapping {
+        private String deviceName;
+        private String virtualName;
+        private String noDevice;
+        private Ebs ebs;
+
+        public String getDeviceName() { return deviceName; }
+        public void setDeviceName(String deviceName) { this.deviceName = deviceName; }
+
+        public String getVirtualName() { return virtualName; }
+        public void setVirtualName(String virtualName) { this.virtualName = virtualName; }
+
+        public String getNoDevice() { return noDevice; }
+        public void setNoDevice(String noDevice) { this.noDevice = noDevice; }
+
+        public Ebs getEbs() { return ebs; }
+        public void setEbs(Ebs ebs) { this.ebs = ebs; }
+    }
+
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Ebs {
+        private Boolean encrypted;
+        private Boolean deleteOnTermination;
+        private Integer iops;
+        private String kmsKeyId;
+        private String snapshotId;
+        private Integer volumeSize;
+        private String volumeType;
+        private Integer throughput;
+
+        public Boolean getEncrypted() { return encrypted; }
+        public void setEncrypted(Boolean encrypted) { this.encrypted = encrypted; }
+
+        public Boolean getDeleteOnTermination() { return deleteOnTermination; }
+        public void setDeleteOnTermination(Boolean deleteOnTermination) { this.deleteOnTermination = deleteOnTermination; }
+
+        public Integer getIops() { return iops; }
+        public void setIops(Integer iops) { this.iops = iops; }
+
+        public String getKmsKeyId() { return kmsKeyId; }
+        public void setKmsKeyId(String kmsKeyId) { this.kmsKeyId = kmsKeyId; }
+
+        public String getSnapshotId() { return snapshotId; }
+        public void setSnapshotId(String snapshotId) { this.snapshotId = snapshotId; }
+
+        public Integer getVolumeSize() { return volumeSize; }
+        public void setVolumeSize(Integer volumeSize) { this.volumeSize = volumeSize; }
+
+        public String getVolumeType() { return volumeType; }
+        public void setVolumeType(String volumeType) { this.volumeType = volumeType; }
+
+        public Integer getThroughput() { return throughput; }
+        public void setThroughput(Integer throughput) { this.throughput = throughput; }
+    }
+
     @RegisterForReflection
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class MetadataOptions {
+        private String state;
+        private String httpTokens;
+        private Integer httpPutResponseHopLimit;
         private String httpEndpoint;
         private String httpProtocolIpv6;
-        private Integer httpPutResponseHopLimit;
-        private String httpTokens;
         private String instanceMetadataTags;
 
-        public MetadataOptions() {}
-
-        public String getHttpEndpoint() { return httpEndpoint; }
-        public void setHttpEndpoint(String v) { this.httpEndpoint = v; }
-
-        public String getHttpProtocolIpv6() { return httpProtocolIpv6; }
-        public void setHttpProtocolIpv6(String v) { this.httpProtocolIpv6 = v; }
-
-        public Integer getHttpPutResponseHopLimit() { return httpPutResponseHopLimit; }
-        public void setHttpPutResponseHopLimit(Integer v) { this.httpPutResponseHopLimit = v; }
+        public String getState() { return state; }
+        public void setState(String state) { this.state = state; }
 
         public String getHttpTokens() { return httpTokens; }
-        public void setHttpTokens(String v) { this.httpTokens = v; }
+        public void setHttpTokens(String httpTokens) { this.httpTokens = httpTokens; }
+
+        public Integer getHttpPutResponseHopLimit() { return httpPutResponseHopLimit; }
+        public void setHttpPutResponseHopLimit(Integer httpPutResponseHopLimit) {
+            this.httpPutResponseHopLimit = httpPutResponseHopLimit;
+        }
+
+        public String getHttpEndpoint() { return httpEndpoint; }
+        public void setHttpEndpoint(String httpEndpoint) { this.httpEndpoint = httpEndpoint; }
+
+        public String getHttpProtocolIpv6() { return httpProtocolIpv6; }
+        public void setHttpProtocolIpv6(String httpProtocolIpv6) { this.httpProtocolIpv6 = httpProtocolIpv6; }
 
         public String getInstanceMetadataTags() { return instanceMetadataTags; }
-        public void setInstanceMetadataTags(String v) { this.instanceMetadataTags = v; }
-
-        public boolean isEmpty() {
-            return httpEndpoint == null && httpProtocolIpv6 == null && httpPutResponseHopLimit == null
-                    && httpTokens == null && instanceMetadataTags == null;
-        }
+        public void setInstanceMetadataTags(String instanceMetadataTags) { this.instanceMetadataTags = instanceMetadataTags; }
     }
 
     @RegisterForReflection
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class CapacityReservationTarget {
-        private String capacityReservationId;
-        private String capacityReservationResourceGroupArn;
-
-        public String getCapacityReservationId() { return capacityReservationId; }
-        public void setCapacityReservationId(String v) { this.capacityReservationId = v; }
-
-        public String getCapacityReservationResourceGroupArn() { return capacityReservationResourceGroupArn; }
-        public void setCapacityReservationResourceGroupArn(String v) { this.capacityReservationResourceGroupArn = v; }
-
-        public boolean isEmpty() { return capacityReservationId == null && capacityReservationResourceGroupArn == null; }
-    }
-
-    @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class CapacityReservationSpecification {
-        private String capacityReservationPreference;
-        private CapacityReservationTarget capacityReservationTarget;
-
-        public String getCapacityReservationPreference() { return capacityReservationPreference; }
-        public void setCapacityReservationPreference(String v) { this.capacityReservationPreference = v; }
-
-        public CapacityReservationTarget getCapacityReservationTarget() { return capacityReservationTarget; }
-        public void setCapacityReservationTarget(CapacityReservationTarget v) { this.capacityReservationTarget = v; }
-
-        public boolean isEmpty() {
-            return capacityReservationPreference == null
-                    && (capacityReservationTarget == null || capacityReservationTarget.isEmpty());
-        }
-    }
-
-    @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class CpuOptions {
-        private Integer coreCount;
-        private Integer threadsPerCore;
-        private String amdSevSnp;
-
-        public Integer getCoreCount() { return coreCount; }
-        public void setCoreCount(Integer v) { this.coreCount = v; }
-
-        public Integer getThreadsPerCore() { return threadsPerCore; }
-        public void setThreadsPerCore(Integer v) { this.threadsPerCore = v; }
-
-        public String getAmdSevSnp() { return amdSevSnp; }
-        public void setAmdSevSnp(String v) { this.amdSevSnp = v; }
-
-        public boolean isEmpty() { return coreCount == null && threadsPerCore == null && amdSevSnp == null; }
-    }
-
-    @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class SpotOptions {
-        private String maxPrice;
-        private String spotInstanceType;
-        private Integer blockDurationMinutes;
-        private String validUntil;
-        private String instanceInterruptionBehavior;
-
-        public String getMaxPrice() { return maxPrice; }
-        public void setMaxPrice(String v) { this.maxPrice = v; }
-
-        public String getSpotInstanceType() { return spotInstanceType; }
-        public void setSpotInstanceType(String v) { this.spotInstanceType = v; }
-
-        public Integer getBlockDurationMinutes() { return blockDurationMinutes; }
-        public void setBlockDurationMinutes(Integer v) { this.blockDurationMinutes = v; }
-
-        public String getValidUntil() { return validUntil; }
-        public void setValidUntil(String v) { this.validUntil = v; }
-
-        public String getInstanceInterruptionBehavior() { return instanceInterruptionBehavior; }
-        public void setInstanceInterruptionBehavior(String v) { this.instanceInterruptionBehavior = v; }
-
-        public boolean isEmpty() {
-            return maxPrice == null && spotInstanceType == null && blockDurationMinutes == null
-                    && validUntil == null && instanceInterruptionBehavior == null;
-        }
-    }
-
-    @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class InstanceMarketOptions {
-        private String marketType;
-        private SpotOptions spotOptions;
-
-        public String getMarketType() { return marketType; }
-        public void setMarketType(String v) { this.marketType = v; }
-
-        public SpotOptions getSpotOptions() { return spotOptions; }
-        public void setSpotOptions(SpotOptions v) { this.spotOptions = v; }
-
-        public boolean isEmpty() { return marketType == null && (spotOptions == null || spotOptions.isEmpty()); }
-    }
-
-    @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class MaintenanceOptions {
-        private String autoRecovery;
-
-        public String getAutoRecovery() { return autoRecovery; }
-        public void setAutoRecovery(String v) { this.autoRecovery = v; }
-
-        public boolean isEmpty() { return autoRecovery == null; }
-    }
-
-    @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class NetworkInterfaceSpecification {
-        private Integer deviceIndex;
-        private String subnetId;
-        private List<String> groups = new ArrayList<>();
+    public static class NetworkInterface {
         private Boolean associatePublicIpAddress;
+        private Boolean associateCarrierIpAddress;
         private Boolean deleteOnTermination;
         private String description;
-        private String privateIpAddress;
-        private Integer networkCardIndex;
+        private Integer deviceIndex;
         private String interfaceType;
         private Integer ipv6AddressCount;
         private String networkInterfaceId;
-        // lex00/floci#119's round-5 re-measure (choudoufu's own round-5 repin, ae2a613b25):
-        // a network interface's ConnectionTrackingSpecification (TcpEstablishedTimeout/
-        // UdpStreamTimeout/UdpTimeout) had no field at all, so
-        // DescribeLaunchTemplateVersions could never echo it back. Oracle: botocore's
-        // ec2/2016-11-15/service-2.json ConnectionTrackingSpecificationRequest/-Response shapes.
-        private ConnectionTrackingSpecification connectionTrackingSpecification;
-
-        public Integer getDeviceIndex() { return deviceIndex; }
-        public void setDeviceIndex(Integer v) { this.deviceIndex = v; }
-
-        public String getSubnetId() { return subnetId; }
-        public void setSubnetId(String v) { this.subnetId = v; }
-
-        public List<String> getGroups() { return groups; }
-        public void setGroups(List<String> groups) { this.groups = groups != null ? new ArrayList<>(groups) : new ArrayList<>(); }
+        private String privateIpAddress;
+        private Integer secondaryPrivateIpAddressCount;
+        private String subnetId;
+        private Integer networkCardIndex;
+        private List<String> groups = new ArrayList<>();
 
         public Boolean getAssociatePublicIpAddress() { return associatePublicIpAddress; }
-        public void setAssociatePublicIpAddress(Boolean v) { this.associatePublicIpAddress = v; }
+        public void setAssociatePublicIpAddress(Boolean associatePublicIpAddress) {
+            this.associatePublicIpAddress = associatePublicIpAddress;
+        }
+
+        public Boolean getAssociateCarrierIpAddress() { return associateCarrierIpAddress; }
+        public void setAssociateCarrierIpAddress(Boolean associateCarrierIpAddress) {
+            this.associateCarrierIpAddress = associateCarrierIpAddress;
+        }
 
         public Boolean getDeleteOnTermination() { return deleteOnTermination; }
-        public void setDeleteOnTermination(Boolean v) { this.deleteOnTermination = v; }
+        public void setDeleteOnTermination(Boolean deleteOnTermination) { this.deleteOnTermination = deleteOnTermination; }
 
         public String getDescription() { return description; }
-        public void setDescription(String v) { this.description = v; }
+        public void setDescription(String description) { this.description = description; }
 
-        public String getPrivateIpAddress() { return privateIpAddress; }
-        public void setPrivateIpAddress(String v) { this.privateIpAddress = v; }
-
-        public Integer getNetworkCardIndex() { return networkCardIndex; }
-        public void setNetworkCardIndex(Integer v) { this.networkCardIndex = v; }
+        public Integer getDeviceIndex() { return deviceIndex; }
+        public void setDeviceIndex(Integer deviceIndex) { this.deviceIndex = deviceIndex; }
 
         public String getInterfaceType() { return interfaceType; }
-        public void setInterfaceType(String v) { this.interfaceType = v; }
+        public void setInterfaceType(String interfaceType) { this.interfaceType = interfaceType; }
 
         public Integer getIpv6AddressCount() { return ipv6AddressCount; }
-        public void setIpv6AddressCount(Integer v) { this.ipv6AddressCount = v; }
+        public void setIpv6AddressCount(Integer ipv6AddressCount) { this.ipv6AddressCount = ipv6AddressCount; }
 
         public String getNetworkInterfaceId() { return networkInterfaceId; }
-        public void setNetworkInterfaceId(String v) { this.networkInterfaceId = v; }
+        public void setNetworkInterfaceId(String networkInterfaceId) { this.networkInterfaceId = networkInterfaceId; }
 
-        public ConnectionTrackingSpecification getConnectionTrackingSpecification() { return connectionTrackingSpecification; }
-        public void setConnectionTrackingSpecification(ConnectionTrackingSpecification v) { this.connectionTrackingSpecification = v; }
-    }
+        public String getPrivateIpAddress() { return privateIpAddress; }
+        public void setPrivateIpAddress(String privateIpAddress) { this.privateIpAddress = privateIpAddress; }
 
-    @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class ConnectionTrackingSpecification {
-        private Integer tcpEstablishedTimeout;
-        private Integer udpStreamTimeout;
-        private Integer udpTimeout;
+        public Integer getSecondaryPrivateIpAddressCount() { return secondaryPrivateIpAddressCount; }
+        public void setSecondaryPrivateIpAddressCount(Integer secondaryPrivateIpAddressCount) {
+            this.secondaryPrivateIpAddressCount = secondaryPrivateIpAddressCount;
+        }
 
-        public Integer getTcpEstablishedTimeout() { return tcpEstablishedTimeout; }
-        public void setTcpEstablishedTimeout(Integer v) { this.tcpEstablishedTimeout = v; }
+        public String getSubnetId() { return subnetId; }
+        public void setSubnetId(String subnetId) { this.subnetId = subnetId; }
 
-        public Integer getUdpStreamTimeout() { return udpStreamTimeout; }
-        public void setUdpStreamTimeout(Integer v) { this.udpStreamTimeout = v; }
+        public Integer getNetworkCardIndex() { return networkCardIndex; }
+        public void setNetworkCardIndex(Integer networkCardIndex) { this.networkCardIndex = networkCardIndex; }
 
-        public Integer getUdpTimeout() { return udpTimeout; }
-        public void setUdpTimeout(Integer v) { this.udpTimeout = v; }
-
-        public boolean isEmpty() {
-            return tcpEstablishedTimeout == null && udpStreamTimeout == null && udpTimeout == null;
+        public List<String> getGroups() { return groups; }
+        public void setGroups(List<String> groups) {
+            this.groups = groups != null ? new ArrayList<>(groups) : new ArrayList<>();
         }
     }
 
@@ -406,168 +512,177 @@ public class LaunchTemplateData {
 
         public TagSpecification(String resourceType, List<Tag> tags) {
             this.resourceType = resourceType;
-            this.tags = tags != null ? new ArrayList<>(tags) : new ArrayList<>();
+            setTags(tags);
         }
 
         public String getResourceType() { return resourceType; }
-        public void setResourceType(String v) { this.resourceType = v; }
+        public void setResourceType(String resourceType) { this.resourceType = resourceType; }
 
         public List<Tag> getTags() { return tags; }
-        public void setTags(List<Tag> tags) { this.tags = tags != null ? new ArrayList<>(tags) : new ArrayList<>(); }
+        public void setTags(List<Tag> tags) {
+            this.tags = tags != null ? new ArrayList<>(tags) : new ArrayList<>();
+        }
     }
 
     @RegisterForReflection
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class IntRange {
-        private Integer min;
-        private Integer max;
+    public static class Monitoring {
+        private Boolean enabled;
 
-        public IntRange() {}
-        public IntRange(Integer min, Integer max) { this.min = min; this.max = max; }
-
-        public Integer getMin() { return min; }
-        public void setMin(Integer v) { this.min = v; }
-
-        public Integer getMax() { return max; }
-        public void setMax(Integer v) { this.max = v; }
-
-        public boolean isEmpty() { return min == null && max == null; }
+        public Boolean getEnabled() { return enabled; }
+        public void setEnabled(Boolean enabled) { this.enabled = enabled; }
     }
 
     @RegisterForReflection
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class DoubleRange {
-        private Double min;
-        private Double max;
+    public static class EnclaveOptions {
+        private Boolean enabled;
 
-        public DoubleRange() {}
-        public DoubleRange(Double min, Double max) { this.min = min; this.max = max; }
-
-        public Double getMin() { return min; }
-        public void setMin(Double v) { this.min = v; }
-
-        public Double getMax() { return max; }
-        public void setMax(Double v) { this.max = v; }
-
-        public boolean isEmpty() { return min == null && max == null; }
+        public Boolean getEnabled() { return enabled; }
+        public void setEnabled(Boolean enabled) { this.enabled = enabled; }
     }
 
-    // Covers the subset of InstanceRequirements(Request) that terraform's
-    // aws_launch_template instance_requirements block commonly sets.
-    // Deliberately NOT covered (real, but rarer/newer AWS fields, left as a
-    // disclaimed gap the same way #119's own branch disclaimed
-    // TargetTrackingConfiguration.CustomizedMetricSpecification):
-    // BaselinePerformanceFactors, RequireEncryptionInTransit.
     @RegisterForReflection
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class InstanceRequirements {
-        private IntRange vCpuCount;
-        private IntRange memoryMiB;
-        private List<String> cpuManufacturers = new ArrayList<>();
-        private DoubleRange memoryGiBPerVCpu;
-        private List<String> excludedInstanceTypes = new ArrayList<>();
-        private List<String> instanceGenerations = new ArrayList<>();
-        private Integer spotMaxPricePercentageOverLowestPrice;
-        private Integer onDemandMaxPricePercentageOverLowestPrice;
-        private String bareMetal;
-        private String burstablePerformance;
-        private Boolean requireHibernateSupport;
-        private IntRange networkInterfaceCount;
-        private String localStorage;
-        private List<String> localStorageTypes = new ArrayList<>();
-        private DoubleRange totalLocalStorageGB;
-        private IntRange baselineEbsBandwidthMbps;
-        private List<String> acceleratorTypes = new ArrayList<>();
-        private IntRange acceleratorCount;
-        private List<String> acceleratorManufacturers = new ArrayList<>();
-        private List<String> acceleratorNames = new ArrayList<>();
-        private IntRange acceleratorTotalMemoryMiB;
-        private DoubleRange networkBandwidthGbps;
-        private List<String> allowedInstanceTypes = new ArrayList<>();
-        private Integer maxSpotPriceAsPercentageOfOptimalOnDemandPrice;
+    public static class HibernationOptions {
+        private Boolean configured;
 
-        public IntRange getVCpuCount() { return vCpuCount; }
-        public void setVCpuCount(IntRange v) { this.vCpuCount = v; }
+        public Boolean getConfigured() { return configured; }
+        public void setConfigured(Boolean configured) { this.configured = configured; }
+    }
 
-        public IntRange getMemoryMiB() { return memoryMiB; }
-        public void setMemoryMiB(IntRange v) { this.memoryMiB = v; }
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class MaintenanceOptions {
+        private String autoRecovery;
 
-        public List<String> getCpuManufacturers() { return cpuManufacturers; }
-        public void setCpuManufacturers(List<String> v) { this.cpuManufacturers = v != null ? new ArrayList<>(v) : new ArrayList<>(); }
+        public String getAutoRecovery() { return autoRecovery; }
+        public void setAutoRecovery(String autoRecovery) { this.autoRecovery = autoRecovery; }
+    }
 
-        public DoubleRange getMemoryGiBPerVCpu() { return memoryGiBPerVCpu; }
-        public void setMemoryGiBPerVCpu(DoubleRange v) { this.memoryGiBPerVCpu = v; }
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class CreditSpecification {
+        private String cpuCredits;
 
-        public List<String> getExcludedInstanceTypes() { return excludedInstanceTypes; }
-        public void setExcludedInstanceTypes(List<String> v) { this.excludedInstanceTypes = v != null ? new ArrayList<>(v) : new ArrayList<>(); }
+        public String getCpuCredits() { return cpuCredits; }
+        public void setCpuCredits(String cpuCredits) { this.cpuCredits = cpuCredits; }
+    }
 
-        public List<String> getInstanceGenerations() { return instanceGenerations; }
-        public void setInstanceGenerations(List<String> v) { this.instanceGenerations = v != null ? new ArrayList<>(v) : new ArrayList<>(); }
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class CpuOptions {
+        private Integer coreCount;
+        private Integer threadsPerCore;
+        private String amdSevSnp;
 
-        public Integer getSpotMaxPricePercentageOverLowestPrice() { return spotMaxPricePercentageOverLowestPrice; }
-        public void setSpotMaxPricePercentageOverLowestPrice(Integer v) { this.spotMaxPricePercentageOverLowestPrice = v; }
+        public Integer getCoreCount() { return coreCount; }
+        public void setCoreCount(Integer coreCount) { this.coreCount = coreCount; }
 
-        public Integer getOnDemandMaxPricePercentageOverLowestPrice() { return onDemandMaxPricePercentageOverLowestPrice; }
-        public void setOnDemandMaxPricePercentageOverLowestPrice(Integer v) { this.onDemandMaxPricePercentageOverLowestPrice = v; }
+        public Integer getThreadsPerCore() { return threadsPerCore; }
+        public void setThreadsPerCore(Integer threadsPerCore) { this.threadsPerCore = threadsPerCore; }
 
-        public String getBareMetal() { return bareMetal; }
-        public void setBareMetal(String v) { this.bareMetal = v; }
+        public String getAmdSevSnp() { return amdSevSnp; }
+        public void setAmdSevSnp(String amdSevSnp) { this.amdSevSnp = amdSevSnp; }
+    }
 
-        public String getBurstablePerformance() { return burstablePerformance; }
-        public void setBurstablePerformance(String v) { this.burstablePerformance = v; }
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Placement {
+        private String availabilityZone;
+        private String availabilityZoneId;
+        private String affinity;
+        private String groupName;
+        private String groupId;
+        private String hostId;
+        private String tenancy;
+        private String spreadDomain;
+        private String hostResourceGroupArn;
+        private Integer partitionNumber;
 
-        public Boolean getRequireHibernateSupport() { return requireHibernateSupport; }
-        public void setRequireHibernateSupport(Boolean v) { this.requireHibernateSupport = v; }
+        public String getAvailabilityZone() { return availabilityZone; }
+        public void setAvailabilityZone(String availabilityZone) { this.availabilityZone = availabilityZone; }
 
-        public IntRange getNetworkInterfaceCount() { return networkInterfaceCount; }
-        public void setNetworkInterfaceCount(IntRange v) { this.networkInterfaceCount = v; }
+        public String getAvailabilityZoneId() { return availabilityZoneId; }
+        public void setAvailabilityZoneId(String availabilityZoneId) { this.availabilityZoneId = availabilityZoneId; }
 
-        public String getLocalStorage() { return localStorage; }
-        public void setLocalStorage(String v) { this.localStorage = v; }
+        public String getAffinity() { return affinity; }
+        public void setAffinity(String affinity) { this.affinity = affinity; }
 
-        public List<String> getLocalStorageTypes() { return localStorageTypes; }
-        public void setLocalStorageTypes(List<String> v) { this.localStorageTypes = v != null ? new ArrayList<>(v) : new ArrayList<>(); }
+        public String getGroupName() { return groupName; }
+        public void setGroupName(String groupName) { this.groupName = groupName; }
 
-        public DoubleRange getTotalLocalStorageGB() { return totalLocalStorageGB; }
-        public void setTotalLocalStorageGB(DoubleRange v) { this.totalLocalStorageGB = v; }
+        public String getGroupId() { return groupId; }
+        public void setGroupId(String groupId) { this.groupId = groupId; }
 
-        public IntRange getBaselineEbsBandwidthMbps() { return baselineEbsBandwidthMbps; }
-        public void setBaselineEbsBandwidthMbps(IntRange v) { this.baselineEbsBandwidthMbps = v; }
+        public String getHostId() { return hostId; }
+        public void setHostId(String hostId) { this.hostId = hostId; }
 
-        public List<String> getAcceleratorTypes() { return acceleratorTypes; }
-        public void setAcceleratorTypes(List<String> v) { this.acceleratorTypes = v != null ? new ArrayList<>(v) : new ArrayList<>(); }
+        public String getTenancy() { return tenancy; }
+        public void setTenancy(String tenancy) { this.tenancy = tenancy; }
 
-        public IntRange getAcceleratorCount() { return acceleratorCount; }
-        public void setAcceleratorCount(IntRange v) { this.acceleratorCount = v; }
+        public String getSpreadDomain() { return spreadDomain; }
+        public void setSpreadDomain(String spreadDomain) { this.spreadDomain = spreadDomain; }
 
-        public List<String> getAcceleratorManufacturers() { return acceleratorManufacturers; }
-        public void setAcceleratorManufacturers(List<String> v) { this.acceleratorManufacturers = v != null ? new ArrayList<>(v) : new ArrayList<>(); }
+        public String getHostResourceGroupArn() { return hostResourceGroupArn; }
+        public void setHostResourceGroupArn(String hostResourceGroupArn) { this.hostResourceGroupArn = hostResourceGroupArn; }
 
-        public List<String> getAcceleratorNames() { return acceleratorNames; }
-        public void setAcceleratorNames(List<String> v) { this.acceleratorNames = v != null ? new ArrayList<>(v) : new ArrayList<>(); }
+        public Integer getPartitionNumber() { return partitionNumber; }
+        public void setPartitionNumber(Integer partitionNumber) { this.partitionNumber = partitionNumber; }
+    }
 
-        public IntRange getAcceleratorTotalMemoryMiB() { return acceleratorTotalMemoryMiB; }
-        public void setAcceleratorTotalMemoryMiB(IntRange v) { this.acceleratorTotalMemoryMiB = v; }
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class PrivateDnsNameOptions {
+        private String hostnameType;
+        private Boolean enableResourceNameDnsARecord;
+        private Boolean enableResourceNameDnsAAAARecord;
 
-        public DoubleRange getNetworkBandwidthGbps() { return networkBandwidthGbps; }
-        public void setNetworkBandwidthGbps(DoubleRange v) { this.networkBandwidthGbps = v; }
+        public String getHostnameType() { return hostnameType; }
+        public void setHostnameType(String hostnameType) { this.hostnameType = hostnameType; }
 
-        public List<String> getAllowedInstanceTypes() { return allowedInstanceTypes; }
-        public void setAllowedInstanceTypes(List<String> v) { this.allowedInstanceTypes = v != null ? new ArrayList<>(v) : new ArrayList<>(); }
+        public Boolean getEnableResourceNameDnsARecord() { return enableResourceNameDnsARecord; }
+        public void setEnableResourceNameDnsARecord(Boolean enableResourceNameDnsARecord) {
+            this.enableResourceNameDnsARecord = enableResourceNameDnsARecord;
+        }
 
-        public Integer getMaxSpotPriceAsPercentageOfOptimalOnDemandPrice() { return maxSpotPriceAsPercentageOfOptimalOnDemandPrice; }
-        public void setMaxSpotPriceAsPercentageOfOptimalOnDemandPrice(Integer v) { this.maxSpotPriceAsPercentageOfOptimalOnDemandPrice = v; }
+        public Boolean getEnableResourceNameDnsAAAARecord() { return enableResourceNameDnsAAAARecord; }
+        public void setEnableResourceNameDnsAAAARecord(Boolean enableResourceNameDnsAAAARecord) {
+            this.enableResourceNameDnsAAAARecord = enableResourceNameDnsAAAARecord;
+        }
+    }
 
-        public boolean isEmpty() {
-            return vCpuCount == null && memoryMiB == null && cpuManufacturers.isEmpty()
-                    && memoryGiBPerVCpu == null && excludedInstanceTypes.isEmpty() && instanceGenerations.isEmpty()
-                    && spotMaxPricePercentageOverLowestPrice == null && onDemandMaxPricePercentageOverLowestPrice == null
-                    && bareMetal == null && burstablePerformance == null && requireHibernateSupport == null
-                    && networkInterfaceCount == null && localStorage == null && localStorageTypes.isEmpty()
-                    && totalLocalStorageGB == null && baselineEbsBandwidthMbps == null && acceleratorTypes.isEmpty()
-                    && acceleratorCount == null && acceleratorManufacturers.isEmpty() && acceleratorNames.isEmpty()
-                    && acceleratorTotalMemoryMiB == null && networkBandwidthGbps == null && allowedInstanceTypes.isEmpty()
-                    && maxSpotPriceAsPercentageOfOptimalOnDemandPrice == null;
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class CapacityReservationSpecification {
+        private String capacityReservationPreference;
+        private CapacityReservationTarget capacityReservationTarget;
+
+        public String getCapacityReservationPreference() { return capacityReservationPreference; }
+        public void setCapacityReservationPreference(String capacityReservationPreference) {
+            this.capacityReservationPreference = capacityReservationPreference;
+        }
+
+        public CapacityReservationTarget getCapacityReservationTarget() { return capacityReservationTarget; }
+        public void setCapacityReservationTarget(CapacityReservationTarget capacityReservationTarget) {
+            this.capacityReservationTarget = capacityReservationTarget;
+        }
+    }
+
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class CapacityReservationTarget {
+        private String capacityReservationId;
+        private String capacityReservationResourceGroupArn;
+
+        public String getCapacityReservationId() { return capacityReservationId; }
+        public void setCapacityReservationId(String capacityReservationId) {
+            this.capacityReservationId = capacityReservationId;
+        }
+
+        public String getCapacityReservationResourceGroupArn() { return capacityReservationResourceGroupArn; }
+        public void setCapacityReservationResourceGroupArn(String capacityReservationResourceGroupArn) {
+            this.capacityReservationResourceGroupArn = capacityReservationResourceGroupArn;
         }
     }
 }

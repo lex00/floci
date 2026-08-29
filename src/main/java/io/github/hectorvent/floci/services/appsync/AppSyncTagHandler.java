@@ -1,7 +1,7 @@
 package io.github.hectorvent.floci.services.appsync;
 
-import io.github.hectorvent.floci.core.common.SharedTagsV1Controller;
 import io.github.hectorvent.floci.core.common.TagHandler;
+import io.github.hectorvent.floci.core.common.V1Tags;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -9,13 +9,16 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * {@link TagHandler} implementation for AppSync.
+ * AppSync's tag endpoints, which AWS puts on {@code /v1/tags/{resourceArn}}.
  *
- * <p>ARN format: {@code arn:aws:appsync:<region>:<account>:apis/<apiId>}. The tag store is
- * the GraphQL API itself, so an unknown API surfaces as AppSync's own
- * {@code NotFoundException} exactly as it did when {@code AppSyncController} owned the path.
+ * <p>These used to be three handlers on {@code AppSyncController}. MSK's tag API lives on the
+ * same path, and floci serves both services on one port, so the path had to move behind the
+ * ARN-dispatching {@code V1TagsController} - two JAX-RS resource methods cannot claim the same
+ * path and method. The wire shape is unchanged: a lowercase {@code tags} map, POST to tag,
+ * {@code tagKeys} to untag, 204 on both.
  */
 @ApplicationScoped
+@V1Tags
 public class AppSyncTagHandler implements TagHandler {
 
     private final AppSyncService service;
@@ -28,11 +31,6 @@ public class AppSyncTagHandler implements TagHandler {
     @Override
     public String serviceKey() {
         return "appsync";
-    }
-
-    @Override
-    public String tagPathPrefix() {
-        return SharedTagsV1Controller.PREFIX;
     }
 
     @Override

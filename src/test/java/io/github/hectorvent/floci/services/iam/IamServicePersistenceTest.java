@@ -5,13 +5,14 @@ import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.storage.PersistentStorage;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.services.iam.model.AccessKey;
+import io.github.hectorvent.floci.services.iam.model.AccountPasswordPolicy;
 import io.github.hectorvent.floci.services.iam.model.IamGroup;
 import io.github.hectorvent.floci.services.iam.model.IamPolicy;
 import io.github.hectorvent.floci.services.iam.model.IamRole;
 import io.github.hectorvent.floci.services.iam.model.IamUser;
 import io.github.hectorvent.floci.services.iam.model.InstanceProfile;
 import io.github.hectorvent.floci.services.iam.model.OpenIDConnectProvider;
-import io.github.hectorvent.floci.services.iam.model.PasswordPolicy;
+import io.github.hectorvent.floci.services.iam.model.OrganizationRootFeatures;
 import io.github.hectorvent.floci.services.iam.model.SessionCredential;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -22,6 +23,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * IAM state is persisted through StorageFactory, so it must survive a restart. This builds an
@@ -87,15 +89,25 @@ class IamServicePersistenceTest {
     @Test
     void accountPasswordPolicySurvivesRestart(@TempDir Path dir) {
         IamService first = newService(dir);
-        first.updateAccountPasswordPolicy(14, true, true, true, true, true, 90, 5, true);
+        AccountPasswordPolicy policy = new AccountPasswordPolicy();
+        policy.setMinimumPasswordLength(14);
+        policy.setRequireSymbols(true);
+        policy.setRequireNumbers(true);
+        policy.setRequireUppercaseCharacters(true);
+        policy.setRequireLowercaseCharacters(true);
+        policy.setAllowUsersToChangePassword(true);
+        policy.setMaxPasswordAge(90);
+        policy.setPasswordReusePrevention(5);
+        policy.setHardExpiry(true);
+        first.updateAccountPasswordPolicy(policy);
 
         IamService restarted = newService(dir);
 
-        PasswordPolicy reloaded = restarted.getAccountPasswordPolicy();
+        AccountPasswordPolicy reloaded = restarted.getAccountPasswordPolicy().orElseThrow();
         assertEquals(14, reloaded.getMinimumPasswordLength());
         assertEquals(90, reloaded.getMaxPasswordAge());
         assertEquals(5, reloaded.getPasswordReusePrevention());
-        assertEquals(Boolean.TRUE, reloaded.getHardExpiry());
+        assertTrue(reloaded.isHardExpiry());
     }
 
     private IamService newService(Path dir) {
@@ -108,9 +120,10 @@ class IamServicePersistenceTest {
                 load(dir, "iam-instance-profiles.json", new TypeReference<Map<String, InstanceProfile>>() {}),
                 load(dir, "iam-sessions.json", new TypeReference<Map<String, SessionCredential>>() {}),
                 load(dir, "iam-account-aliases.json", new TypeReference<Map<String, String>>() {}),
+                load(dir, "iam-password-policy.json", new TypeReference<Map<String, AccountPasswordPolicy>>() {}),
                 load(dir, "iam-oidc-providers.json", new TypeReference<Map<String, OpenIDConnectProvider>>() {}),
                 load(dir, "iam-slr-deletions.json", new TypeReference<Map<String, String>>() {}),
-                load(dir, "iam-password-policy.json", new TypeReference<Map<String, PasswordPolicy>>() {}),
+                load(dir, "iam-org-root-features.json", new TypeReference<Map<String, OrganizationRootFeatures>>() {}),
                 new RegionResolver("us-east-1", "000000000000"),
                 false,
                 null);

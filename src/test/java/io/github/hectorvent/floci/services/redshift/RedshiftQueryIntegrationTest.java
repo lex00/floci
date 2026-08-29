@@ -32,8 +32,8 @@ class RedshiftQueryIntegrationTest {
                 .formParam("Action", "CreateClusterSubnetGroup")
                 .formParam("ClusterSubnetGroupName", SUBNET_GROUP)
                 .formParam("Description", "Floci Redshift subnets")
-                .formParam("SubnetIds.SubnetIdentifier.1", "subnet-default-a")
-                .formParam("SubnetIds.SubnetIdentifier.2", "subnet-default-b")
+                .formParam("SubnetIds.SubnetIdentifier.1", "subnet-default-us-east-1-a")
+                .formParam("SubnetIds.SubnetIdentifier.2", "subnet-default-us-east-1-b")
                 .formParam("Tags.Tag.1.Key", "Project")
                 .formParam("Tags.Tag.1.Value", "Floci")
                 .header("Authorization", AUTH)
@@ -45,11 +45,11 @@ class RedshiftQueryIntegrationTest {
                 .body("CreateClusterSubnetGroupResponse.CreateClusterSubnetGroupResult.ClusterSubnetGroup"
                         + ".ClusterSubnetGroupName", equalTo(SUBNET_GROUP))
                 .body("CreateClusterSubnetGroupResponse.CreateClusterSubnetGroupResult.ClusterSubnetGroup.VpcId",
-                        equalTo("vpc-default"))
+                        equalTo("vpc-default-us-east-1"))
                 .body("CreateClusterSubnetGroupResponse.CreateClusterSubnetGroupResult.ClusterSubnetGroup"
                         + ".SubnetGroupStatus", equalTo("Complete"))
                 .body("CreateClusterSubnetGroupResponse.CreateClusterSubnetGroupResult.ClusterSubnetGroup"
-                        + ".Subnets.Subnet.SubnetIdentifier", hasItem("subnet-default-b"))
+                        + ".Subnets.Subnet.SubnetIdentifier", hasItem("subnet-default-us-east-1-b"))
                 .body("CreateClusterSubnetGroupResponse.CreateClusterSubnetGroupResult.ClusterSubnetGroup"
                         + ".Subnets.Subnet[0].SubnetAvailabilityZone.Name", equalTo("us-east-1a"))
                 .body("CreateClusterSubnetGroupResponse.CreateClusterSubnetGroupResult.ClusterSubnetGroup"
@@ -93,9 +93,9 @@ class RedshiftQueryIntegrationTest {
                 .formParam("Action", "ModifyClusterSubnetGroup")
                 .formParam("ClusterSubnetGroupName", SUBNET_GROUP)
                 .formParam("Description", "Floci Redshift subnets (all AZs)")
-                .formParam("SubnetIds.SubnetIdentifier.1", "subnet-default-a")
-                .formParam("SubnetIds.SubnetIdentifier.2", "subnet-default-b")
-                .formParam("SubnetIds.SubnetIdentifier.3", "subnet-default-c")
+                .formParam("SubnetIds.SubnetIdentifier.1", "subnet-default-us-east-1-a")
+                .formParam("SubnetIds.SubnetIdentifier.2", "subnet-default-us-east-1-b")
+                .formParam("SubnetIds.SubnetIdentifier.3", "subnet-default-us-east-1-c")
                 .header("Authorization", AUTH)
             .when()
                 .post("/")
@@ -104,7 +104,7 @@ class RedshiftQueryIntegrationTest {
                 .body("ModifyClusterSubnetGroupResponse.ModifyClusterSubnetGroupResult.ClusterSubnetGroup"
                         + ".Description", equalTo("Floci Redshift subnets (all AZs)"))
                 .body("ModifyClusterSubnetGroupResponse.ModifyClusterSubnetGroupResult.ClusterSubnetGroup"
-                        + ".Subnets.Subnet.SubnetIdentifier", hasItem("subnet-default-c"))
+                        + ".Subnets.Subnet.SubnetIdentifier", hasItem("subnet-default-us-east-1-c"))
                 .body("ModifyClusterSubnetGroupResponse.ModifyClusterSubnetGroupResult.ClusterSubnetGroup"
                         + ".Tags.Tag.Key", equalTo("Project"));
     }
@@ -230,7 +230,7 @@ class RedshiftQueryIntegrationTest {
                 .body("CreateClusterResponse.CreateClusterResult.Cluster.Endpoint.Address",
                         containsString(CLUSTER + "."))
                 .body("CreateClusterResponse.CreateClusterResult.Cluster.Endpoint.Port", equalTo("5439"))
-                .body("CreateClusterResponse.CreateClusterResult.Cluster.VpcId", equalTo("vpc-default"))
+                .body("CreateClusterResponse.CreateClusterResult.Cluster.VpcId", equalTo("vpc-default-us-east-1"))
                 .body("CreateClusterResponse.CreateClusterResult.Cluster.ClusterSubnetGroupName",
                         equalTo(SUBNET_GROUP))
                 .body("CreateClusterResponse.CreateClusterResult.Cluster.AvailabilityZone", equalTo("us-east-1a"))

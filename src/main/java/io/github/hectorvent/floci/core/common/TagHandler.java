@@ -42,21 +42,6 @@ public interface TagHandler {
     String serviceKey();
 
     /**
-     * The REST path prefix this service's tag endpoints hang off. Defaults to {@code "/tags"},
-     * which is where API Gateway v1, EKS, Scheduler and most others serve them. Services on a
-     * versioned prefix override it - AppSync and Batch both use {@code "/v1/tags"}.
-     *
-     * <p>This is part of the dispatcher's lookup key, not decoration: two services may share a
-     * service-key-free path only because they sit on different prefixes, and a handler
-     * registered under the wrong prefix is simply never reached. Each prefix has its own
-     * controller ({@code SharedTagsController}, {@code SharedTagsV1Controller}); a new prefix
-     * needs a new one, modelled on those.
-     */
-    default String tagPathPrefix() {
-        return "/tags";
-    }
-
-    /**
      * JSON key for the tag payload on {@code TagResource} and {@code ListTagsForResource}.
      * Defaults to lowercase {@code "tags"}. Override to {@code "Tags"} for services whose
      * AWS spec capitalizes the key. EventBridge Scheduler is the only floci-registered
@@ -92,6 +77,14 @@ public interface TagHandler {
     }
 
     /**
+     * Whether an {@code UntagResource} request may omit the tag-key query parameter.
+     * Defaults to {@code false} so strict handlers retain their existing validation.
+     */
+    default boolean allowEmptyTagKeys() {
+        return false;
+    }
+
+    /**
      * Query parameter name for {@code UntagResource}. Defaults to lowercase
      * {@code "tagKeys"}, which matches the great majority of AWS services — including
      * most that use capitalized {@code "Tags"} in the body. Override to {@code "TagKeys"}
@@ -111,6 +104,16 @@ public interface TagHandler {
      */
     default boolean tagResourceUsesPut() {
         return false;
+    }
+
+    /** HTTP status for successful path-based TagResource requests. */
+    default int tagResourceSuccessStatus() {
+        return 204;
+    }
+
+    /** HTTP status for successful path-based UntagResource requests. */
+    default int untagResourceSuccessStatus() {
+        return 204;
     }
 
     Map<String, String> listTags(String region, String arn);

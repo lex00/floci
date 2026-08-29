@@ -56,6 +56,8 @@ class RdsInstanceOptionalFieldsTest {
         when(rdsConfig.defaultMariadbImage()).thenReturn(Optional.empty());
         when(containerManager.tryStart(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new RdsContainerHandle("cont-id", "id", "localhost", 5432));
+        when(ec2Service.resolveDefaultVpcId(any()))
+                .thenAnswer(invocation -> Ec2Service.defaultVpcId(invocation.getArgument(0)));
         when(ec2Service.describeSubnets(eq("us-east-1"), anyList(), any()))
                 .thenReturn(defaultSubnets());
 
@@ -231,7 +233,7 @@ class RdsInstanceOptionalFieldsTest {
         rdsService.createDbParameterGroup("pg1", "postgres16", "test group");
 
         DbParameterGroup group = rdsService.modifyDbParameterGroup("pg1",
-                Map.of("autovacuum", "on"), Map.of("autovacuum", "immediate"));
+                Map.of("autovacuum", "on"), Map.of("autovacuum", "immediate"), null);
 
         assertEquals("on", group.getParameters().get("autovacuum"));
         assertEquals("immediate", group.getParameterApplyMethods().get("autovacuum"));

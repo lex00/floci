@@ -17,19 +17,22 @@ public class RdsProxyManager {
     private static final Logger LOG = Logger.getLogger(RdsProxyManager.class);
 
     private final RdsSigV4Validator sigV4Validator;
+    private final RdsProxyTlsCertificates tlsCertificates;
     private final ConcurrentHashMap<String, RdsAuthProxy> proxies = new ConcurrentHashMap<>();
 
     @Inject
-    public RdsProxyManager(RdsSigV4Validator sigV4Validator) {
+    public RdsProxyManager(RdsSigV4Validator sigV4Validator, RdsProxyTlsCertificates tlsCertificates) {
         this.sigV4Validator = sigV4Validator;
+        this.tlsCertificates = tlsCertificates;
     }
 
-    public void startProxy(String instanceId, DatabaseEngine engine, boolean iamEnabled,
-                           int proxyPort, String backendHost, int backendPort,
-                           String masterUsername, String masterPassword, String dbName,
-                           RdsAuthProxy.PasswordValidator passwordValidator) {
-        startProxy(instanceId, engine, iamEnabled, null, proxyPort, backendHost, backendPort,
-                masterUsername, masterPassword, dbName, passwordValidator);
+    public synchronized void startProxy(String instanceId, DatabaseEngine engine, boolean iamEnabled,
+                                        int proxyPort, String backendHost, int backendPort,
+                                        String advertisedHost,
+                                        String masterUsername, String masterPassword, String dbName,
+                                        RdsAuthProxy.PasswordValidator passwordValidator) {
+        startInternal(instanceId, engine, iamEnabled, null, false, proxyPort, backendHost, backendPort,
+                advertisedHost, masterUsername, masterPassword, dbName, passwordValidator);
     }
 
     /**
@@ -40,21 +43,13 @@ public class RdsProxyManager {
      *
      * @param bindHost see {@link RdsAuthProxy#start(String, int)}; null/blank for the wildcard bind.
      */
-    public void startProxy(String instanceId, DatabaseEngine engine, boolean iamEnabled,
-                           String bindHost, int proxyPort, String backendHost, int backendPort,
-                           String masterUsername, String masterPassword, String dbName,
-                           RdsAuthProxy.PasswordValidator passwordValidator) {
-        RdsAuthProxy proxy = new RdsAuthProxy(
-                instanceId, backendHost, backendPort, engine, iamEnabled,
-                masterUsername, masterPassword, dbName, sigV4Validator, passwordValidator);
-        try {
-            proxy.start(bindHost, proxyPort);
-            proxies.put(instanceId, proxy);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to start RDS proxy for instance " + instanceId
-                    + " on " + (bindHost == null || bindHost.isBlank() ? "*" : bindHost)
-                    + ":" + proxyPort, e);
-        }
+    public synchronized void startProxy(String instanceId, DatabaseEngine engine, boolean iamEnabled,
+                                        String bindHost, int proxyPort, String backendHost, int backendPort,
+                                        String advertisedHost,
+                                        String masterUsername, String masterPassword, String dbName,
+                                        RdsAuthProxy.PasswordValidator passwordValidator) {
+        startInternal(instanceId, engine, iamEnabled, bindHost, false, proxyPort, backendHost, backendPort,
+                advertisedHost, masterUsername, masterPassword, dbName, passwordValidator);
     }
 
     /**
@@ -65,34 +60,97 @@ public class RdsProxyManager {
      * @param bindHost see {@link RdsAuthProxy#startPreferring(String, int)}; null/blank goes
      *                 straight to the wildcard bind.
      */
-    public void startProxyPreferring(String instanceId, DatabaseEngine engine, boolean iamEnabled,
-                           String bindHost, int proxyPort, String backendHost, int backendPort,
-                           String masterUsername, String masterPassword, String dbName,
-                           RdsAuthProxy.PasswordValidator passwordValidator) {
+    public synchronized void startProxyPreferring(String instanceId, DatabaseEngine engine, boolean iamEnabled,
+                                        String bindHost, int proxyPort, String backendHost, int backendPort,
+                                        String advertisedHost,
+                                        String masterUsername, String masterPassword, String dbName,
+                                        RdsAuthProxy.PasswordValidator passwordValidator) {
+        startInternal(instanceId, engine, iamEnabled, bindHost, true, proxyPort, backendHost, backendPort,
+                advertisedHost, masterUsername, masterPassword, dbName, passwordValidator);
+    }
+
+    private void startInternal(String instanceId, DatabaseEngine engine, boolean iamEnabled,
+                               String bindHost, boolean fallbackToWildcard,
+                               int proxyPort, String backendHost, int backendPort,
+                               String advertisedHost,
+                               String masterUsername, String masterPassword, String dbName,
+                               RdsAuthProxy.PasswordValidator passwordValidator) {
+        tlsCertificates.ensureHost(advertisedHost);
         RdsAuthProxy proxy = new RdsAuthProxy(
                 instanceId, backendHost, backendPort, engine, iamEnabled,
-                masterUsername, masterPassword, dbName, sigV4Validator, passwordValidator);
+                masterUsername, masterPassword, dbName, sigV4Validator, tlsCertificates, passwordValidator);
         try {
-            proxy.startPreferring(bindHost, proxyPort);
-            proxies.put(instanceId, proxy);
+            if (bindHost == null || bindHost.isBlank()) {
+                proxy.start(proxyPort);
+            } else if (fallbackToWildcard) {
+                proxy.startPreferring(bindHost, proxyPort);
+            } else {
+                proxy.start(bindHost, proxyPort);
+            }
         } catch (IOException e) {
-            throw new RuntimeException("Failed to start RDS proxy for instance " + instanceId
-                    + " on " + (bindHost == null || bindHost.isBlank() ? "*" : bindHost)
-                    + ":" + proxyPort, e);
+            RuntimeException failure = new RuntimeException(
+                    "Failed to start RDS proxy for instance " + instanceId
+                            + " on " + (bindHost == null || bindHost.isBlank() ? "*" : bindHost)
+                            + ":" + proxyPort, e);
+            cleanupFailedStart(proxy, failure);
+            throw failure;
+        } catch (RuntimeException e) {
+            RuntimeException failure = new RuntimeException(
+                    "Failed to register RDS proxy for instance " + instanceId
+                            + " on port " + proxyPort, e);
+            cleanupFailedStart(proxy, failure);
+            throw failure;
+        }
+        RdsAuthProxy previous;
+        try {
+            previous = proxies.put(instanceId, proxy);
+        } catch (RuntimeException e) {
+            RuntimeException failure = new RuntimeException(
+                    "Failed to register RDS proxy for instance " + instanceId
+                            + " on port " + proxyPort, e);
+            cleanupFailedStart(proxy, failure);
+            throw failure;
+        }
+        if (previous != null) {
+            try {
+                previous.stop();
+            } catch (RuntimeException e) {
+                proxies.put(instanceId, previous);
+                RuntimeException failure = new RuntimeException(
+                        "Failed to replace RDS proxy for instance " + instanceId, e);
+                cleanupFailedStart(proxy, failure);
+                throw failure;
+            }
         }
     }
 
-    public void stopProxy(String instanceId) {
-        RdsAuthProxy proxy = proxies.remove(instanceId);
+    public synchronized void stopProxy(String instanceId) {
+        RdsAuthProxy proxy = proxies.get(instanceId);
         if (proxy != null) {
             proxy.stop();
+            proxies.remove(instanceId, proxy);
             LOG.infov("Stopped RDS proxy for instance {0}", instanceId);
         }
     }
 
-    public void stopAll() {
-        proxies.values().forEach(RdsAuthProxy::stop);
-        proxies.clear();
+    public synchronized void stopAll() {
+        proxies.forEach((instanceId, proxy) -> {
+            try {
+                proxy.stop();
+                proxies.remove(instanceId, proxy);
+            } catch (RuntimeException e) {
+                LOG.warnv(e, "Failed to stop RDS proxy for instance {0} during shutdown",
+                        instanceId);
+            }
+        });
         LOG.info("Stopped all RDS proxies");
+    }
+
+    private void cleanupFailedStart(RdsAuthProxy proxy, RuntimeException failure) {
+        try {
+            proxy.stop();
+        } catch (RuntimeException cleanupFailure) {
+            failure.addSuppressed(cleanupFailure);
+        }
     }
 }

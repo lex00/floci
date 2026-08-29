@@ -58,14 +58,15 @@ class S3FallthroughGuardIntegrationTest {
 
     @Test
     void lambdaScopedUnimplementedRouteGetsUnknownOperation() {
-        // Lambda CreateCodeSigningConfig: POST /2020-04-22/code-signing-configs/ has no
-        // LambdaController route.
+        // A dated Lambda-style path under a prefix no controller claims (code-signing-configs,
+        // the previous example here, gained a real controller owning /2020-04-22, whose 404
+        // preempts the S3 wildcard this guard protects).
         given()
             .header("Authorization", authorization("lambda"))
             .contentType("application/json")
             .body("{}")
         .when()
-            .post("/2020-04-22/code-signing-configs/")
+            .post("/2019-09-25/no-such-lambda-route")
         .then()
             .statusCode(404)
             .body("__type", equalTo("UnknownOperationException"));

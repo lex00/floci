@@ -5,6 +5,7 @@ import org.jboss.logging.Logger;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 
@@ -26,6 +27,7 @@ public class RdsAuthProxy {
     private final String dbName;
     private final DatabaseEngine engine;
     private final RdsSigV4Validator sigV4;
+    private final RdsProxyTlsCertificates tlsCertificates;
     private final PasswordValidator passwordValidator;
 
     private volatile boolean running;
@@ -34,7 +36,8 @@ public class RdsAuthProxy {
     public RdsAuthProxy(String instanceId, String backendHost, int backendPort,
                         DatabaseEngine engine, boolean iamEnabled,
                         String masterUsername, String masterPassword, String dbName,
-                        RdsSigV4Validator sigV4, PasswordValidator passwordValidator) {
+                        RdsSigV4Validator sigV4, RdsProxyTlsCertificates tlsCertificates,
+                        PasswordValidator passwordValidator) {
         this.instanceId = instanceId;
         this.backendHost = backendHost;
         this.backendPort = backendPort;
@@ -44,6 +47,7 @@ public class RdsAuthProxy {
         this.masterPassword = masterPassword;
         this.dbName = dbName;
         this.sigV4 = sigV4;
+        this.tlsCertificates = tlsCertificates;
         this.passwordValidator = passwordValidator;
     }
 
@@ -104,7 +108,9 @@ public class RdsAuthProxy {
                         String.valueOf(proxyPort), e.getMessage());
             }
         }
-        serverSocket = new ServerSocket(proxyPort);
+        serverSocket = new ServerSocket();
+        serverSocket.setReuseAddress(true);
+        serverSocket.bind(new InetSocketAddress(proxyPort));
         running = true;
         Thread.ofVirtual().name("rds-proxy-accept-" + instanceId).start(this::acceptLoop);
         LOG.infov("RDS proxy started for instance {0} on *:{1} → {2}:{3}",
@@ -118,8 +124,9 @@ public class RdsAuthProxy {
                 serverSocket.close();
             }
         } catch (IOException e) {
-            LOG.warnv("Error closing RDS proxy server socket for instance {0}: {1}",
-                    instanceId, e.getMessage());
+            LOG.warnv(e, "Error closing RDS proxy server socket for instance {0}", instanceId);
+            throw new RuntimeException(
+                    "Failed to stop RDS proxy for instance " + instanceId, e);
         }
     }
 
@@ -146,10 +153,10 @@ public class RdsAuthProxy {
             switch (engine) {
                 case POSTGRES -> PostgresProtocolHandler.handleAuth(
                         client, backend, masterUsername, masterPassword, dbName,
-                        iamEnabled, sigV4, passwordValidator::validate);
+                        iamEnabled, sigV4, tlsCertificates, passwordValidator::validate);
                 case MYSQL, MARIADB -> MySqlProtocolHandler.handleAuth(
                         client, backend, masterUsername, masterPassword,
-                        iamEnabled, sigV4, passwordValidator::validate);
+                        iamEnabled, sigV4, tlsCertificates, passwordValidator::validate);
             }
         } catch (Exception e) {
             LOG.debugv("RDS connection error for instance {0}: {1}", instanceId, e.getMessage());
@@ -158,7 +165,11 @@ public class RdsAuthProxy {
     }
 
     private static void closeQuietly(Socket s) {
-        try { s.close(); } catch (IOException ignored) {}
+        try {
+            s.close();
+        } catch (IOException e) {
+            LOG.debugv(e, "Error closing RDS proxy client socket");
+        }
     }
 
     /**

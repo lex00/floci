@@ -13,10 +13,6 @@ public class DbCluster {
 
     private String dbClusterIdentifier;
     private DatabaseEngine engine;
-    // The AWS-facing engine identifier as requested (e.g. "aurora-mysql", "aurora-postgresql",
-    // "mysql", "postgres", "mariadb"). `engine` above collapses these into an internal family
-    // used only to pick a backing container image/protocol; AWS's DBCluster.Engine field must
-    // echo back exactly what was requested, not the collapsed family.
     private String engineIdentifier;
     private String engineVersion;
     private String masterUsername;
@@ -41,6 +37,12 @@ public class DbCluster {
 
     private String dockerVolumeName;
     private String volumeId;
+    private String containerStorageResourceId;
+
+    // Aurora Serverless v2 scaling (ACUs). Null when the cluster is not Serverless v2.
+    private Double serverlessV2MinCapacity;
+    private Double serverlessV2MaxCapacity;
+    private Integer serverlessV2SecondsUntilAutoPause;
 
     // Transient — not persisted
     private transient String containerId;
@@ -151,6 +153,11 @@ public class DbCluster {
     public String getVolumeId() { return volumeId; }
     public void setVolumeId(String volumeId) { this.volumeId = volumeId; }
 
+    public String getContainerStorageResourceId() { return containerStorageResourceId; }
+    public void setContainerStorageResourceId(String containerStorageResourceId) {
+        this.containerStorageResourceId = containerStorageResourceId;
+    }
+
     public String getContainerId() { return containerId; }
     public void setContainerId(String containerId) { this.containerId = containerId; }
 
@@ -159,4 +166,15 @@ public class DbCluster {
 
     public int getContainerPort() { return containerPort; }
     public void setContainerPort(int containerPort) { this.containerPort = containerPort; }
+
+    public Double getServerlessV2MinCapacity() { return serverlessV2MinCapacity; }
+    public void setServerlessV2MinCapacity(Double serverlessV2MinCapacity) { this.serverlessV2MinCapacity = serverlessV2MinCapacity; }
+
+    public Double getServerlessV2MaxCapacity() { return serverlessV2MaxCapacity; }
+    public void setServerlessV2MaxCapacity(Double serverlessV2MaxCapacity) { this.serverlessV2MaxCapacity = serverlessV2MaxCapacity; }
+
+    public Integer getServerlessV2SecondsUntilAutoPause() { return serverlessV2SecondsUntilAutoPause; }
+    public void setServerlessV2SecondsUntilAutoPause(Integer serverlessV2SecondsUntilAutoPause) {
+        this.serverlessV2SecondsUntilAutoPause = serverlessV2SecondsUntilAutoPause;
+    }
 }

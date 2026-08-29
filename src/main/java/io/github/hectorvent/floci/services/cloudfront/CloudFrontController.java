@@ -25,6 +25,16 @@ public class CloudFrontController {
 
     private static final String NS = AwsNamespaces.CLOUDFRONT;
     private static final String XML = "application/xml";
+    private static final String GEO_RESTRICTION = "GeoRestriction";
+    private static final String ORIGIN_GROUPS = "OriginGroups";
+    private static final String ITEMS = "Items";
+    private static final String LOCATION = "Location";
+    private static final String LOCATIONS = "Locations";
+    private static final String QUANTITY = "Quantity";
+    private static final String RESTRICTION_TYPE = "RestrictionType";
+    private static final String RESTRICTIONS = "Restrictions";
+    private static final String DEFAULT_GEO_RESTRICTION_TYPE = "none";
+    private static final int EMPTY_QUANTITY = 0;
 
     private final CloudFrontService service;
 
@@ -489,12 +499,12 @@ public class CloudFrontController {
     public Response getResponseHeadersPolicyConfig(@PathParam("Id") String id) {
         try {
             ResponseHeadersPolicy policy = service.getResponseHeadersPolicy(id);
-            String xml = new XmlBuilder()
+            XmlBuilder builder = new XmlBuilder()
                     .start("ResponseHeadersPolicyConfig", NS)
                     .elem("Name", policy.getName())
-                    .elem("Comment", policy.getComment() != null ? policy.getComment() : "")
-                    .end("ResponseHeadersPolicyConfig")
-                    .build();
+                    .elem("Comment", policy.getComment() != null ? policy.getComment() : "");
+            ResponseHeadersPolicyConfigCodec.serialize(builder, policy.getConfig());
+            String xml = builder.end("ResponseHeadersPolicyConfig").build();
             return Response.ok(xml, XML).header("ETag", policy.getEtag()).build();
         } catch (AwsException e) {
             return xmlErrorResponse(e);
@@ -542,23 +552,32 @@ public class CloudFrontController {
                                                 @QueryParam("MaxItems") @DefaultValue("100") int maxItems,
                                                 @QueryParam("Type") String type) {
         try {
+            if (maxItems < 1 || maxItems > 100) {
+                throw new AwsException("InvalidArgument",
+                        "MaxItems must be between 1 and 100.", 400);
+            }
             Page<ResponseHeadersPolicy> page = page(
-                    service.listResponseHeadersPolicies(marker, paginationFetchLimit(maxItems)),
+                    service.listResponseHeadersPolicies(
+                            marker, paginationFetchLimit(maxItems), type),
                     maxItems, ResponseHeadersPolicy::getId);
 
             XmlBuilder xml = new XmlBuilder()
                     .start("ResponseHeadersPolicyList", NS)
-                    .elem("NextMarker", page.nextMarker())
-                    .elem("MaxItems", maxItems)
-                    .elem("Quantity", page.items().size())
                     .start("Items");
             for (ResponseHeadersPolicy p : page.items()) {
                 xml.start("ResponseHeadersPolicySummary")
-                        .elem("Type", "custom")
+                        .elem("Type", CloudFrontService.isManagedResponseHeadersPolicy(p.getId())
+                                ? "managed" : "custom")
                         .raw(xmlResponseHeadersPolicyResponse(p))
                         .end("ResponseHeadersPolicySummary");
             }
-            xml.end("Items").end("ResponseHeadersPolicyList");
+            xml.end("Items")
+                    .elem("MaxItems", maxItems);
+            if (page.nextMarker() != null) {
+                xml.elem("NextMarker", page.nextMarker());
+            }
+            xml.elem("Quantity", page.items().size())
+                    .end("ResponseHeadersPolicyList");
             return Response.ok(xml.build(), XML).build();
         } catch (AwsException e) {
             return xmlErrorResponse(e);
@@ -1727,10 +1746,9 @@ public class CloudFrontController {
         List<Origin> origins = cfg.getOrigins();
         xml.raw(xmlQuantityItems("Origins", "Origin", origins != null ? origins.size() : 0,
                 origins != null ? origins.stream().map(this::xmlOrigin).toList() : List.of()));
-
         // OriginGroups is always present in a CloudFront response, empty or not, and clients
         // read its Quantity without checking whether the element exists.
-        xml.start("OriginGroups").elem("Quantity", 0).end("OriginGroups");
+        xml.raw(xmlEmptyOriginGroups());
 
         if (cfg.getDefaultCacheBehavior() != null) {
             xml.start("DefaultCacheBehavior")
@@ -1882,6 +1900,26 @@ public class CloudFrontController {
             return list.stream().map(String::valueOf).toList();
         }
         return List.of();
+    }
+
+    private String xmlEmptyOriginGroups() {
+        // Presence-only OriginGroups is intentional for Terraform compatibility; round-tripping groups is deferred.
+        return new XmlBuilder()
+                .start(ORIGIN_GROUPS)
+                .elem(QUANTITY, EMPTY_QUANTITY)
+                .end(ORIGIN_GROUPS)
+                .build();
+    }
+
+    private int parseInt(Object value, int defaultValue) {
+        if (value == null) {
+            return defaultValue;
+        }
+        try {
+            return Integer.parseInt(value.toString());
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
     }
 
     private String xmlOrigin(Origin o) {
@@ -2155,10 +2193,11 @@ public class CloudFrontController {
         xml.raw(xmlStringItems("Aliases", "CNAME", cfg != null ? cfg.getAliases() : null));
 
         List<Origin> origins = cfg != null ? cfg.getOrigins() : null;
-        xml.raw(xmlQuantityItems("Origins", "Origin", origins != null ? origins.size() : 0,
-                origins != null ? origins.stream().map(this::xmlOrigin).toList() : List.of()));
-
-        xml.start("OriginGroups").elem("Quantity", 0).end("OriginGroups");
+        xml.raw(xmlQuantityItems("Origins", "Origin",
+                origins != null ? origins.size() : 0,
+                origins != null ? origins.stream().map(this::xmlOrigin).toList()
+                        : List.of()));
+        xml.raw(xmlEmptyOriginGroups());
 
         if (cfg != null && cfg.getDefaultCacheBehavior() != null) {
             xml.start("DefaultCacheBehavior")
@@ -2335,15 +2374,16 @@ public class CloudFrontController {
     }
 
     private String xmlResponseHeadersPolicyResponse(ResponseHeadersPolicy policy) {
-        return new XmlBuilder()
+        XmlBuilder xml = new XmlBuilder()
                 .start("ResponseHeadersPolicy")
                 .elem("Id", policy.getId())
                 .elem("LastModifiedTime",
                         policy.getLastModifiedTime() != null ? policy.getLastModifiedTime().toString() : "")
                 .start("ResponseHeadersPolicyConfig")
                 .elem("Name", policy.getName())
-                .elem("Comment", policy.getComment() != null ? policy.getComment() : "")
-                .end("ResponseHeadersPolicyConfig")
+                .elem("Comment", policy.getComment() != null ? policy.getComment() : "");
+        ResponseHeadersPolicyConfigCodec.serialize(xml, policy.getConfig());
+        return xml.end("ResponseHeadersPolicyConfig")
                 .end("ResponseHeadersPolicy")
                 .build();
     }
@@ -2549,14 +2589,38 @@ public class CloudFrontController {
                 origin.setCustomOriginConfig(customConfig);
             }
 
-            CloudFrontXml.Node headers = node.path("CustomHeaders", "Items");
-            if (headers != null) {
+            CloudFrontXml.Node customHeadersNode = node.child("CustomHeaders");
+            if (customHeadersNode != null) {
+                // AWS validates the CustomHeaders envelope: only Quantity and Items may
+                // appear under it, every Items member must be an OriginCustomHeader with
+                // text-only HeaderName/HeaderValue, and Quantity must equal the item count.
+                for (CloudFrontXml.Node child : customHeadersNode.children()) {
+                    if (!"Quantity".equals(child.name()) && !"Items".equals(child.name())) {
+                        throw invalidOriginCustomHeadersStructure();
+                    }
+                }
                 List<Map<String, String>> customHeaders = new ArrayList<>();
-                for (CloudFrontXml.Node header : headers.children("OriginCustomHeader")) {
-                    Map<String, String> entry = new LinkedHashMap<>();
-                    entry.put("HeaderName", header.text("HeaderName", ""));
-                    entry.put("HeaderValue", header.text("HeaderValue", ""));
-                    customHeaders.add(entry);
+                CloudFrontXml.Node headers = customHeadersNode.child("Items");
+                if (headers != null) {
+                    for (CloudFrontXml.Node header : headers.children()) {
+                        if (!"OriginCustomHeader".equals(header.name())) {
+                            throw invalidOriginCustomHeadersStructure();
+                        }
+                        CloudFrontXml.Node headerName = header.child("HeaderName");
+                        CloudFrontXml.Node headerValue = header.child("HeaderValue");
+                        if ((headerName != null && !headerName.children().isEmpty())
+                                || (headerValue != null && !headerValue.children().isEmpty())) {
+                            throw invalidOriginCustomHeadersStructure();
+                        }
+                        Map<String, String> entry = new LinkedHashMap<>();
+                        entry.put("HeaderName", header.text("HeaderName", ""));
+                        entry.put("HeaderValue", header.text("HeaderValue", ""));
+                        customHeaders.add(entry);
+                    }
+                }
+                int quantity = customHeadersNode.integer("Quantity", -1);
+                if (quantity != customHeaders.size()) {
+                    throw inconsistentQuantities();
                 }
                 if (!customHeaders.isEmpty()) {
                     origin.setCustomHeaders(customHeaders);
@@ -2566,6 +2630,20 @@ public class CloudFrontController {
             result.add(origin);
         }
         return result;
+    }
+
+    private static AwsException inconsistentQuantities() {
+        return new AwsException(
+                "InconsistentQuantities",
+                "The value of Quantity and the size of Items do not match.",
+                400);
+    }
+
+    private static AwsException invalidOriginCustomHeadersStructure() {
+        return new AwsException(
+                "InvalidArgument",
+                "The origin custom headers structure is invalid.",
+                400);
     }
 
     private List<CacheBehavior> parseCacheBehaviors(CloudFrontXml.Node config) {
@@ -2903,6 +2981,7 @@ public class CloudFrontController {
         ResponseHeadersPolicy policy = new ResponseHeadersPolicy();
         policy.setName(XmlParser.extractFirst(body, "Name", null));
         policy.setComment(XmlParser.extractFirst(body, "Comment", null));
+        policy.setConfig(ResponseHeadersPolicyConfigCodec.parse(body));
         return policy;
     }
 

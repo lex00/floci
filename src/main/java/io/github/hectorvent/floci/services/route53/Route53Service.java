@@ -9,9 +9,9 @@ import io.github.hectorvent.floci.services.route53.model.ChangeInfo;
 import io.github.hectorvent.floci.services.route53.model.HealthCheck;
 import io.github.hectorvent.floci.services.route53.model.HealthCheckConfig;
 import io.github.hectorvent.floci.services.route53.model.HostedZone;
-import io.github.hectorvent.floci.services.route53.model.HostedZoneVpc;
 import io.github.hectorvent.floci.services.route53.model.ResourceRecord;
 import io.github.hectorvent.floci.services.route53.model.ResourceRecordSet;
+import io.github.hectorvent.floci.services.route53.model.VpcAssociation;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -38,6 +38,7 @@ public class Route53Service {
     private final StorageBackend<String, ChangeInfo> changeStore;
     private final StorageBackend<String, Map<String, String>> tagStore;
     private final List<String> nameServers;
+    private final String defaultAccountId;
 
     @Inject
     public Route53Service(StorageFactory factory, EmulatorConfig config) {
@@ -59,28 +60,13 @@ public class Route53Service {
                 r53.defaultNameserver3(),
                 r53.defaultNameserver4()
         );
+        this.defaultAccountId = config.defaultAccountId();
     }
 
     // ── Hosted Zones ──────────────────────────────────────────────────────────
 
     public synchronized CreateZoneResult createHostedZone(String name, String callerReference,
-                                                           String comment, boolean privateZone) {
-        return createHostedZone(name, callerReference, comment, privateZone, List.of());
-    }
-
-    /**
-     * Creates a hosted zone, optionally attached to VPCs.
-     *
-     * <p>Supplying a VPC is what makes a zone private in Route 53. The API infers it: clients
-     * that attach a VPC — the Terraform AWS provider's {@code aws_route53_zone} among them —
-     * never send {@code HostedZoneConfig.PrivateZone}, and a zone created that way still comes
-     * back with {@code PrivateZone: true}. Honouring only the explicit flag left every
-     * provider-created private zone reporting itself public, which no
-     * {@code private_zone = true} data source could then match.
-     */
-    public synchronized CreateZoneResult createHostedZone(String name, String callerReference,
-                                                           String comment, boolean privateZone,
-                                                           List<HostedZoneVpc> vpcs) {
+                                                           String comment, VpcAssociation vpcAssociation) {
         String normalizedName = normalizeName(name);
 
         for (HostedZone existing : zoneStore.scan(k -> true)) {
@@ -90,78 +76,12 @@ public class Route53Service {
             }
         }
 
-        List<HostedZoneVpc> attached = vpcs == null ? List.of() : vpcs;
         String id = generateZoneId();
-        HostedZone zone = new HostedZone(id, normalizedName, callerReference, comment,
-                privateZone || !attached.isEmpty());
-        zone.setVpcs(attached);
+        HostedZone zone = new HostedZone(id, normalizedName, callerReference, comment, vpcAssociation);
         zoneStore.put(id, zone);
         recordStore.put(id, buildDefaultRecords(normalizedName));
         ChangeInfo change = newChange(null);
         return new CreateZoneResult(zone, change);
-    }
-
-    /**
-     * Attaches a VPC to a private hosted zone. Re-associating a VPC that is already attached is
-     * accepted and changes nothing, matching the API's idempotence.
-     */
-    public synchronized ChangeInfo associateVpcWithHostedZone(String zoneId, String vpcId, String vpcRegion) {
-        HostedZone zone = getHostedZone(zoneId);
-        if (vpcId == null || vpcId.isBlank()) {
-            throw new AwsException("InvalidVPCId", "The VPC ID is invalid.", 400);
-        }
-        if (!zone.isPrivateZone()) {
-            throw new AwsException("PublicZoneVPCAssociation",
-                    "The hosted zone specified is a public hosted zone.", 400);
-        }
-        boolean already = zone.getVpcs().stream().anyMatch(v -> v.sameAs(vpcId, vpcRegion));
-        if (!already) {
-            zone.getVpcs().add(new HostedZoneVpc(vpcId, vpcRegion));
-            zoneStore.put(zone.getId(), zone);
-        }
-        return newChange(null);
-    }
-
-    /**
-     * Detaches a VPC from a private hosted zone. Route 53 refuses to remove the last
-     * association, because a private zone with no VPC could never be resolved.
-     */
-    public synchronized ChangeInfo disassociateVpcFromHostedZone(String zoneId, String vpcId, String vpcRegion) {
-        HostedZone zone = getHostedZone(zoneId);
-        if (!zone.isPrivateZone()) {
-            throw new AwsException("VPCAssociationNotFound",
-                    "The VPC is not associated with the specified hosted zone.", 404);
-        }
-        HostedZoneVpc match = zone.getVpcs().stream()
-                .filter(v -> v.sameAs(vpcId, vpcRegion))
-                .findFirst()
-                .orElseThrow(() -> new AwsException("VPCAssociationNotFound",
-                        "The VPC is not associated with the specified hosted zone.", 404));
-        if (zone.getVpcs().size() == 1) {
-            throw new AwsException("LastVPCAssociation",
-                    "The VPC that you're trying to disassociate from the private hosted zone is the "
-                            + "last VPC that is associated with the hosted zone.", 400);
-        }
-        zone.getVpcs().remove(match);
-        zoneStore.put(zone.getId(), zone);
-        return newChange(null);
-    }
-
-    /** Private hosted zones attached to a VPC, which is what ListHostedZonesByVPC answers. */
-    public List<HostedZone> listHostedZonesByVpc(String vpcId, String vpcRegion, int maxItems) {
-        List<HostedZone> all = new ArrayList<>(zoneStore.scan(k -> true));
-        all.sort((a, b) -> a.getId().compareTo(b.getId()));
-        List<HostedZone> matched = new ArrayList<>();
-        for (HostedZone zone : all) {
-            if (zone.getVpcs().stream().anyMatch(v -> v.sameAs(vpcId, vpcRegion))) {
-                zone.setResourceRecordSetCount(recordCount(zone.getId()));
-                matched.add(zone);
-            }
-        }
-        if (maxItems > 0 && matched.size() > maxItems) {
-            return matched.subList(0, maxItems);
-        }
-        return matched;
     }
 
     public HostedZone getHostedZone(String id) {
@@ -231,6 +151,97 @@ public class Route53Service {
 
     public long getHostedZoneCount() {
         return zoneStore.keys().size();
+    }
+
+    // ── VPC Associations ──────────────────────────────────────────────────────
+
+    /**
+     * Associates a VPC with a private hosted zone. Re-associating a VPC that is
+     * already attached is a no-op, matching the idempotent AWS behaviour.
+     */
+    public synchronized ChangeInfo associateVpcWithHostedZone(String zoneId, VpcAssociation vpc,
+                                                              String comment) {
+        HostedZone zone = getHostedZone(zoneId);
+        if (!zone.isPrivateZone()) {
+            throw new AwsException("PublicZoneVPCAssociation",
+                    "You're trying to associate a VPC with a public hosted zone. "
+                            + "Public hosted zones can't be associated with a VPC.", 400);
+        }
+        if (findAssociation(zone, vpc) == null) {
+            for (HostedZone other : listHostedZonesByVpc(vpc.getVpcId(), vpc.getVpcRegion())) {
+                if (!other.getId().equals(zoneId) && other.getName().equals(zone.getName())) {
+                    throw new AwsException("ConflictingDomainExists",
+                            "The VPC that you chose, " + vpc.getVpcId() + " in region " + vpc.getVpcRegion()
+                                    + ", is already associated with another hosted zone that has the same name.",
+                            400);
+                }
+            }
+            zone.getVpcAssociations().add(vpc);
+            zoneStore.put(zoneId, zone);
+        }
+        return newChange(comment);
+    }
+
+    /**
+     * Disassociates a VPC from a private hosted zone. AWS refuses to remove the
+     * only remaining association — the zone would become unresolvable.
+     */
+    public synchronized ChangeInfo disassociateVpcFromHostedZone(String zoneId, VpcAssociation vpc,
+                                                                 String comment) {
+        HostedZone zone = getHostedZone(zoneId);
+        VpcAssociation existing = findAssociation(zone, vpc);
+        if (existing == null) {
+            throw new AwsException("VPCAssociationNotFound",
+                    "The VPC " + vpc.getVpcId() + " in region " + vpc.getVpcRegion()
+                            + " is not associated with hosted zone " + zoneId + ".", 404);
+        }
+        if (zone.getVpcAssociations().size() == 1) {
+            throw new AwsException("LastVPCAssociation",
+                    "The VPC that you chose, " + vpc.getVpcId() + " in region " + vpc.getVpcRegion()
+                            + ", is the last VPC that is associated with the hosted zone.", 400);
+        }
+        zone.getVpcAssociations().remove(existing);
+        zoneStore.put(zoneId, zone);
+        return newChange(comment);
+    }
+
+    /**
+     * Returns every hosted zone associated with the given VPC, regardless of the
+     * account that created the zone.
+     */
+    public List<HostedZone> listHostedZonesByVpc(String vpcId, String vpcRegion) {
+        List<HostedZone> matches = new ArrayList<>();
+        for (HostedZone zone : zoneStore.scan(k -> true)) {
+            if (findAssociation(zone, new VpcAssociation(vpcId, vpcRegion)) != null) {
+                zone.setResourceRecordSetCount(recordCount(zone.getId()));
+                matches.add(zone);
+            }
+        }
+        // Tie-break by id: name alone leaves equal-named zones ordered by the backing store's
+        // own iteration, which can differ between the page-1 and page-2 scans and desync the
+        // id-based NextToken continuation point (skipping or repeating an entry).
+        matches.sort((a, b) -> {
+            int cmp = a.getName().compareTo(b.getName());
+            return cmp != 0 ? cmp : a.getId().compareTo(b.getId());
+        });
+        return matches;
+    }
+
+    /**
+     * {@link VpcAssociation} has no value equality, so associations are matched on
+     * their ID and region rather than by object identity.
+     */
+    private static VpcAssociation findAssociation(HostedZone zone, VpcAssociation vpc) {
+        if (zone.getVpcAssociations() == null) {
+            return null;
+        }
+        for (VpcAssociation candidate : zone.getVpcAssociations()) {
+            if (vpc.getVpcId().equals(candidate.getVpcId())
+                    && vpc.getVpcRegion().equals(candidate.getVpcRegion())) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     // ── Resource Record Sets ──────────────────────────────────────────────────
@@ -384,6 +395,10 @@ public class Route53Service {
 
     public List<String> getNameServers() {
         return nameServers;
+    }
+
+    public String getDefaultAccountId() {
+        return defaultAccountId;
     }
 
     private static String normalizeName(String name) {

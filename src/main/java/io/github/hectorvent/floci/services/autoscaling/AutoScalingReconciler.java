@@ -13,6 +13,7 @@ import io.github.hectorvent.floci.services.elbv2.model.TargetDescription;
 import io.github.hectorvent.floci.services.elbv2.model.TargetHealth;
 import io.github.hectorvent.floci.services.ssm.SsmCommandService;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
@@ -57,6 +58,11 @@ public class AutoScalingReconciler {
     @PostConstruct
     void start() {
         scheduler.scheduleAtFixedRate(this::reconcileAll, 5, 10, TimeUnit.SECONDS);
+    }
+
+    @PreDestroy
+    void stop() {
+        scheduler.shutdownNow();
     }
 
     void onStart(@Observes StartupEvent event) {
@@ -434,13 +440,13 @@ public class AutoScalingReconciler {
                     : asg.getLaunchTemplateVersion();
             return new LaunchSource(
                     null,
-                    version.getImageId(),
-                    version.getInstanceType(),
-                    version.getKeyName(),
-                    version.getEffectiveSecurityGroupIds(),
-                    version.getInstanceTags(),
-                    version.getUserData(),
-                    version.getIamInstanceProfileArn(),
+                    version.getData().getImageId(),
+                    version.getData().getInstanceType(),
+                    version.getData().getKeyName(),
+                    version.getData().effectiveSecurityGroupIds(),
+                    version.getData().getInstanceTags(),
+                    version.getData().getUserData(),
+                    ec2Service.iamInstanceProfileArn(version.getData()),
                     asg.getLaunchTemplateId(),
                     asg.getLaunchTemplateName(),
                     resolvedVersion,
@@ -464,13 +470,13 @@ public class AutoScalingReconciler {
                 String instanceType = mixedInstancesInstanceType(asg, version);
                 return new LaunchSource(
                         null,
-                        version.getImageId(),
+                        version.getData().getImageId(),
                         instanceType,
-                        version.getKeyName(),
-                        version.getEffectiveSecurityGroupIds(),
-                        version.getInstanceTags(),
-                        version.getUserData(),
-                        version.getIamInstanceProfileArn(),
+                        version.getData().getKeyName(),
+                        version.getData().effectiveSecurityGroupIds(),
+                        version.getData().getInstanceTags(),
+                        version.getData().getUserData(),
+                        ec2Service.iamInstanceProfileArn(version.getData()),
                         specification.getLaunchTemplateId() == null
                                 ? mixedLaunchTemplate.getLaunchTemplateId()
                                 : specification.getLaunchTemplateId(),
@@ -551,7 +557,7 @@ public class AutoScalingReconciler {
                 }
             }
         }
-        return version.getInstanceType();
+        return version.getData().getInstanceType();
     }
 
     private record LaunchSource(

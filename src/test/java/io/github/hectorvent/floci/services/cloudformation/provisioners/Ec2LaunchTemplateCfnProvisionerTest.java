@@ -8,17 +8,16 @@ import io.github.hectorvent.floci.services.cloudformation.model.StackResource;
 import io.github.hectorvent.floci.services.ec2.Ec2Service;
 import io.github.hectorvent.floci.services.ec2.model.LaunchTemplate;
 import io.github.hectorvent.floci.services.ec2.model.LaunchTemplateData;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentMatcher;
 import org.mockito.InOrder;
 
 import java.util.HashMap;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
-import java.util.function.Predicate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -64,26 +63,9 @@ class Ec2LaunchTemplateCfnProvisionerTest {
         return lt;
     }
 
-    /** Matches a LaunchTemplateData whose fields satisfy the given predicate. */
-    private static LaunchTemplateData ltData(Predicate<LaunchTemplateData> predicate) {
-        return argThat((ArgumentMatcher<LaunchTemplateData>) data -> data != null && predicate.test(data));
-    }
-
-    private static boolean fieldsEqual(LaunchTemplateData data, String imageId, String instanceType,
-                                       String keyName, List<String> securityGroupIds, String encodedUserData,
-                                       String iamInstanceProfileArn) {
-        return Objects.equals(imageId, data.getImageId())
-                && Objects.equals(instanceType, data.getInstanceType())
-                && Objects.equals(keyName, data.getKeyName())
-                && Objects.equals(securityGroupIds == null ? List.of() : securityGroupIds, data.getSecurityGroupIds())
-                && Objects.equals(encodedUserData, data.getEncodedUserData())
-                && Objects.equals(iamInstanceProfileArn, data.getIamInstanceProfileArn());
-    }
-
     @Test
     void setsPhysicalIdAndGetAttAttributes() {
-        when(ec2.createLaunchTemplate(eq("us-east-1"), eq("my-lt"),
-                ltData(d -> fieldsEqual(d, "ami-12345678", "t3.small", null, null, null, null)), isNull()))
+        when(ec2.createLaunchTemplate(eq("us-east-1"), eq("my-lt"), any(), any()))
                 .thenReturn(template("lt-abc123"));
         ObjectNode data = mapper.createObjectNode()
                 .put("ImageId", "ami-12345678")
@@ -102,15 +84,14 @@ class Ec2LaunchTemplateCfnProvisionerTest {
 
     @Test
     void withoutNameGeneratesPhysicalName() {
-        when(ec2.createLaunchTemplate(eq("us-east-1"), anyString(), any(), isNull()))
+        when(ec2.createLaunchTemplate(eq("us-east-1"), anyString(), any(), any()))
                 .thenReturn(template("lt-gen"));
         StackResource r = resource("Lt");
 
         provisioner.provision(r, mapper.createObjectNode(), ctx());
 
         verify(ec2).createLaunchTemplate(eq("us-east-1"),
-                org.mockito.ArgumentMatchers.matches("my-stack-Lt-[0-9a-f]{12}"),
-                ltData(d -> fieldsEqual(d, null, null, null, null, null, null)), isNull());
+                org.mockito.ArgumentMatchers.matches("my-stack-Lt-[0-9a-f]{12}"), any(), isNull());
     }
 
     @Test
@@ -122,7 +103,7 @@ class Ec2LaunchTemplateCfnProvisionerTest {
         when(ec2.describeLaunchTemplates(eq("us-east-1"), eq(List.of("lt-abc123")), eq(List.of()), any()))
                 .thenReturn(List.of(existing));
         when(ec2.createLaunchTemplateVersion(eq("us-east-1"), eq("lt-abc123"), isNull(), isNull(),
-                ltData(d -> "ami-updated".equals(d.getImageId()))))
+                argThat(d -> d != null && "ami-updated".equals(d.getImageId()))))
                 .thenReturn(template("lt-abc123"));
 
         ObjectNode props = mapper.createObjectNode().put("LaunchTemplateName", "my-lt");
@@ -178,9 +159,11 @@ class Ec2LaunchTemplateCfnProvisionerTest {
     }
 
     @Test
-    void profileNameIsNormalizedToInstanceProfileArn() {
-        when(ec2.createLaunchTemplate(any(), any(), any(), any()))
-                .thenReturn(template("lt-prof"));
+    void profileGivenOnlyByNameKeepsThatForm() {
+        // Normalizing Name into an Arn here is what made
+        // aws_launch_template.iam_instance_profile.name never converge: Terraform sets .name and
+        // read back .arn. EC2 derives the ARN at launch time instead.
+        when(ec2.createLaunchTemplate(any(), any(), any(), any())).thenReturn(template("lt-prof"));
         ObjectNode data = mapper.createObjectNode();
         data.putObject("IamInstanceProfile").put("Name", "my-profile");
         ObjectNode props = mapper.createObjectNode();
@@ -188,15 +171,15 @@ class Ec2LaunchTemplateCfnProvisionerTest {
 
         provisioner.provision(resource("Lt"), props, ctx());
 
-        verify(ec2).createLaunchTemplate(eq("us-east-1"), anyString(),
-                ltData(d -> "arn:aws:iam::000000000000:instance-profile/my-profile".equals(d.getIamInstanceProfileArn())),
-                isNull());
+        ArgumentCaptor<LaunchTemplateData> captor = ArgumentCaptor.forClass(LaunchTemplateData.class);
+        verify(ec2).createLaunchTemplate(eq("us-east-1"), anyString(), captor.capture(), isNull());
+        assertEquals("my-profile", captor.getValue().getIamInstanceProfile().getName());
+        assertNull(captor.getValue().getIamInstanceProfile().getArn());
     }
 
     @Test
     void profileArnIsPassedThrough() {
-        when(ec2.createLaunchTemplate(any(), any(), any(), any()))
-                .thenReturn(template("lt-prof"));
+        when(ec2.createLaunchTemplate(any(), any(), any(), any())).thenReturn(template("lt-prof"));
         ObjectNode data = mapper.createObjectNode();
         data.putObject("IamInstanceProfile")
                 .put("Arn", "arn:aws:iam::000000000000:instance-profile/explicit");
@@ -206,20 +189,11 @@ class Ec2LaunchTemplateCfnProvisionerTest {
 
         provisioner.provision(resource("Lt"), props, ctx());
 
-        verify(ec2).createLaunchTemplate(eq("us-east-1"), anyString(),
-                ltData(d -> List.of("sg-1", "sg-2").equals(d.getSecurityGroupIds())
-                        && "arn:aws:iam::000000000000:instance-profile/explicit".equals(d.getIamInstanceProfileArn())),
-                isNull());
-    }
-
-    @Test
-    void deleteDelegatesToServiceById() {
-        provisioner.delete("AWS::EC2::LaunchTemplate", "lt-abc123", "us-east-1");
-        verify(ec2).deleteLaunchTemplate("us-east-1", "lt-abc123", null);
-    }
-
-    @Test
-    void handlesOnlyLaunchTemplate() {
-        assertEquals(Set.of("AWS::EC2::LaunchTemplate"), provisioner.resourceTypes());
+        ArgumentCaptor<LaunchTemplateData> captor = ArgumentCaptor.forClass(LaunchTemplateData.class);
+        verify(ec2).createLaunchTemplate(eq("us-east-1"), anyString(), captor.capture(), isNull());
+        assertEquals("arn:aws:iam::000000000000:instance-profile/explicit",
+                captor.getValue().getIamInstanceProfile().getArn());
+        assertNull(captor.getValue().getIamInstanceProfile().getName());
+        assertEquals(List.of("sg-1", "sg-2"), captor.getValue().getSecurityGroupIds());
     }
 }

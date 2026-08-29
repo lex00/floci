@@ -1,6 +1,7 @@
 package io.github.hectorvent.floci.services.ec2.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonSetter;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.time.Instant;
@@ -9,6 +10,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * A template persisted before this class collapsed onto a single {@link LaunchTemplateData} also
+ * carried the current version's {@code iamInstanceProfileArn} and {@code instanceTags} as flat
+ * fields directly on this class, alongside the equivalent per-version fields inside
+ * {@link LaunchTemplateData} (see the legacy setters there for the {@code versions} map side).
+ * The setters below map that top-level shape onto {@link #data} at load time.
+ */
 @RegisterForReflection
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class LaunchTemplate {
@@ -20,33 +28,11 @@ public class LaunchTemplate {
     private Instant createTime;
     private String createdBy;
     private String region;
-    private String imageId;
-    private String instanceType;
-    private String keyName;
-    private String userData;
-    private String encodedUserData;
-    private String iamInstanceProfileArn;
-    private List<String> securityGroupIds = new ArrayList<>();
     private List<Tag> tags = new ArrayList<>();
-    private List<Tag> instanceTags = new ArrayList<>();
-    private LaunchTemplateData.MetadataOptions metadataOptions;
-    private Boolean monitoringEnabled;
-    // lex00/floci#119: mirrors of LaunchTemplateData's own widened field set
-    // (see that class for the oracle/context). Kept in sync with the
-    // default version's data the same way imageId/instanceType/etc already
-    // were, via dataFrom/applyData in Ec2Service.
-    private String versionDescription;
-    private Boolean ebsOptimized;
-    private List<BlockDeviceMapping> blockDeviceMappings = new ArrayList<>();
-    private LaunchTemplateData.CapacityReservationSpecification capacityReservationSpecification;
-    private LaunchTemplateData.CpuOptions cpuOptions;
-    private LaunchTemplateData.InstanceMarketOptions instanceMarketOptions;
-    private LaunchTemplateData.MaintenanceOptions maintenanceOptions;
-    private List<LaunchTemplateData.NetworkInterfaceSpecification> networkInterfaces = new ArrayList<>();
-    private Placement placement;
-    private List<LaunchTemplateData.TagSpecification> tagSpecifications = new ArrayList<>();
-    private LaunchTemplateData.InstanceRequirements instanceRequirements;
+    private LaunchTemplateData data = new LaunchTemplateData();
     private Map<String, LaunchTemplateData> versions = new LinkedHashMap<>();
+    private String versionDescription;
+    private Map<String, String> versionDescriptions = new LinkedHashMap<>();
 
     public LaunchTemplate() {}
 
@@ -71,99 +57,55 @@ public class LaunchTemplate {
     public String getRegion() { return region; }
     public void setRegion(String region) { this.region = region; }
 
-    public String getImageId() { return imageId; }
-    public void setImageId(String imageId) { this.imageId = imageId; }
-
-    public String getInstanceType() { return instanceType; }
-    public void setInstanceType(String instanceType) { this.instanceType = instanceType; }
-
-    public String getKeyName() { return keyName; }
-    public void setKeyName(String keyName) { this.keyName = keyName; }
-
-    public String getUserData() { return userData; }
-    public void setUserData(String userData) { this.userData = userData; }
-
-    public String getEncodedUserData() { return encodedUserData; }
-    public void setEncodedUserData(String encodedUserData) { this.encodedUserData = encodedUserData; }
-
-    public String getIamInstanceProfileArn() { return iamInstanceProfileArn; }
-    public void setIamInstanceProfileArn(String iamInstanceProfileArn) { this.iamInstanceProfileArn = iamInstanceProfileArn; }
-
-    public List<String> getSecurityGroupIds() { return securityGroupIds; }
-    public void setSecurityGroupIds(List<String> securityGroupIds) { this.securityGroupIds = securityGroupIds; }
-
-    // lex00/floci#123: getSecurityGroupIds() above must stay the literal
-    // top-level SecurityGroupIds this template/version was created with -
-    // see LaunchTemplateData.getEffectiveSecurityGroupIds()'s own doc
-    // comment. AutoScalingReconciler resolving a launch template into the
-    // security groups an actual reconciled instance gets needs the same
-    // union-of-top-level-and-per-interface view RunInstances needs, so it
-    // gets the same kind of accessor here rather than reading the
-    // wire-facing field directly.
-    public List<String> getEffectiveSecurityGroupIds() {
-        java.util.LinkedHashSet<String> effective = new java.util.LinkedHashSet<>(
-                securityGroupIds != null ? securityGroupIds : List.of());
-        for (LaunchTemplateData.NetworkInterfaceSpecification ni : networkInterfaces) {
-            effective.addAll(ni.getGroups());
-        }
-        return new ArrayList<>(effective);
-    }
-
     public List<Tag> getTags() { return tags; }
-    public void setTags(List<Tag> tags) { this.tags = tags; }
-
-    public List<Tag> getInstanceTags() { return instanceTags; }
-    public void setInstanceTags(List<Tag> instanceTags) {
-        this.instanceTags = instanceTags != null ? new ArrayList<>(instanceTags) : new ArrayList<>();
+    public void setTags(List<Tag> tags) {
+        this.tags = tags != null ? new ArrayList<>(tags) : new ArrayList<>();
     }
 
-    public LaunchTemplateData.MetadataOptions getMetadataOptions() { return metadataOptions; }
-    public void setMetadataOptions(LaunchTemplateData.MetadataOptions metadataOptions) { this.metadataOptions = metadataOptions; }
-
-    public Boolean getMonitoringEnabled() { return monitoringEnabled; }
-    public void setMonitoringEnabled(Boolean monitoringEnabled) { this.monitoringEnabled = monitoringEnabled; }
-
-    public String getVersionDescription() { return versionDescription; }
-    public void setVersionDescription(String versionDescription) { this.versionDescription = versionDescription; }
-
-    public Boolean getEbsOptimized() { return ebsOptimized; }
-    public void setEbsOptimized(Boolean ebsOptimized) { this.ebsOptimized = ebsOptimized; }
-
-    public List<BlockDeviceMapping> getBlockDeviceMappings() { return blockDeviceMappings; }
-    public void setBlockDeviceMappings(List<BlockDeviceMapping> blockDeviceMappings) {
-        this.blockDeviceMappings = blockDeviceMappings != null ? new ArrayList<>(blockDeviceMappings) : new ArrayList<>();
+    /** The data of the version this instance represents — the latest one unless copied for another. */
+    public LaunchTemplateData getData() { return data; }
+    public void setData(LaunchTemplateData data) {
+        this.data = data != null ? data : new LaunchTemplateData();
     }
-
-    public LaunchTemplateData.CapacityReservationSpecification getCapacityReservationSpecification() { return capacityReservationSpecification; }
-    public void setCapacityReservationSpecification(LaunchTemplateData.CapacityReservationSpecification v) { this.capacityReservationSpecification = v; }
-
-    public LaunchTemplateData.CpuOptions getCpuOptions() { return cpuOptions; }
-    public void setCpuOptions(LaunchTemplateData.CpuOptions cpuOptions) { this.cpuOptions = cpuOptions; }
-
-    public LaunchTemplateData.InstanceMarketOptions getInstanceMarketOptions() { return instanceMarketOptions; }
-    public void setInstanceMarketOptions(LaunchTemplateData.InstanceMarketOptions v) { this.instanceMarketOptions = v; }
-
-    public LaunchTemplateData.MaintenanceOptions getMaintenanceOptions() { return maintenanceOptions; }
-    public void setMaintenanceOptions(LaunchTemplateData.MaintenanceOptions maintenanceOptions) { this.maintenanceOptions = maintenanceOptions; }
-
-    public List<LaunchTemplateData.NetworkInterfaceSpecification> getNetworkInterfaces() { return networkInterfaces; }
-    public void setNetworkInterfaces(List<LaunchTemplateData.NetworkInterfaceSpecification> networkInterfaces) {
-        this.networkInterfaces = networkInterfaces != null ? new ArrayList<>(networkInterfaces) : new ArrayList<>();
-    }
-
-    public Placement getPlacement() { return placement; }
-    public void setPlacement(Placement placement) { this.placement = placement; }
-
-    public List<LaunchTemplateData.TagSpecification> getTagSpecifications() { return tagSpecifications; }
-    public void setTagSpecifications(List<LaunchTemplateData.TagSpecification> tagSpecifications) {
-        this.tagSpecifications = tagSpecifications != null ? new ArrayList<>(tagSpecifications) : new ArrayList<>();
-    }
-
-    public LaunchTemplateData.InstanceRequirements getInstanceRequirements() { return instanceRequirements; }
-    public void setInstanceRequirements(LaunchTemplateData.InstanceRequirements instanceRequirements) { this.instanceRequirements = instanceRequirements; }
 
     public Map<String, LaunchTemplateData> getVersions() { return versions; }
     public void setVersions(Map<String, LaunchTemplateData> versions) {
         this.versions = versions != null ? new LinkedHashMap<>(versions) : new LinkedHashMap<>();
+    }
+
+    /** The {@code VersionDescription} of the version this instance represents — see {@link #getData()}. */
+    public String getVersionDescription() { return versionDescription; }
+    public void setVersionDescription(String versionDescription) { this.versionDescription = versionDescription; }
+
+    /**
+     * {@code VersionDescription} is a version-level field on {@code LaunchTemplateVersion}, not a
+     * member of {@code RequestLaunchTemplateData} / {@code ResponseLaunchTemplateData}, so it is
+     * tracked in this parallel map — keyed by version number, the same way {@link #versions} is —
+     * rather than inside {@link LaunchTemplateData} itself.
+     */
+    public Map<String, String> getVersionDescriptions() { return versionDescriptions; }
+    public void setVersionDescriptions(Map<String, String> versionDescriptions) {
+        this.versionDescriptions = versionDescriptions != null ? new LinkedHashMap<>(versionDescriptions) : new LinkedHashMap<>();
+    }
+
+    // ── Pre-unified-data schema migration ────────────────────────────────────────────────
+    //
+    // See the class-level note above. Deserialize-only — there is no getter for either legacy
+    // key, so a file saved today never writes this shape back out. Guarded the same way as
+    // LaunchTemplateData's equivalent setters: a current-schema record never carries these keys,
+    // so this only ever fires for a pre-migration file, whichever order the keys load in.
+
+    @JsonSetter("iamInstanceProfileArn")
+    public void setLegacyIamInstanceProfileArn(String arn) {
+        if (arn != null && !arn.isBlank() && data.getIamInstanceProfile() == null) {
+            data.setIamInstanceProfile(new LaunchTemplateData.IamInstanceProfile(arn, null));
+        }
+    }
+
+    @JsonSetter("instanceTags")
+    public void setLegacyInstanceTags(List<Tag> instanceTags) {
+        if (instanceTags != null && !instanceTags.isEmpty() && data.getTagSpecifications().isEmpty()) {
+            data.getTagSpecifications().add(new LaunchTemplateData.TagSpecification("instance", instanceTags));
+        }
     }
 }

@@ -111,6 +111,11 @@ final class CloudFrontXml {
             return null;
         }
 
+        /** All direct children, in document order. */
+        List<Node> children() {
+            return children;
+        }
+
         /** All direct children with the given name. */
         List<Node> children(String childName) {
             List<Node> result = new ArrayList<>();

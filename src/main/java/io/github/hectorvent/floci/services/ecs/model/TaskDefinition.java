@@ -21,6 +21,7 @@ public class TaskDefinition {
     private String executionRoleArn;
     private List<ContainerDefinition> containerDefinitions;
     private List<Volume> volumes;
+    private RuntimePlatform runtimePlatform;
     private List<String> requiresCompatibilities;
     private List<String> compatibilities;
     private Map<String, String> tags = new HashMap<>();
@@ -66,6 +67,9 @@ public class TaskDefinition {
 
     public List<Volume> getVolumes() { return volumes; }
     public void setVolumes(List<Volume> volumes) { this.volumes = volumes; }
+
+    public RuntimePlatform getRuntimePlatform() { return runtimePlatform; }
+    public void setRuntimePlatform(RuntimePlatform runtimePlatform) { this.runtimePlatform = runtimePlatform; }
 
     public List<String> getRequiresCompatibilities() { return requiresCompatibilities; }
     public void setRequiresCompatibilities(List<String> requiresCompatibilities) { this.requiresCompatibilities = requiresCompatibilities; }
