@@ -2626,6 +2626,21 @@ public class S3Service implements Resettable, ResourceProvider {
                 case INTELLIGENT_TIERING -> bucket.getIntelligentTieringConfigurations();
             };
         }
+
+        /**
+         * Replaces the bucket's collection for this kind wholesale. Writers build a copy and
+         * swap it in under the bucket monitor rather than mutating in place, so a reader that
+         * holds no lock sees either the collection before the write or the one after it, never
+         * a map in the middle of an insertion.
+         */
+        void setConfigurationsOn(Bucket bucket, Map<String, String> configurations) {
+            switch (this) {
+                case INVENTORY -> bucket.setInventoryConfigurations(configurations);
+                case ANALYTICS -> bucket.setAnalyticsConfigurations(configurations);
+                case METRICS -> bucket.setMetricsConfigurations(configurations);
+                case INTELLIGENT_TIERING -> bucket.setIntelligentTieringConfigurations(configurations);
+            }
+        }
     }
 
     private static String requireConfigurationId(String id) {
@@ -2670,16 +2685,42 @@ public class S3Service implements Resettable, ResourceProvider {
                     "The XML you provided was not well-formed or did not validate against our published schema.",
                     400);
         }
-        kind.configurationsOf(bucket).put(id, document);
-        bucketStore.put(bucketName, bucket);
+        // Read-modify-write of a collection shared by every request thread on this bucket, so
+        // it takes the bucket monitor - the same one putBucketMetricsConfiguration takes. A
+        // LinkedHashMap mutated by two threads at once drops entries: from the table, so
+        // neither Get nor List finds them, or from the linked list values() walks, so Get
+        // still resolves what List has lost. Both were measured against a real emulator, and
+        // both reach terraform as a create that "couldn't find" the resource it just made.
+        // See lex00/floci#186.
+        synchronized (bucket) {
+            requireSameRecord(bucketName, bucket);
+            Map<String, String> existing = kind.configurationsOf(bucket);
+            Map<String, String> configurations = existing == null
+                    ? new java.util.LinkedHashMap<>()
+                    : new java.util.LinkedHashMap<>(existing);
+            configurations.put(id, document);
+            kind.setConfigurationsOn(bucket, configurations);
+            bucketStore.put(bucketName, bucket);
+        }
     }
 
     private void deleteBucketConfiguration(String bucketName, BucketConfigurationKind kind, String id) {
         Bucket bucket = requireBucket(bucketName);
-        if (kind.configurationsOf(bucket).remove(requireConfigurationId(id)) == null) {
-            throw new AwsException("NoSuchConfiguration", "The specified configuration does not exist.", 404);
+        String configurationId = requireConfigurationId(id);
+        // Same monitor as the put: the existence check and the write have to be one step, or a
+        // concurrent put of another id is dropped by the write that follows it.
+        synchronized (bucket) {
+            requireSameRecord(bucketName, bucket);
+            Map<String, String> existing = kind.configurationsOf(bucket);
+            Map<String, String> configurations = existing == null
+                    ? new java.util.LinkedHashMap<>()
+                    : new java.util.LinkedHashMap<>(existing);
+            if (configurations.remove(configurationId) == null) {
+                throw new AwsException("NoSuchConfiguration", "The specified configuration does not exist.", 404);
+            }
+            kind.setConfigurationsOn(bucket, configurations);
+            bucketStore.put(bucketName, bucket);
         }
-        bucketStore.put(bucketName, bucket);
     }
 
     private String listBucketConfigurations(String bucketName, BucketConfigurationKind kind, String continuationToken) {
