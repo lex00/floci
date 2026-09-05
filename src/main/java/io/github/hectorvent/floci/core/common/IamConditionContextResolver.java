@@ -210,6 +210,16 @@ public class IamConditionContextResolver {
                 String policyArn = formParameters(ctx).get("PolicyArn");
                 yield policyArn == null ? null : Map.of("iam:PolicyARN", List.of(policyArn));
             }
+            // AWS sets iam:PermissionsBoundary for the four actions that take the parameter, to the
+            // boundary the request attaches, and leaves it out when none is sent. A policy that
+            // allows CreateRole only with a given boundary then has no key to match on a request
+            // without one, so the call is refused.
+            case "iam:CreateRole", "iam:CreateUser",
+                    "iam:PutRolePermissionsBoundary", "iam:PutUserPermissionsBoundary" -> {
+                String boundary = formParameters(ctx).get("PermissionsBoundary");
+                yield boundary == null || boundary.isBlank()
+                        ? null : Map.of("iam:PermissionsBoundary", List.of(boundary));
+            }
             default -> null;
         };
     }

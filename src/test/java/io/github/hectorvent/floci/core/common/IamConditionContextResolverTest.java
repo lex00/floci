@@ -885,4 +885,56 @@ class IamConditionContextResolverTest {
         }
         return Decision.ALLOW;
     }
+
+    // ─── IAM permissions boundary ──────────────────────────────────────────
+
+    @Test
+    void resolvesIamPermissionsBoundaryFromTheRequestParameter() {
+        String boundary = "arn:aws:iam::000000000000:policy/wp-permission-boundary";
+        assertEquals(Map.of("iam:PermissionsBoundary", List.of(boundary)),
+                resolver.resolve("iam", "iam:CreateRole",
+                        formRequest("Action=CreateRole&RoleName=r&PermissionsBoundary=" + encode(boundary))));
+    }
+
+    @Test
+    void iamPermissionsBoundaryIsAbsentWhenTheRequestDoesNotCarryOne() {
+        assertNull(resolver.resolve("iam", "iam:CreateRole", formRequest("Action=CreateRole&RoleName=r")));
+    }
+
+    @Test
+    void resolvesIamPermissionsBoundaryForTheOtherThreeBoundaryActions() {
+        String boundary = "arn:aws:iam::000000000000:policy/b";
+        for (String action : List.of("iam:CreateUser",
+                                     "iam:PutRolePermissionsBoundary",
+                                     "iam:PutUserPermissionsBoundary")) {
+            assertEquals(Map.of("iam:PermissionsBoundary", List.of(boundary)),
+                    resolver.resolve("iam", action, formRequest("PermissionsBoundary=" + encode(boundary))),
+                    action);
+        }
+    }
+
+    @Test
+    void iamActionsWithoutABoundaryParameterGetNoContext() {
+        assertNull(resolver.resolve("iam", "iam:GetRole", formRequest("Action=GetRole&RoleName=r")));
+    }
+
+    @Test
+    void boundaryConditionAllowsTheMatchingBoundaryAndDeniesAnUnboundedCreateRole() {
+        String boundary = "arn:aws:iam::000000000000:policy/wp-permission-boundary";
+        String policy = """
+                {"Version":"2012-10-17","Statement":[
+                  {"Effect":"Allow","Action":"iam:CreateRole","Resource":"*",
+                   "Condition":{"StringEquals":{"iam:PermissionsBoundary":"%s"}}}
+                ]}""".formatted(boundary);
+
+        assertEquals(Decision.ALLOW, evaluator.simulateCustomPolicy(List.of(policy), "iam:CreateRole", "*",
+                resolver.resolve("iam", "iam:CreateRole",
+                        formRequest("Action=CreateRole&RoleName=r&PermissionsBoundary=" + encode(boundary)))));
+        assertEquals(Decision.DENY, evaluator.simulateCustomPolicy(List.of(policy), "iam:CreateRole", "*",
+                resolver.resolve("iam", "iam:CreateRole", formRequest("Action=CreateRole&RoleName=r"))));
+    }
+
+    private static String encode(String value) {
+        return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
 }
