@@ -211,9 +211,13 @@ public class IamQueryHandler {
     private Response handleCreateUser(MultivaluedMap<String, String> params) {
         String userName = getParam(params, "UserName");
         String path = getParam(params, "Path");
+        String boundaryArn = getParam(params, "PermissionsBoundary");
         Map<String, String> tags = extractTags(params);
         IamUser user = iamService.createUser(userName, path);
         if (!tags.isEmpty()) iamService.tagUser(userName, tags);
+        if (boundaryArn != null && !boundaryArn.isBlank()) {
+            iamService.putUserPermissionsBoundary(userName, boundaryArn);
+        }
         user = iamService.getUser(userName);
         String result = new XmlBuilder().start("User").raw(userXml(user, true)).end("User").build();
         return Response.ok(AwsQueryResponse.envelope("CreateUser", AwsNamespaces.IAM, result)).build();
@@ -636,9 +640,16 @@ public class IamQueryHandler {
         String path = getParam(params, "Path");
         String trustPolicy = getParam(params, "AssumeRolePolicyDocument");
         String description = getParam(params, "Description");
+        String boundaryArn = getParam(params, "PermissionsBoundary");
         int maxSession = getIntParam(params, "MaxSessionDuration", 3600);
         Map<String, String> tags = extractTags(params);
         IamRole role = iamService.createRole(roleName, path, trustPolicy, description, maxSession, tags);
+        // CreateRole takes the boundary inline; applying it through the same service call as
+        // PutRolePermissionsBoundary keeps the policy-exists validation in one place.
+        if (boundaryArn != null && !boundaryArn.isBlank()) {
+            iamService.putRolePermissionsBoundary(roleName, boundaryArn);
+            role = iamService.getRole(roleName);
+        }
         String result = new XmlBuilder().start("Role").raw(roleXml(role, true)).end("Role").build();
         return Response.ok(AwsQueryResponse.envelope("CreateRole", AwsNamespaces.IAM, result)).build();
     }
@@ -1244,6 +1255,7 @@ public class IamQueryHandler {
                 .elem("UserId", u.getUserId())
                 .elem("Arn", u.getArn())
                 .elem("CreateDate", isoDate(u.getCreateDate()))
+                .raw(detailed ? permissionsBoundaryElement(u.getPermissionsBoundaryArn()) : "")
                 .raw(detailed ? tagsElement(u.getTags()) : "")
                 .build();
     }
@@ -1276,6 +1288,7 @@ public class IamQueryHandler {
                 .elem("MaxSessionDuration", (long) r.getMaxSessionDuration())
                 .elem("AssumeRolePolicyDocument", r.getAssumeRolePolicyDocument())
                 .elem("Description", r.getDescription())
+                .raw(detailed ? permissionsBoundaryElement(r.getPermissionsBoundaryArn()) : "")
                 .raw(detailed ? tagsElement(r.getTags()) : "")
                 .build();
     }
@@ -1373,6 +1386,24 @@ public class IamQueryHandler {
      * empty {@code <Tags/>} keeps an untagged resource from reading back as having an empty tag
      * set, which would be a diff of its own.
      */
+    /**
+     * Absence is the signal for "no boundary": AWS omits the whole element rather than
+     * returning an empty one, and the SDKs and the Terraform provider read it that way. An
+     * always-present element would make a role that never had a boundary look like one whose
+     * boundary was cleared.
+     */
+    private String permissionsBoundaryElement(String boundaryArn) {
+        if (boundaryArn == null || boundaryArn.isBlank()) {
+            return "";
+        }
+        return new XmlBuilder()
+                .start("PermissionsBoundary")
+                .elem("PermissionsBoundaryType", "PermissionsBoundaryPolicy")
+                .elem("PermissionsBoundaryArn", boundaryArn)
+                .end("PermissionsBoundary")
+                .build();
+    }
+
     private String tagsElement(Map<String, String> tags) {
         if (tags == null || tags.isEmpty()) {
             return "";
