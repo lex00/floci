@@ -120,6 +120,77 @@ class Ec2ServiceTest {
     }
 
     @Test
+    void createSubnetRejectsCidrThatConflictsWithAnExistingSubnetInTheSameVpc() {
+        // choudoufu issue #672: CreateSubnet carries no idempotency token, so a client-side
+        // transport retry after a lost response (the AWS SDK issues these on I/O failures
+        // regardless of whether the operation is idempotent) resends the identical request.
+        // Real AWS's own CIDR-conflict check is the only thing that turns that resend into an
+        // error instead of a second, live, unrecorded subnet - so it must be enforced here too.
+        Ec2Service service = new Ec2Service(mockConfig(true), mock(Ec2ContainerManager.class),
+                mock(Ec2PortForwardManager.class),
+                mock(AmiImageResolver.class), mock(Ec2ImageCatalog.class), new Ec2InstanceTypeCatalog(),
+                new InMemoryStorageFactory());
+        Vpc vpc = service.createVpc("us-east-1", "10.0.0.0/16", false);
+        service.createSubnet("us-east-1", vpc.getVpcId(), "10.0.1.0/24", "us-east-1a");
+
+        AwsException error = assertThrows(AwsException.class, () -> service.createSubnet(
+                "us-east-1", vpc.getVpcId(), "10.0.1.0/24", "us-east-1a"));
+
+        assertEquals("InvalidSubnet.Conflict", error.getErrorCode());
+        assertEquals(400, error.getHttpStatus());
+        assertEquals(1, service.describeSubnets("us-east-1", List.of(), Map.of()).stream()
+                .filter(s -> vpc.getVpcId().equals(s.getVpcId())).count());
+    }
+
+    @Test
+    void createSubnetRejectsCidrThatPartiallyOverlapsAnExistingSubnet() {
+        Ec2Service service = new Ec2Service(mockConfig(true), mock(Ec2ContainerManager.class),
+                mock(Ec2PortForwardManager.class),
+                mock(AmiImageResolver.class), mock(Ec2ImageCatalog.class), new Ec2InstanceTypeCatalog(),
+                new InMemoryStorageFactory());
+        Vpc vpc = service.createVpc("us-east-1", "10.0.0.0/16", false);
+        service.createSubnet("us-east-1", vpc.getVpcId(), "10.0.1.0/24", "us-east-1a");
+
+        // 10.0.1.128/25 is wholly contained in 10.0.1.0/24 - a partial overlap, not a duplicate.
+        AwsException error = assertThrows(AwsException.class, () -> service.createSubnet(
+                "us-east-1", vpc.getVpcId(), "10.0.1.128/25", "us-east-1a"));
+
+        assertEquals("InvalidSubnet.Conflict", error.getErrorCode());
+    }
+
+    @Test
+    void createSubnetAllowsNonOverlappingCidrsInTheSameVpc() {
+        Ec2Service service = new Ec2Service(mockConfig(true), mock(Ec2ContainerManager.class),
+                mock(Ec2PortForwardManager.class),
+                mock(AmiImageResolver.class), mock(Ec2ImageCatalog.class), new Ec2InstanceTypeCatalog(),
+                new InMemoryStorageFactory());
+        Vpc vpc = service.createVpc("us-east-1", "10.0.0.0/16", false);
+        service.createSubnet("us-east-1", vpc.getVpcId(), "10.0.1.0/24", "us-east-1a");
+
+        // Adjacent, non-overlapping CIDR must still succeed - the check is conflict, not identity.
+        var second = service.createSubnet("us-east-1", vpc.getVpcId(), "10.0.2.0/24", "us-east-1b");
+
+        assertEquals("10.0.2.0/24", second.getCidrBlock());
+        assertEquals(2, service.describeSubnets("us-east-1", List.of(), Map.of()).stream()
+                .filter(s -> vpc.getVpcId().equals(s.getVpcId())).count());
+    }
+
+    @Test
+    void createSubnetAllowsConflictingCidrsInDifferentVpcs() {
+        Ec2Service service = new Ec2Service(mockConfig(true), mock(Ec2ContainerManager.class),
+                mock(Ec2PortForwardManager.class),
+                mock(AmiImageResolver.class), mock(Ec2ImageCatalog.class), new Ec2InstanceTypeCatalog(),
+                new InMemoryStorageFactory());
+        Vpc vpcA = service.createVpc("us-east-1", "10.0.0.0/16", false);
+        Vpc vpcB = service.createVpc("us-east-1", "10.0.0.0/16", false);
+        service.createSubnet("us-east-1", vpcA.getVpcId(), "10.0.1.0/24", "us-east-1a");
+
+        var subnetB = service.createSubnet("us-east-1", vpcB.getVpcId(), "10.0.1.0/24", "us-east-1a");
+
+        assertEquals("10.0.1.0/24", subnetB.getCidrBlock());
+    }
+
+    @Test
     void runInstancesStoresArchitectureFromImageCatalog() {
         Ec2Service service = new Ec2Service(mockConfig(true), mock(Ec2ContainerManager.class),
                 mock(Ec2PortForwardManager.class),
