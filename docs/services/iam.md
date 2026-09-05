@@ -96,6 +96,22 @@ type.
 | PutRolePermissionsBoundary | Sets a managed policy as a role's permissions boundary. |
 | DeleteRolePermissionsBoundary | Removes a role's permissions boundary. |
 
+`CreateRole` and `CreateUser` also accept the boundary inline through their own
+`PermissionsBoundary` parameter.
+
+A boundary that is set comes back on `CreateRole`, `GetRole`, `CreateUser` and `GetUser` as:
+
+```xml
+<PermissionsBoundary>
+  <PermissionsBoundaryType>PermissionsBoundaryPolicy</PermissionsBoundaryType>
+  <PermissionsBoundaryArn>arn:aws:iam::000000000000:policy/example</PermissionsBoundaryArn>
+</PermissionsBoundary>
+```
+
+The element is omitted entirely when no boundary is set, and `ListRoles` and `ListUsers` omit
+it always — IAM's listing operations document `PermissionsBoundary` among the attributes their
+subset leaves out.
+
 ### Policy Attachments
 
 | Action | Description |
@@ -404,6 +420,9 @@ A `Condition` operator can only match a key floci actually places in the request
 floci populates:
 
 - `s3:prefix`, `s3:delimiter`, `s3:max-keys` — from the S3 request parameters.
+- `iam:PermissionsBoundary` — the boundary policy ARN the request asks to attach, from the
+  `PermissionsBoundary` parameter of `iam:CreateRole`, `iam:CreateUser`,
+  `iam:PutRolePermissionsBoundary` and `iam:PutUserPermissionsBoundary`.
 - `aws:PrincipalArn` — the caller's ARN, resolved from the signing access key. It is the
   IAM-user ARN for a user access key, the assumed-role ARN for an STS session, and
   `arn:aws:iam::<account>:root` for the bare account-id key (floci's account-root principal),
@@ -432,7 +451,12 @@ Currently populated:
 |---|---|---|
 | `s3:prefix`, `s3:delimiter`, `s3:max-keys` | The request's query parameters | `s3:ListBucket` |
 | `aws:RequestTag/<key>` | Tags named in the request itself, before they are applied | `ec2:RunInstances` (`TagSpecification.N`), `ec2:CreateTags` (`Tag.N`), `s3:PutBucketTagging` (the `<Tagging>` XML body) |
+| `iam:PermissionsBoundary` | The `PermissionsBoundary` request parameter, when the request sends one | `iam:CreateRole`, `iam:CreateUser`, `iam:PutRolePermissionsBoundary`, `iam:PutUserPermissionsBoundary` |
 | `aws:ResourceTag/<key>` | The target resource's current tags | `ec2:CreateTags`, `ec2:DeleteTags`, `ec2:TerminateInstances`, `ec2:DescribeInstances` (by `ResourceId.1` / `InstanceId.1`); `s3:GetBucketTagging`, `s3:DeleteBucketTagging`, `s3:DeleteBucket` (by bucket) |
+
+A boundary-delegation policy relies on `iam:PermissionsBoundary` being *absent* when the caller
+sends no boundary: a `StringEquals` on it then fails to match, so an Allow for `iam:CreateRole`
+conditioned on the boundary denies an unbounded CreateRole rather than permitting it.
 
 Two simplifications worth knowing before relying on this for a multi-resource proof: `aws:ResourceTag` is read from only the FIRST resource id named in a request (AWS evaluates the condition once per resource in a batch call; this emulator evaluates one resource ARN per request), and EC2 has no per-instance `Resource` ARN pattern matching yet (`ResourceArnBuilder` returns `*` for `ec2`), so EC2 policies that need to be tag-scoped must express that scoping entirely through the `Condition` block rather than the `Resource` pattern.
 

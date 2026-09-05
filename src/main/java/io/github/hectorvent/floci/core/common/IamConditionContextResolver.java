@@ -72,6 +72,7 @@ public class IamConditionContextResolver {
         return switch (credentialScope) {
             case "s3" -> s3ConditionContext(action, ctx);
             case "ec2" -> ec2ConditionContext(action, ctx);
+            case "iam" -> iamConditionContext(action, ctx);
             default -> null;
         };
     }
@@ -221,6 +222,43 @@ public class IamConditionContextResolver {
         for (Tag tag : tags) {
             conditions.put("aws:ResourceTag/" + tag.getKey(), tag.getValue());
         }
+    }
+
+    // ─── IAM ─────────────────────────────────────────────────────────────────
+
+    /**
+     * {@code iam:PermissionsBoundary} holds the boundary policy ARN the request is asking to
+     * attach. AWS populates it for exactly the four actions that take a
+     * {@code PermissionsBoundary} parameter, and leaves the key absent when the parameter is
+     * not sent.
+     *
+     * <p>That absence carries the meaning: a policy that allows {@code iam:CreateRole} only
+     * under {@code StringEquals iam:PermissionsBoundary} has no key to match against when the
+     * caller omits the boundary, so the statement does not apply and the call is denied. That
+     * is the whole point of the guardrail — permission to create principals, but only
+     * principals that stay inside the boundary.
+     */
+    private Map<String, String> iamConditionContext(String action, ContainerRequestContext ctx) {
+        return switch (action) {
+            case "iam:CreateRole", "iam:CreateUser",
+                 "iam:PutRolePermissionsBoundary", "iam:PutUserPermissionsBoundary" ->
+                    iamPermissionsBoundaryConditionContext(ctx);
+            default -> null;
+        };
+    }
+
+    private Map<String, String> iamPermissionsBoundaryConditionContext(ContainerRequestContext ctx) {
+        // The SDKs and CLI send Query-protocol parameters in the form body, but the parameter is
+        // legal in the URL query string too, so check both — the same order IamActionRegistry uses
+        // to find Action.
+        String boundary = ctx.getUriInfo().getQueryParameters().getFirst("PermissionsBoundary");
+        if (boundary == null || boundary.isBlank()) {
+            boundary = readFormParams(ctx).get("PermissionsBoundary");
+        }
+        if (boundary == null || boundary.isBlank()) {
+            return null;
+        }
+        return Map.of("iam:PermissionsBoundary", boundary);
     }
 
     // ─── Shared body-reading helpers ────────────────────────────────────────

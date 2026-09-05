@@ -298,4 +298,62 @@ class IamConditionContextResolverTest {
                 evaluator.evaluate(CallerContext.of(List.of(policy)), null,
                         "s3:GetBucketTagging", "*", mismatchedCtx));
     }
+
+    // ─── IAM permissions boundary ──────────────────────────────────────────
+
+    @Test
+    void resolvesIamPermissionsBoundaryFromTheRequestParameter() {
+        String boundary = "arn:aws:iam::000000000000:policy/wp-permission-boundary";
+        Map<String, String> ctx = resolver.resolve("iam", "iam:CreateRole",
+                formRequest("/", "Action=CreateRole&RoleName=r&PermissionsBoundary="
+                        + java.net.URLEncoder.encode(boundary, StandardCharsets.UTF_8)));
+        assertEquals(Map.of("iam:PermissionsBoundary", boundary), ctx);
+    }
+
+    @Test
+    void iamPermissionsBoundaryIsAbsentWhenTheRequestDoesNotCarryOne() {
+        assertNull(resolver.resolve("iam", "iam:CreateRole",
+                formRequest("/", "Action=CreateRole&RoleName=r")));
+    }
+
+    @Test
+    void resolvesIamPermissionsBoundaryForTheOtherThreeBoundaryActions() {
+        String boundary = "arn:aws:iam::000000000000:policy/b";
+        for (String action : List.of("iam:CreateUser",
+                                     "iam:PutRolePermissionsBoundary",
+                                     "iam:PutUserPermissionsBoundary")) {
+            Map<String, String> ctx = resolver.resolve("iam", action,
+                    formRequest("/", "PermissionsBoundary="
+                            + java.net.URLEncoder.encode(boundary, StandardCharsets.UTF_8)));
+            assertEquals(Map.of("iam:PermissionsBoundary", boundary), ctx, action);
+        }
+    }
+
+    @Test
+    void iamActionsWithoutABoundaryParameterGetNoContext() {
+        assertNull(resolver.resolve("iam", "iam:GetRole", formRequest("/", "Action=GetRole&RoleName=r")));
+    }
+
+    @Test
+    void boundaryConditionAllowsTheMatchingBoundaryAndDeniesAnUnboundedCreateRole() {
+        String boundary = "arn:aws:iam::000000000000:policy/wp-permission-boundary";
+        String policy = """
+                {"Version":"2012-10-17","Statement":[
+                  {"Effect":"Allow","Action":"iam:CreateRole","Resource":"*",
+                   "Condition":{"StringEquals":{"iam:PermissionsBoundary":"%s"}}}
+                ]}""".formatted(boundary);
+
+        Map<String, String> withBoundary = resolver.resolve("iam", "iam:CreateRole",
+                formRequest("/", "Action=CreateRole&RoleName=r&PermissionsBoundary="
+                        + java.net.URLEncoder.encode(boundary, StandardCharsets.UTF_8)));
+        assertEquals(Decision.ALLOW,
+                evaluator.evaluate(CallerContext.of(List.of(policy)), null,
+                        "iam:CreateRole", "*", withBoundary));
+
+        Map<String, String> withoutBoundary = resolver.resolve("iam", "iam:CreateRole",
+                formRequest("/", "Action=CreateRole&RoleName=r"));
+        assertEquals(Decision.DENY,
+                evaluator.evaluate(CallerContext.of(List.of(policy)), null,
+                        "iam:CreateRole", "*", withoutBoundary));
+    }
 }
