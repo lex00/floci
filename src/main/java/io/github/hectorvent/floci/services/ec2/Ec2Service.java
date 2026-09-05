@@ -2068,6 +2068,7 @@ public class Ec2Service implements ContainerTeardown {
         }
         ensureDefaultResources(region);
         getRequiredVpc(region, vpcId);
+        rejectConflictingSubnetCidr(region, vpcId, cidrBlock);
 
         String subnetId = "subnet-" + randomHex(8);
         Subnet subnet = new Subnet();
@@ -2095,6 +2096,70 @@ public class Ec2Service implements ContainerTeardown {
             networkAcls.put(key(region, defaultAcl.getNetworkAclId()), defaultAcl);
         }
         return subnet;
+    }
+
+    /**
+     * Real AWS refuses a subnet whose IPv4 CIDR overlaps another subnet's in the same VPC
+     * (InvalidSubnet.Conflict) - "A subnet CIDR block must not overlap the CIDR block of an
+     * existing subnet in the VPC" per EC2's own CreateSubnet documentation. CreateSubnet carries
+     * no idempotency token, so this overlap check is the only thing standing between a duplicate
+     * wire call - e.g. an SDK-level transport retry after a lost response, which the AWS SDK
+     * issues on I/O failures without regard to whether the operation is idempotent - and a second,
+     * live, unrecorded subnet. Without this check floci accepted an unbounded number of subnets at
+     * the identical CIDR, which is how choudoufu issue #672's stock-side "18 vs 19" discrepancy
+     * happened: a retried CreateSubnet succeeded twice here where real AWS would have rejected the
+     * second attempt as a conflict. IPv6-only requests (no IPv4 CIDR) are not checked here.
+     */
+    private void rejectConflictingSubnetCidr(String region, String vpcId, String cidrBlock) {
+        long[] requested = parseIpv4CidrRange(cidrBlock);
+        if (requested == null) {
+            return;
+        }
+        boolean conflict = subnets.scan(k -> true).stream()
+                .filter(s -> s.getRegion().equals(region) && vpcId.equals(s.getVpcId()))
+                .anyMatch(s -> {
+                    long[] existing = parseIpv4CidrRange(s.getCidrBlock());
+                    return existing != null && requested[0] <= existing[1] && existing[0] <= requested[1];
+                });
+        if (conflict) {
+            throw new AwsException("InvalidSubnet.Conflict",
+                    "The CIDR '" + cidrBlock + "' conflicts with another subnet", 400);
+        }
+    }
+
+    /** Returns {networkAddress, broadcastAddress} as unsigned 32-bit longs, or null if not a parseable IPv4 CIDR. */
+    private static long[] parseIpv4CidrRange(String cidr) {
+        if (cidr == null || cidr.isBlank()) {
+            return null;
+        }
+        String[] cidrParts = cidr.split("/");
+        if (cidrParts.length != 2) {
+            return null;
+        }
+        String[] octets = cidrParts[0].split("\\.");
+        if (octets.length != 4) {
+            return null;
+        }
+        try {
+            long ip = 0;
+            for (String octet : octets) {
+                int value = Integer.parseInt(octet);
+                if (value < 0 || value > 255) {
+                    return null;
+                }
+                ip = (ip << 8) | value;
+            }
+            int prefix = Integer.parseInt(cidrParts[1]);
+            if (prefix < 0 || prefix > 32) {
+                return null;
+            }
+            long mask = prefix == 0 ? 0L : (0xFFFFFFFFL << (32 - prefix)) & 0xFFFFFFFFL;
+            long network = ip & mask;
+            long broadcast = network | (~mask & 0xFFFFFFFFL);
+            return new long[] { network, broadcast };
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     public List<Subnet> describeSubnets(String region, List<String> subnetIds, Map<String, List<String>> filters) {
