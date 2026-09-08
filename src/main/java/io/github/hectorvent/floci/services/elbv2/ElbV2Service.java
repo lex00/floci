@@ -752,22 +752,44 @@ public class ElbV2Service {
 
     // ── Targets ───────────────────────────────────────────────────────────────
 
+    /**
+     * Registers targets, replacing any already registered under the same id and port.
+     *
+     * <p>Both this and {@link #deregisterTargets} read-modify-write one target group's target
+     * list, which every request thread touching that target group shares. Real ELBv2 applies
+     * concurrent RegisterTargets calls on one target group so that all of them survive, and a
+     * client has no way to tell it did not: RegisterTargets returns an empty success body, so
+     * a lost registration is invisible until something reads the target back.
+     *
+     * <p>Taking the target group's monitor and swapping the list by copy-on-write is what
+     * makes that true here. A reader holding no lock then sees the list before the write or
+     * after it, never an {@link ArrayList} mid-{@code add}. The re-put into the region map is
+     * the publication barrier, exactly as it is for the per-bucket S3 configurations.
+     */
     public void registerTargets(String region, String tgArn, List<TargetDescription> targets) {
         TargetGroup tg = requireTargetGroup(region, tgArn);
-        List<TargetDescription> existing = tg.getTargets();
-        for (TargetDescription t : targets) {
-            // replace if same id+port already registered
-            existing.removeIf(e -> e.getId().equals(t.getId()) && Objects.equals(e.getPort(), t.getPort()));
-            existing.add(t);
+        synchronized (tg) {
+            List<TargetDescription> next = new ArrayList<>(tg.getTargets());
+            for (TargetDescription t : targets) {
+                // replace if same id+port already registered
+                next.removeIf(e -> e.getId().equals(t.getId()) && Objects.equals(e.getPort(), t.getPort()));
+                next.add(t);
+            }
+            tg.setTargets(next);
         }
         persistRegion(targetGroups, region);
         healthChecker.addTargets(tgArn, targets, tg);
     }
 
+    /** Deregisters targets. Synchronised and copy-on-write for the reason {@link #registerTargets} gives. */
     public void deregisterTargets(String region, String tgArn, List<TargetDescription> targets) {
         TargetGroup tg = requireTargetGroup(region, tgArn);
-        for (TargetDescription t : targets) {
-            tg.getTargets().removeIf(e -> e.getId().equals(t.getId()) && Objects.equals(e.getPort(), t.getPort()));
+        synchronized (tg) {
+            List<TargetDescription> next = new ArrayList<>(tg.getTargets());
+            for (TargetDescription t : targets) {
+                next.removeIf(e -> e.getId().equals(t.getId()) && Objects.equals(e.getPort(), t.getPort()));
+            }
+            tg.setTargets(next);
         }
         persistRegion(targetGroups, region);
         healthChecker.removeTargets(tgArn, targets, tg);
