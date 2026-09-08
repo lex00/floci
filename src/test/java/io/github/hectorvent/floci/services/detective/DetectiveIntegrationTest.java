@@ -1,11 +1,14 @@
 package io.github.hectorvent.floci.services.detective;
 
+import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.services.organizations.OrganizationsService;
 import io.github.hectorvent.floci.testing.RestAssuredJsonUtils;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.equalTo;
@@ -13,8 +16,10 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @QuarkusTest
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class DetectiveIntegrationTest {
     private static final String AUTH = "AWS4-HMAC-SHA256 Credential=AKID/20260904/us-east-1/detective/aws4_request";
+    private static final String MANAGEMENT_ACCOUNT = "000000000000";
 
     @Inject
     OrganizationsService organizationsService;
@@ -24,9 +29,24 @@ class DetectiveIntegrationTest {
         RestAssuredJsonUtils.configureAwsContentTypes();
     }
 
+    /**
+     * The lifecycle test puts the default account into an organization. Other suites on the same
+     * JVM create their own, so the organization must not outlive this class.
+     */
+    @AfterAll
+    void deleteTheOrganizationTheLifecycleTestCreated() {
+        try {
+            organizationsService.deleteOrganization(MANAGEMENT_ACCOUNT);
+        } catch (AwsException e) {
+            if (!"AWSOrganizationsNotInUseException".equals(e.getErrorCode())) {
+                throw e;
+            }
+        }
+    }
+
     @Test
     void organizationGraphAndMemberLifecycleMatchesAwsContract() {
-        organizationsService.createOrganization("000000000000", "ALL");
+        organizationsService.createOrganization(MANAGEMENT_ACCOUNT, "ALL");
         String enableBody = post("/orgs/enableAdminAccount", "{\"AccountId\":\"000000000000\"}")
                 .statusCode(200).extract().asString();
         assertTrue(enableBody.isEmpty());
