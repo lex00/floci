@@ -18,6 +18,7 @@ import jakarta.inject.Inject;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 
 @ApplicationScoped
@@ -116,13 +117,13 @@ public class ElbV2Service {
 
         for (Map<String, Listener> regionListeners : listeners.values()) {
             for (Listener listener : regionListeners.values()) {
-                lbToListeners.computeIfAbsent(listener.getLoadBalancerArn(), k -> new ArrayList<>())
+                lbToListeners.computeIfAbsent(listener.getLoadBalancerArn(), k -> new CopyOnWriteArrayList<>())
                         .add(listener.getListenerArn());
             }
         }
         for (Map<String, Rule> regionRules : rules.values()) {
             for (Rule rule : regionRules.values()) {
-                listenerToRules.computeIfAbsent(rule.getListenerArn(), k -> new ArrayList<>())
+                listenerToRules.computeIfAbsent(rule.getListenerArn(), k -> new CopyOnWriteArrayList<>())
                         .add(rule.getRuleArn());
             }
         }
@@ -202,7 +203,7 @@ public class ElbV2Service {
 
         regionLbs.put(arn, lb);
         loadBalancers.put(region, regionLbs);
-        lbToListeners.put(arn, new ArrayList<>());
+        lbToListeners.put(arn, new CopyOnWriteArrayList<>());
         if (!initialTags.isEmpty()) {
             tags.put(arn, new LinkedHashMap<>(initialTags));
         }
@@ -488,14 +489,14 @@ public class ElbV2Service {
 
         regionListeners.put(listenerArn, listener);
         listeners.put(region, regionListeners);
-        lbToListeners.computeIfAbsent(lbArn, k -> new ArrayList<>()).add(listenerArn);
+        lbToListeners.computeIfAbsent(lbArn, k -> new CopyOnWriteArrayList<>()).add(listenerArn);
 
         // auto-create the default rule
         Rule defaultRule = buildDefaultRule(region, listenerArn, lb, lbId, listenerId, defaultActions);
         Map<String, Rule> regionRules = rules.computeIfAbsent(region, k -> new ConcurrentHashMap<>());
         regionRules.put(defaultRule.getRuleArn(), defaultRule);
         rules.put(region, regionRules);
-        listenerToRules.computeIfAbsent(listenerArn, k -> new ArrayList<>()).add(defaultRule.getRuleArn());
+        listenerToRules.computeIfAbsent(listenerArn, k -> new CopyOnWriteArrayList<>()).add(defaultRule.getRuleArn());
         for (Action action : defaultRule.getActions()) {
             linkTgToLb(action, lbArn);
         }
@@ -604,26 +605,35 @@ public class ElbV2Service {
 
     // ── Rules ─────────────────────────────────────────────────────────────────
 
+    /**
+     * Creates a listener rule at the priority asked for, or refuses with {@code PriorityInUse}
+     * when a rule on the same listener already holds it - the one condition real ELBv2 raises
+     * that error for.
+     *
+     * <p>Reading the listener's rules for a taken priority and inserting the new rule have to
+     * happen under the listener's monitor together. Apart, two creates asking for the same
+     * priority can both read it free and both land, leaving a listener holding one priority
+     * twice, which AWS never produces.
+     *
+     * <p>The index the check walks is a {@link CopyOnWriteArrayList} for the same reason
+     * {@link #registerTargets} copies on write: readers here hold no lock. Appending to a plain
+     * {@link ArrayList} while another request thread walked it threw
+     * {@link java.util.ConcurrentModificationException} out of this check and out of
+     * {@link #getListenerRules}, and the emulator answered HTTP 500 {@code InternalFailure} -
+     * which the AWS SDKs retry. Thrown from {@link #getListenerRules} the rule was already
+     * committed, so the retry found the priority its own first attempt had inserted and came
+     * back {@code PriorityInUse} for a priority nothing else had asked for. That is
+     * INTENTIUS/choudoufu#673: terraform issues terraform-aws-modules/alb complete-alb's
+     * per-listener priorities 3, 4 and 5000 at once under its default parallelism of 10, and
+     * the apply fails naming a conflict the configuration does not contain.
+     */
     public Rule createRule(String region, String listenerArn, List<RuleCondition> conditions,
                             int priority, List<Action> actions, Map<String, String> initialTags) {
-        requireListener(region, listenerArn);
+        Listener listener = requireListener(region, listenerArn);
         if (priority < 1 || priority > 50000) {
             throw new AwsException("ValidationError", "Priority must be between 1 and 50000.", 400);
         }
 
-        Map<String, Rule> regionRules = rules.computeIfAbsent(region, k -> new ConcurrentHashMap<>());
-        List<String> existingRuleArns = listenerToRules.getOrDefault(listenerArn, List.of());
-        String priorityStr = String.valueOf(priority);
-        boolean priorityTaken = existingRuleArns.stream()
-                .map(regionRules::get)
-                .filter(Objects::nonNull)
-                .anyMatch(r -> priorityStr.equals(r.getPriority()));
-        if (priorityTaken) {
-            throw new AwsException("PriorityInUse",
-                    "The specified priority is already in use.", 400);
-        }
-
-        Listener listener = requireListener(region, listenerArn);
         LoadBalancer lb = requireLoadBalancer(region, listener.getLoadBalancerArn());
         String lbType = lb.getType() != null ? lb.getType() : "application";
         String typePrefix = lbTypePrefix(lbType);
@@ -631,6 +641,7 @@ public class ElbV2Service {
         String listenerId = arnId(listenerArn);
         String ruleId = randomHex16();
         String ruleArn = AwsArnUtils.Arn.of("elasticloadbalancing", region, regionResolver.getAccountId(), "listener-rule/" + typePrefix + "/" + lb.getLoadBalancerName() + "/" + lbId + "/" + listenerId + "/" + ruleId).toString();
+        String priorityStr = String.valueOf(priority);
 
         Rule rule = new Rule();
         rule.setRuleArn(ruleArn);
@@ -640,9 +651,21 @@ public class ElbV2Service {
         rule.setActions(actions != null ? new ArrayList<>(actions) : new ArrayList<>());
         rule.setDefault(false);
 
-        regionRules.put(ruleArn, rule);
-        rules.put(region, regionRules);
-        listenerToRules.computeIfAbsent(listenerArn, k -> new ArrayList<>()).add(ruleArn);
+        synchronized (listener) {
+            Map<String, Rule> regionRules = rules.computeIfAbsent(region, k -> new ConcurrentHashMap<>());
+            boolean priorityTaken = listenerToRules.getOrDefault(listenerArn, List.of()).stream()
+                    .map(regionRules::get)
+                    .filter(Objects::nonNull)
+                    .anyMatch(r -> priorityStr.equals(r.getPriority()));
+            if (priorityTaken) {
+                throw new AwsException("PriorityInUse",
+                        "The specified priority is already in use.", 400);
+            }
+
+            regionRules.put(ruleArn, rule);
+            rules.put(region, regionRules);
+            listenerToRules.computeIfAbsent(listenerArn, k -> new CopyOnWriteArrayList<>()).add(ruleArn);
+        }
 
         // update TG → LB index for all target group actions
         for (Action a : rule.getActions()) {
