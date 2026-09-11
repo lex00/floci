@@ -107,21 +107,55 @@ public class ResourceGroupsTaggingService implements Resettable {
      *
      * <p>On an ARN present in both, the explicitly-tagged value wins, since a {@code TagResources}
      * call is the more recent statement of intent.
+     *
+     * <p>IAM resources are dropped from the merge regardless of source: real AWS's Resource
+     * Groups Tagging API does not serve IAM through {@code GetResources}, {@code GetTagKeys} or
+     * {@code GetTagValues}, even though {@code TagResources}/{@code UntagResources} accept IAM
+     * ARNs (instance-profile, mfa, oidc-provider, policy, role, saml-provider,
+     * server-certificate, user) and this service's own {@code store} does hold them — see
+     * {@link #isServedByTaggingApi}.
      */
     private Collection<ResourceTagMapping> allMappings() {
         Map<String, ResourceTagMapping> merged = new LinkedHashMap<>();
         if (scanner != null) {
             scanner.scan().forEach((arn, tags) -> {
+                if (!isServedByTaggingApi(arn)) return;
                 ResourceTagMapping mapping = new ResourceTagMapping(arn);
                 mapping.getTags().putAll(tags);
                 merged.put(arn, mapping);
             });
         }
         for (ResourceTagMapping explicit : store.values()) {
+            if (!isServedByTaggingApi(explicit.getResourceArn())) continue;
             merged.computeIfAbsent(explicit.getResourceArn(), ResourceTagMapping::new)
                     .getTags().putAll(explicit.getTags());
         }
         return merged.values();
+    }
+
+    /**
+     * Whether {@code GetResources}/{@code GetTagKeys}/{@code GetTagValues} may serve this ARN.
+     *
+     * <p>Real AWS never returns IAM resources (roles, policies, users, groups, instance
+     * profiles, ...) from the Resource Groups Tagging API's read side, regardless of how the
+     * resource was tagged — natively via {@code iam:TagRole}/{@code TagPolicy}/etc., or through
+     * this API's own {@code TagResources}, which the docs say DOES accept the eight IAM resource
+     * types (instance-profile, mfa, oidc-provider, policy, role, saml-provider,
+     * server-certificate, user). An IAM ARN tagged through {@code TagResources} stays recorded in
+     * {@link #store} — {@code UntagResources} must still be able to find and remove it, and a
+     * real {@code TagResources} call against an IAM ARN of one of those eight types genuinely
+     * succeeds — it is only ever filtered out of the read-side responses here.
+     *
+     * <p>Malformed ARNs are left alone (served as before) rather than silently dropped; a bad ARN
+     * is a different problem from this one.
+     */
+    private static boolean isServedByTaggingApi(String arn) {
+        try {
+            return !"iam".equalsIgnoreCase(AwsArnUtils.parse(arn).service());
+        }
+        catch (IllegalArgumentException e) {
+            return true;
+        }
     }
 
     // ─── GetResources ──────────────────────────────────────────────────────────

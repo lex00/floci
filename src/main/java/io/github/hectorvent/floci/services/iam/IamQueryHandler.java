@@ -17,9 +17,12 @@ import jakarta.ws.rs.core.MultivaluedMap;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -608,12 +611,20 @@ public class IamQueryHandler {
     }
 
     private Response handleListRoles(MultivaluedMap<String, String> params) {
-        List<IamRole> roleList = iamService.listRoles(getParam(params, "PathPrefix"));
+        List<IamRole> roleList = iamService.listRoles(getParam(params, "PathPrefix")).stream()
+                .sorted(Comparator.comparing(IamRole::getRoleName))
+                .toList();
+        PageSlice<IamRole> page = paginate(roleList,
+                getParam(params, "Marker"), getIntParam(params, "MaxItems", 0));
+
         var xml = new XmlBuilder().start("Roles");
-        for (IamRole r : roleList) {
+        for (IamRole r : page.items()) {
             xml.start("member").raw(roleXml(r, false)).end("member");
         }
-        xml.end("Roles").elem("IsTruncated", false);
+        xml.end("Roles").elem("IsTruncated", page.truncated());
+        if (page.marker() != null) {
+            xml.elem("Marker", page.marker());
+        }
         return Response.ok(AwsQueryResponse.envelope("ListRoles", AwsNamespaces.IAM, xml.build())).build();
     }
 
@@ -687,12 +698,20 @@ public class IamQueryHandler {
     // tags unset and does reach ListUserTags, which is why that one comes back tagged.
     private Response handleListPolicies(MultivaluedMap<String, String> params) {
         List<IamPolicy> policyList = iamService.listPolicies(
-                getParam(params, "Scope"), getParam(params, "PathPrefix"));
+                getParam(params, "Scope"), getParam(params, "PathPrefix")).stream()
+                .sorted(Comparator.comparing(IamPolicy::getArn))
+                .toList();
+        PageSlice<IamPolicy> page = paginate(policyList,
+                getParam(params, "Marker"), getIntParam(params, "MaxItems", 0));
+
         var xml = new XmlBuilder().start("Policies");
-        for (IamPolicy p : policyList) {
+        for (IamPolicy p : page.items()) {
             xml.start("member").raw(policyXml(p, false)).end("member");
         }
-        xml.end("Policies").elem("IsTruncated", false);
+        xml.end("Policies").elem("IsTruncated", page.truncated());
+        if (page.marker() != null) {
+            xml.elem("Marker", page.marker());
+        }
         return Response.ok(AwsQueryResponse.envelope("ListPolicies", AwsNamespaces.IAM, xml.build())).build();
     }
 
@@ -748,12 +767,20 @@ public class IamQueryHandler {
     }
 
     private Response handleListPolicyVersions(MultivaluedMap<String, String> params) {
-        List<PolicyVersion> versions = iamService.listPolicyVersions(getParam(params, "PolicyArn"));
+        List<PolicyVersion> versions = iamService.listPolicyVersions(getParam(params, "PolicyArn")).stream()
+                .sorted(Comparator.comparing(PolicyVersion::getVersionId))
+                .toList();
+        PageSlice<PolicyVersion> page = paginate(versions,
+                getParam(params, "Marker"), getIntParam(params, "MaxItems", 0));
+
         var xml = new XmlBuilder().start("Versions");
-        for (PolicyVersion v : versions) {
+        for (PolicyVersion v : page.items()) {
             xml.start("member").raw(policyVersionXml(v)).end("member");
         }
-        xml.end("Versions").elem("IsTruncated", false);
+        xml.end("Versions").elem("IsTruncated", page.truncated());
+        if (page.marker() != null) {
+            xml.elem("Marker", page.marker());
+        }
         return Response.ok(AwsQueryResponse.envelope("ListPolicyVersions", AwsNamespaces.IAM, xml.build())).build();
     }
 
@@ -837,9 +864,13 @@ public class IamQueryHandler {
 
     private Response handleListAttachedRolePolicies(MultivaluedMap<String, String> params) {
         List<IamPolicy> policyList = iamService.listAttachedRolePolicies(
-                getParam(params, "RoleName"), getParam(params, "PathPrefix"));
+                getParam(params, "RoleName"), getParam(params, "PathPrefix")).stream()
+                .sorted(Comparator.comparing(IamPolicy::getArn))
+                .toList();
+        PageSlice<IamPolicy> page = paginate(policyList,
+                getParam(params, "Marker"), getIntParam(params, "MaxItems", 0));
         return Response.ok(AwsQueryResponse.envelope("ListAttachedRolePolicies", AwsNamespaces.IAM,
-                attachedPoliciesXml(policyList))).build();
+                attachedPoliciesXml(page.items(), page.truncated(), page.marker()))).build();
     }
 
     // =========================================================================
@@ -1229,6 +1260,10 @@ public class IamQueryHandler {
     }
 
     private String attachedPoliciesXml(List<IamPolicy> policyList) {
+        return attachedPoliciesXml(policyList, false, null);
+    }
+
+    private String attachedPoliciesXml(List<IamPolicy> policyList, boolean isTruncated, String marker) {
         var xml = new XmlBuilder().start("AttachedPolicies");
         for (IamPolicy p : policyList) {
             xml.start("member")
@@ -1236,7 +1271,11 @@ public class IamQueryHandler {
                .elem("PolicyArn", p.getArn())
                .end("member");
         }
-        return xml.end("AttachedPolicies").elem("IsTruncated", false).build();
+        xml.end("AttachedPolicies").elem("IsTruncated", isTruncated);
+        if (marker != null) {
+            xml.elem("Marker", marker);
+        }
+        return xml.build();
     }
 
     private String inlinePolicyNamesXml(List<String> names) {
@@ -1322,6 +1361,52 @@ public class IamQueryHandler {
             }
         }
         return context;
+    }
+
+    // =========================================================================
+    // Marker-based pagination
+    //
+    // AWS IAM's list operations (ListPolicies, ListRoles, ListAttachedRolePolicies,
+    // ListPolicyVersions, ...) page at MaxItems (default and max 100 per the IAM API
+    // reference) and hand back IsTruncated + Marker for the next call. floci used to
+    // return every matching item in one page with IsTruncated always false, which
+    // hides the truncation behaviour any AWS-facing test or tool has to handle for
+    // an account with more than a page's worth of policies or roles.
+    // =========================================================================
+
+    /** One page of a Marker-paginated list: the slice, whether more remain, and the
+     * opaque marker to pass back for the next page (null when nothing remains). */
+    private record PageSlice<T>(List<T> items, boolean truncated, String marker) {}
+
+    private static final int DEFAULT_MAX_ITEMS = 100;
+
+    private static <T> PageSlice<T> paginate(List<T> all, String marker, int maxItemsParam) {
+        int maxItems = maxItemsParam > 0 ? maxItemsParam : DEFAULT_MAX_ITEMS;
+        int offset = decodeMarker(marker);
+        if (offset < 0 || offset > all.size()) {
+            offset = 0;
+        }
+        int end = Math.min(offset + maxItems, all.size());
+        List<T> page = all.subList(offset, end);
+        boolean truncated = end < all.size();
+        String nextMarker = truncated ? encodeMarker(end) : null;
+        return new PageSlice<>(page, truncated, nextMarker);
+    }
+
+    private static String encodeMarker(int offset) {
+        return Base64.getEncoder().encodeToString(String.valueOf(offset).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static int decodeMarker(String marker) {
+        if (marker == null || marker.isBlank()) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(new String(Base64.getDecoder().decode(marker), StandardCharsets.UTF_8));
+        }
+        catch (RuntimeException e) {
+            return 0;
+        }
     }
 
     private String getParam(MultivaluedMap<String, String> params, String name) {
