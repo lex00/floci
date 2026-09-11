@@ -9,9 +9,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasItems;
+import static org.hamcrest.Matchers.not;
 
 /**
  * {@code GetResources} must see resources tagged through the owning service's own API, not only
@@ -37,6 +39,12 @@ class EstateTaggingIndexIntegrationTest {
 
     private static final String ESTATE_TAG = "estate-index-probe";
     private static final String ROLE_NAME = "estate-index-probe-role";
+    private static final String ROLE_ARN = "arn:aws:iam::000000000000:role/" + ROLE_NAME;
+
+    /** Carried only by the IAM role, tagged natively through CreateRole — never through
+     * TagResources — so GetTagKeys/GetTagValues excluding it proves the exclusion covers the
+     * live-scan source, not just the service's own explicit-tag store. */
+    private static final String IAM_ONLY_TAG_KEY = "estate-index-probe-iam-only";
 
     private static String volumeId;
 
@@ -72,6 +80,8 @@ class EstateTaggingIndexIntegrationTest {
             .formParam("AssumeRolePolicyDocument", "{\"Version\":\"2012-10-17\",\"Statement\":[]}")
             .formParam("Tags.member.1.Key", "tofu-estate")
             .formParam("Tags.member.1.Value", ESTATE_TAG)
+            .formParam("Tags.member.2.Key", IAM_ONLY_TAG_KEY)
+            .formParam("Tags.member.2.Value", "probe")
             .header("Authorization", IAM_AUTH)
         .when()
             .post("/")
@@ -79,10 +89,16 @@ class EstateTaggingIndexIntegrationTest {
             .statusCode(200);
     }
 
-    /** An EC2 model carries an id, not an ARN; the ARN has to be assembled and be the real one. */
+    /**
+     * An EC2 model carries an id, not an ARN; the ARN has to be assembled and be the real one.
+     *
+     * <p>The IAM role is tagged with the same estate tag and would match this filter too, but
+     * real AWS's Resource Groups Tagging API never returns IAM resources from GetResources - see
+     * {@link #getResourcesNeverServesTheIamRoleEvenThoughItCarriesTheEstateTag}.
+     */
     @Test
     @Order(3)
-    void getResourcesFindsBothWithoutAnyTagResourcesCall() {
+    void getResourcesFindsTheVolumeWithoutAnyTagResourcesCall() {
         given()
             .header("X-Amz-Target", TARGET_PREFIX + "GetResources")
             .contentType(CONTENT_TYPE)
@@ -93,9 +109,90 @@ class EstateTaggingIndexIntegrationTest {
             .post("/")
         .then()
             .statusCode(200)
-            .body("ResourceTagMappingList.ResourceARN", hasItems(
-                    "arn:aws:ec2:us-east-1:000000000000:volume/" + volumeId,
-                    "arn:aws:iam::000000000000:role/" + ROLE_NAME));
+            .body("ResourceTagMappingList.ResourceARN",
+                    hasItem("arn:aws:ec2:us-east-1:000000000000:volume/" + volumeId));
+    }
+
+    /**
+     * Regression gate for floci returning IAM resources from GetResources: real AWS never does,
+     * for any IAM resource type, no matter how it was tagged (natively here, through CreateRole's
+     * own Tags parameter). See lex00/floci's tagging-api-iam-and-pagination issue
+     * (INTENTIUS/choudoufu#1045, INTENTIUS/choudoufu#1046) for the choudoufu-side evidence: two
+     * of its tests hardcode this exact fact about real AWS and failed against a floci image that
+     * served IAM here.
+     */
+    @Test
+    @Order(11)
+    void getResourcesNeverServesTheIamRoleEvenThoughItCarriesTheEstateTag() {
+        given()
+            .header("X-Amz-Target", TARGET_PREFIX + "GetResources")
+            .contentType(CONTENT_TYPE)
+            .body("""
+                {"TagFilters": [{"Key": "tofu-estate", "Values": ["%s"]}]}
+                """.formatted(ESTATE_TAG))
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("ResourceTagMappingList.ResourceARN", not(hasItem(ROLE_ARN)));
+    }
+
+    /** An explicit {@code iam:role} type filter must come back empty, not just miss the estate tag. */
+    @Test
+    @Order(12)
+    void getResourcesResourceTypeFilterForIamRoleFindsNothing() {
+        given()
+            .header("X-Amz-Target", TARGET_PREFIX + "GetResources")
+            .contentType(CONTENT_TYPE)
+            .body("""
+                {"ResourceTypeFilters": ["iam:role"]}
+                """)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("ResourceTagMappingList", empty());
+    }
+
+    /**
+     * {@code GetTagKeys} must not surface a key that only an IAM resource carries - proving the
+     * exclusion covers the live estate-wide scan ({@link io.github.hectorvent.floci.core.common.TaggedResourceScanner}),
+     * not only resources tagged through this API's own {@code TagResources}.
+     */
+    @Test
+    @Order(13)
+    void getTagKeysNeverIncludesAKeyOnlyTheIamRoleCarries() {
+        given()
+            .header("X-Amz-Target", TARGET_PREFIX + "GetTagKeys")
+            .contentType(CONTENT_TYPE)
+            .body("{}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("TagKeys", not(hasItem(IAM_ONLY_TAG_KEY)));
+    }
+
+    /**
+     * {@code TagResources} itself must keep accepting an IAM ARN: real AWS's docs list role among
+     * the eight IAM resource types {@code TagResources}/{@code UntagResources} support, even
+     * though the read side never serves IAM. This is the other half of the fix - only the
+     * read-side methods exclude IAM, not the write side.
+     */
+    @Test
+    @Order(14)
+    void tagResourcesStillAcceptsAnIamRoleArn() {
+        given()
+            .header("X-Amz-Target", TARGET_PREFIX + "TagResources")
+            .contentType(CONTENT_TYPE)
+            .body("""
+                {"ResourceARNList": ["%s"], "Tags": {"via-tag-resources": "yes"}}
+                """.formatted(ROLE_ARN))
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("FailedResourcesMap.size()", equalTo(0));
     }
 
     @Test
