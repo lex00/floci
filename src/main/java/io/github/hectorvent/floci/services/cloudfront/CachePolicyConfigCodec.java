@@ -174,8 +174,10 @@ public final class CachePolicyConfigCodec {
         XmlBuilder xml = new XmlBuilder().start(blockName)
                 .elem(behaviorName, String.valueOf(block.get(behaviorName)));
         List<?> items = block.get(namesName) instanceof List<?> list ? list : List.of();
-        // Quantity is required whenever the names element is present, and AWS reports the element
-        // with Quantity 0 rather than omitting it once a behavior that takes names is in use.
+        // The names element itself is optional on each *Config shape, so a behavior that selects no
+        // names carries no Headers, Cookies or QueryStrings block at all. Inside the block Quantity
+        // is required and Items may be dropped, which is what "If Quantity is 0, you can omit Items"
+        // means, but that case does not arise here because an empty list writes no block.
         if (!items.isEmpty()) {
             xml.start(namesName).elem("Quantity", String.valueOf(items.size())).start("Items");
             items.forEach(item -> xml.elem("Name", String.valueOf(item)));
