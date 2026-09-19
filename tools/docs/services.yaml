@@ -237,6 +237,14 @@ services:
       - TagResourceByBody
       - TagResourcePut
       - UntagResourceByQuery
+  - service: ivs
+    doc: docs/services/ivs.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/ivs/IvsController.java, mode: rest }
+  - service: ivschat
+    doc: docs/services/ivschat.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/ivschat/IvschatController.java, mode: rest }
   - service: kinesis
     doc: docs/services/kinesis.md
     sources:

@@ -91,6 +91,10 @@ floci:
         flush-interval-ms: 60000
       lakeformation:
         flush-interval-ms: 60000
+      ivs:
+        flush-interval-ms: 60000
+      ivschat:
+        flush-interval-ms: 60000
 
   auth:
     validate-signatures: false
@@ -475,6 +479,10 @@ floci:
     aps:
       enabled: true
     lakeformation:
+      enabled: true
+    ivs:
+      enabled: true
+    ivschat:
       enabled: true
     tagging:
       enabled: true
