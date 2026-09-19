@@ -1188,8 +1188,50 @@ public class Ec2ContainerManager {
         if (publicAddress == null) {
             return;
         }
+        // A loopback address is the no-routable-container-address case, and reporting it tells any
+        // reader that the instance has no internet connectivity. Substitute a routable-looking
+        // synthetic address there. Where the bridge address really is routable it is kept, because
+        // a reachable address beats a synthetic one.
+        if ("127.0.0.1".equals(publicAddress)) {
+            publicAddress = syntheticPublicIp(instance.getInstanceId());
+        }
         instance.setPublicIpAddress(publicAddress);
-        instance.setPublicDnsName("127.0.0.1".equals(publicAddress) ? "localhost" : publicAddress);
+        instance.setPublicDnsName(publicDnsName(publicAddress));
+    }
+
+    /**
+     * A stable routable-looking address for an instance, derived from its id so it survives a
+     * restart and does not collide across instances in practice. Nothing connects to it. It is
+     * what DescribeInstances, the IMDS public-ipv4 field and CloudFormation's PublicIp attribute
+     * report, and readers judge internet reachability from it.
+     */
+    /** Matches the configured default, and stands in when configuration yields nothing usable. */
+    static final String DEFAULT_PUBLIC_IP_PREFIX = "54.144";
+
+    String syntheticPublicIp(String instanceId) {
+        String prefix = config.services().ec2().publicIpPrefix();
+        return syntheticPublicIp(prefix == null || prefix.isBlank()
+                ? DEFAULT_PUBLIC_IP_PREFIX : prefix, instanceId);
+    }
+
+    /** The derivation on its own, so it can be exercised without building a container manager. */
+    static String syntheticPublicIp(String prefix, String instanceId) {
+        int hash = (instanceId == null ? 0 : instanceId.hashCode()) & 0x7fffffff;
+        int third = hash % 256;
+        int fourth = 1 + ((hash / 256) % 254); // .0 and .255 are not host addresses
+        return prefix + "." + third + "." + fourth;
+    }
+
+    /**
+     * The literal address by default, since the AWS-shaped name resolves nowhere and a caller that
+     * prefers PublicDnsName over PublicIpAddress would be handed a dead name. Opt in for the AWS
+     * form when a client only cares that the shape is right.
+     */
+    String publicDnsName(String publicIp) {
+        if (!config.services().ec2().awsFaithfulPublicDns()) {
+            return publicIp;
+        }
+        return "ec2-" + publicIp.replace('.', '-') + ".compute-1.amazonaws.com";
     }
 
     static void exposeReachablePrivateAddress(Instance instance, String privateIp) {

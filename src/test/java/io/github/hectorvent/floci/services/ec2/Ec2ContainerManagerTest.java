@@ -655,12 +655,19 @@ class Ec2ContainerManagerTest {
         Ec2ContainerManager manager = managerWithReachability(reachability);
 
         Instance instance = new Instance();
+        instance.setInstanceId("i-unroutable");
         instance.setContainerBridgeIp("192.168.215.2");
 
+        // The resolver still reports loopback, since that is the truth about reachability.
         assertEquals("127.0.0.1", manager.reachablePublicAddress(instance));
+
+        // What gets published is the synthetic address instead. Nothing dials either value, and
+        // loopback reads to anything judging connectivity as proof there is none.
         manager.exposeReachablePublicAddress(instance);
-        assertEquals("127.0.0.1", instance.getPublicIpAddress());
-        assertEquals("localhost", instance.getPublicDnsName());
+        assertEquals(Ec2ContainerManager.syntheticPublicIp(
+                Ec2ContainerManager.DEFAULT_PUBLIC_IP_PREFIX, "i-unroutable"),
+                instance.getPublicIpAddress());
+        assertEquals(instance.getPublicIpAddress(), instance.getPublicDnsName());
     }
 
     @Test

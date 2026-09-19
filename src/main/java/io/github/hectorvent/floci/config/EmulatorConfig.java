@@ -2581,6 +2581,24 @@ public interface EmulatorConfig {
     }
 
     interface Ec2ServiceConfig {
+
+        /**
+         * The /16 that a public-facing instance's reported PublicIpAddress is drawn from when no
+         * routable container address exists. Nothing dials it. SSH reaches an instance through its
+         * published host port and IMDS through the container bridge, so this is a reported value
+         * only. It still has to look routable, because tooling that reads PublicIpAddress reasons
+         * about internet reachability from it, and 127.0.0.1 reads as proof of none.
+         */
+        @WithDefault("54.144")
+        String publicIpPrefix();
+
+        /**
+         * When true, PublicDnsName takes the AWS form, ec2-&lt;dashed-ip&gt;.compute-1.amazonaws.com.
+         * Off by default, because that name resolves nowhere and UserData that reads the IMDS
+         * public-hostname and dials it would break.
+         */
+        @WithDefault("false")
+        boolean awsFaithfulPublicDns();
         @WithDefault("true")
         boolean enabled();
 
