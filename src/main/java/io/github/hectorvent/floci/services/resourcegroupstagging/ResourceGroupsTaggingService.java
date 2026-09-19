@@ -8,6 +8,7 @@ import io.github.hectorvent.floci.services.resourcegroupstagging.model.ResourceT
 import io.github.hectorvent.floci.core.common.Resettable;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 
 import java.nio.charset.StandardCharsets;
@@ -18,14 +19,40 @@ import java.util.stream.Collectors;
 @ApplicationScoped
 public class ResourceGroupsTaggingService implements Resettable {
 
+    /**
+     * The one region whose tag index holds IAM resources. IAM is global and indexes in
+     * {@code us-east-1} only, so an account's tagged IAM policies are invisible to
+     * {@code GetResources} called against any other region.
+     */
+    private static final String IAM_INDEX_REGION = "us-east-1";
+
+    /**
+     * The IAM resource types the index actually serves, as an allowlist of measured types rather
+     * than a denylist of excluded ones. Measured against a live account on 2026-09-14: a tagged
+     * {@code policy} and a tagged {@code instance-profile} come back from {@code GetResources} in
+     * {@code us-east-1}, a tagged {@code role} comes back nowhere, and the remaining types
+     * {@code TagResources} accepts (mfa, oidc-provider, saml-provider, server-certificate, user)
+     * have not been probed. An unprobed type stays out until someone measures it, which is the
+     * lesson of the role generalisation this list replaces.
+     */
+    private static final Set<String> IAM_TYPES_IN_TAG_INDEX = Set.of("policy", "instance-profile");
+
     private final StorageFactory storageFactory;
+    private final Instance<TaggedResourceProvider> taggedResourceProviders;
 
     // region::arn → ResourceTagMapping
     private Map<String, ResourceTagMapping> store = new ConcurrentHashMap<>();
 
     @Inject
-    public ResourceGroupsTaggingService(StorageFactory storageFactory) {
+    public ResourceGroupsTaggingService(StorageFactory storageFactory,
+                                        Instance<TaggedResourceProvider> taggedResourceProviders) {
         this.storageFactory = storageFactory;
+        this.taggedResourceProviders = taggedResourceProviders;
+    }
+
+    /** Constructor for unit tests that exercise the store alone. */
+    public ResourceGroupsTaggingService(StorageFactory storageFactory) {
+        this(storageFactory, null);
     }
 
     @PostConstruct
@@ -89,6 +116,90 @@ public class ResourceGroupsTaggingService implements Resettable {
         store.clear();
     }
 
+    // ─── The served view ───────────────────────────────────────────────────────
+
+    /**
+     * Everything {@code GetResources}, {@code GetTagKeys} and {@code GetTagValues} may show a
+     * caller in {@code region}: this service's own store, merged with the tags each
+     * {@link TaggedResourceProvider} holds on the resources it owns.
+     *
+     * <p>On an ARN present in both, the value written through {@code TagResources} wins, since it
+     * is the more recent statement of intent.
+     */
+    private Collection<ResourceTagMapping> servedMappings(String region) {
+        Map<String, ResourceTagMapping> merged = new LinkedHashMap<>();
+        if (taggedResourceProviders != null) {
+            taggedResourceProviders.forEach(provider -> provider.taggedResources().forEach((arn, tags) -> {
+                if (tags.isEmpty() || !servedInRegion(arn, region)) {
+                    return;
+                }
+                merged.computeIfAbsent(arn, ResourceTagMapping::new).getTags().putAll(tags);
+            }));
+        }
+        for (ResourceTagMapping explicit : store.values()) {
+            if (!servedInRegion(explicit.getResourceArn(), region)) {
+                continue;
+            }
+            merged.computeIfAbsent(explicit.getResourceArn(), ResourceTagMapping::new)
+                    .getTags().putAll(explicit.getTags());
+        }
+        return merged.values();
+    }
+
+    /**
+     * Whether the tag index serves {@code arn} to a caller in {@code region}.
+     *
+     * <p>For most services the ARN answers it: a regional ARN is served in its own region, and an
+     * ARN with an empty region segment (an S3 bucket, say) is served everywhere.
+     *
+     * <p>IAM is the exception, and an empty region segment is exactly why it needs one. IAM ARNs
+     * carry no region, so the rule above would serve them from every region. Measured against a
+     * live account on 2026-09-14, real AWS serves a tagged IAM policy and a tagged IAM instance
+     * profile from {@code us-east-1} alone, and never serves a tagged IAM role from anywhere,
+     * however the tag was written. Serving the two types in every region would be the cheaper fix
+     * and a smaller lie, but a consumer written against it would read the index from eu-west-1,
+     * pass here, and find nothing on AWS. The write side is untouched: {@code TagResources} and
+     * {@code UntagResources} accept IAM ARNs of all eight types, as AWS does, and only the read
+     * side filters.
+     *
+     * <p>Known unfaithful in one respect: on real AWS a freshly created policy or instance profile
+     * takes roughly 500 seconds to appear in the index, and floci serves it at once. A consumer
+     * that creates one of these and reads the index in the same breath passes here and can still
+     * fail against AWS. Only the steady state is emulated, because freezing one observation of an
+     * eventually consistent index into a contract would be its own kind of wrong.
+     *
+     * <p>Malformed input is left alone rather than silently dropped: a string too short to carry a
+     * region segment is served, as it was before this rule existed.
+     */
+    static boolean servedInRegion(String arn, String region) {
+        if (arn == null) {
+            return false;
+        }
+        String[] parts = arn.split(":", 6);
+        if (parts.length < 4) {
+            return true;
+        }
+        if ("iam".equalsIgnoreCase(parts[2])) {
+            return IAM_INDEX_REGION.equals(region) && IAM_TYPES_IN_TAG_INDEX.contains(iamResourceType(parts));
+        }
+        String arnRegion = parts[3];
+        return arnRegion.isEmpty() || arnRegion.equals(region);
+    }
+
+    /**
+     * The resource type of a split IAM ARN: {@code policy} for
+     * {@code arn:aws:iam::0:policy/team/a/ReadOnly}, whose path segments are part of the resource
+     * id and not of the type, and {@code role} for {@code arn:aws:iam::0:role/service-role/web}.
+     */
+    private static String iamResourceType(String[] parts) {
+        if (parts.length < 6) {
+            return "";
+        }
+        String resource = parts[5];
+        int slash = resource.indexOf('/');
+        return slash < 0 ? resource : resource.substring(0, slash);
+    }
+
     // ─── GetResources ──────────────────────────────────────────────────────────
 
     public record TagFilter(String key, List<String> values) {}
@@ -101,16 +212,7 @@ public class ResourceGroupsTaggingService implements Resettable {
                                    String paginationToken,
                                    int resourcesPerPage,
                                    String region) {
-        List<ResourceTagMapping> all = store.values().stream()
-                .filter(m -> {
-                    // Derive the region from the ARN (arn:aws:svc:region:acct:type/id)
-                    String[] parts = m.getResourceArn().split(":", 6);
-                    if (parts.length >= 4) {
-                        String arnRegion = parts[3];
-                        if (!arnRegion.isEmpty() && !arnRegion.equals(region)) return false;
-                    }
-                    return true;
-                })
+        List<ResourceTagMapping> all = servedMappings(region).stream()
                 .filter(m -> resourceArnList == null || resourceArnList.isEmpty()
                         || resourceArnList.contains(m.getResourceArn()))
                 .filter(m -> matchesTagFilters(m, tagFilters))
@@ -169,15 +271,7 @@ public class ResourceGroupsTaggingService implements Resettable {
     // ─── GetTagKeys ────────────────────────────────────────────────────────────
 
     public PageResult getTagKeys(String paginationToken, int maxResults, String region) {
-        List<String> keys = store.values().stream()
-                .filter(m -> {
-                    String[] parts = m.getResourceArn().split(":", 6);
-                    if (parts.length >= 4) {
-                        String arnRegion = parts[3];
-                        if (!arnRegion.isEmpty() && !arnRegion.equals(region)) return false;
-                    }
-                    return true;
-                })
+        List<String> keys = servedMappings(region).stream()
                 .flatMap(m -> m.getTags().keySet().stream())
                 .distinct()
                 .sorted()
@@ -197,15 +291,7 @@ public class ResourceGroupsTaggingService implements Resettable {
     // ─── GetTagValues ──────────────────────────────────────────────────────────
 
     public PageResult getTagValues(String tagKey, String paginationToken, int maxResults, String region) {
-        List<String> values = store.values().stream()
-                .filter(m -> {
-                    String[] parts = m.getResourceArn().split(":", 6);
-                    if (parts.length >= 4) {
-                        String arnRegion = parts[3];
-                        if (!arnRegion.isEmpty() && !arnRegion.equals(region)) return false;
-                    }
-                    return true;
-                })
+        List<String> values = servedMappings(region).stream()
                 .map(m -> m.getTags().get(tagKey))
                 .filter(Objects::nonNull)
                 .distinct()

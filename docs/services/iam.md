@@ -138,6 +138,9 @@ type.
 | AddRoleToInstanceProfile | Adds a role to an instance profile. |
 | RemoveRoleFromInstanceProfile | Removes a role from an instance profile. |
 | ListInstanceProfilesForRole | Lists instance profiles associated with a role. |
+| TagInstanceProfile | Adds tags to an instance profile. |
+| UntagInstanceProfile | Removes tag keys from an instance profile. |
+| ListInstanceProfileTags | Lists tags stored for an instance profile. |
 
 ### Access Keys
 

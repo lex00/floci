@@ -1411,6 +1411,17 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
     // =========================================================================
 
     public InstanceProfile createInstanceProfile(String instanceProfileName, String path) {
+        return createInstanceProfile(instanceProfileName, path, Map.of());
+    }
+
+    /**
+     * {@code CreateInstanceProfile} takes a {@code Tags} list, as {@code CreateRole} and
+     * {@code CreatePolicy} do, and the tags are readable straight back through
+     * {@code ListInstanceProfileTags}. Dropping them on the floor left a caller that tags at
+     * create with an untagged profile and no error.
+     */
+    public InstanceProfile createInstanceProfile(String instanceProfileName, String path,
+                                                 Map<String, String> tags) {
         if (instanceProfiles.get(instanceProfileName).isPresent()) {
             throw new AwsException("EntityAlreadyExists",
                     "Instance profile " + instanceProfileName + " already exists.", 409);
@@ -1419,6 +1430,9 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
         String normalizedPath = normalizePath(path);
         String arn = iamArn("instance-profile", normalizedPath, instanceProfileName);
         InstanceProfile profile = new InstanceProfile(profileId, instanceProfileName, normalizedPath, arn);
+        if (tags != null) {
+            profile.getTags().putAll(tags);
+        }
         instanceProfiles.put(instanceProfileName, profile);
         LOG.infov("Created instance profile: {0}", instanceProfileName);
         return profile;
@@ -2475,6 +2489,11 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
         }
         profile.getTags().putAll(newTags == null ? Map.of() : newTags);
         instanceProfiles.put(instanceProfileName, profile);
+    }
+
+    public Map<String, String> listInstanceProfileTags(String instanceProfileName) {
+        validateIamResourceName(instanceProfileName, "InstanceProfileName");
+        return getInstanceProfile(instanceProfileName).getTags();
     }
 
     public void untagInstanceProfile(String instanceProfileName, List<String> tagKeys) {
