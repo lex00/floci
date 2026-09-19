@@ -820,6 +820,8 @@ floci:
       emit-mode: synchronous
     oam:
       enabled: true
+    mediapackage:
+      enabled: true
     medialive:
       enabled: true
     cloudtrail:
