@@ -141,6 +141,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [DataSync](datasync.md) | `POST /` + `X-Amz-Target: FmrsService.*` | JSON 1.1 | 48 |
 | [IoT Core](iot.md) | `/things/...`, `/endpoint`, rules/policies REST paths | REST JSON | 62 |
 | [IoT Data](iot.md) | `/things/{thingName}/shadow`, MQTT topics | REST JSON | 11 |
+| [MediaLive](medialive.md) | `/prod/multiplexes/*`, `/prod/tags/*` | REST JSON | 9 |
 
 **Lambda, ElastiCache, RDS, MSK, MWAA, ECS, EKS, and OpenSearch** spin up real Docker containers and support IAM authentication and SigV4 request signing, the same auth flow as production AWS. **RDS Data API** executes SQL against the local RDS containers through AWS-compatible REST JSON routes.
 
