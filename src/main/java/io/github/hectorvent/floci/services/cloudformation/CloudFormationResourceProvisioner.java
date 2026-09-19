@@ -647,8 +647,17 @@ public class CloudFormationResourceProvisioner {
         if (bucketName == null || bucketName.isBlank()) {
             bucketName = generatePhysicalName(stackName, r.getLogicalId(), 63, true);
         }
-        s3Service.createBucket(bucketName, region);
+        try {
+            s3Service.createBucket(bucketName, region);
+        } catch (AwsException e) {
+            // A stack update re-provisions the same bucket. Outside the default region CreateBucket
+            // is not idempotent, and the bucket this resource already owns is not a conflict.
+            if (!"BucketAlreadyOwnedByYou".equals(e.getErrorCode()) || !bucketName.equals(r.getPhysicalId())) {
+                throw e;
+            }
+        }
         applyBucketCorsConfiguration(bucketName, props, engine);
+        applyBucketConfiguration(bucketName, props, engine);
         r.setPhysicalId(bucketName);
         r.getAttributes().put("Arn", AwsArnUtils.Arn.of("s3", "", "", bucketName).toString());
         r.getAttributes().put("DomainName", bucketName + ".s3.amazonaws.com");
@@ -4427,7 +4436,188 @@ public class CloudFormationResourceProvisioner {
     }
 
     private void provisionS3BucketPolicy(StackResource r, JsonNode props, CloudFormationTemplateEngine engine) {
-        r.setPhysicalId("bucket-policy-" + UUID.randomUUID().toString().substring(0, 8));
+        String bucketName = resolveOptional(props, "Bucket", engine);
+        if (bucketName != null && !bucketName.isBlank()
+                && props.has("PolicyDocument") && !props.get("PolicyDocument").isNull()) {
+            JsonNode document = props.get("PolicyDocument");
+            // A document given as a JSON string is already the policy; one given as an object
+            // may carry Ref / Fn::GetAtt / Fn::Sub anywhere inside it.
+            String policy = document.isTextual() ? document.asText() : engine.resolveNode(document).toString();
+            s3Service.putBucketPolicy(bucketName, policy);
+            r.getAttributes().put("Bucket", bucketName);
+        }
+        if (r.getPhysicalId() == null || r.getPhysicalId().isBlank()) {
+            r.setPhysicalId("bucket-policy-" + UUID.randomUUID().toString().substring(0, 8));
+        }
+    }
+
+    /**
+     * Applies the configuration properties of {@code AWS::S3::Bucket} other than CORS: versioning,
+     * public-access block, lifecycle, default encryption and tags. Each is translated into the
+     * same XML its S3 API call takes, so the service validates and stores it exactly as it would
+     * a direct {@code PutBucket*} request. A property the template does not declare is left alone.
+     *
+     * <p>Without this the stack reported {@code CREATE_COMPLETE} for a bucket that carried none of
+     * what its template said: versioning off, no lifecycle, no public-access block.
+     */
+    private void applyBucketConfiguration(String bucketName, JsonNode props, CloudFormationTemplateEngine engine) {
+        if (props == null) {
+            return;
+        }
+        JsonNode versioning = props.get("VersioningConfiguration");
+        if (versioning != null && !versioning.isNull()) {
+            String status = resolveOptional(versioning, "Status", engine);
+            if (status != null && !status.isBlank()) {
+                s3Service.putBucketVersioning(bucketName, status);
+            }
+        }
+
+        JsonNode pab = props.get("PublicAccessBlockConfiguration");
+        if (pab != null && !pab.isNull()) {
+            XmlBuilder xml = new XmlBuilder().start("PublicAccessBlockConfiguration", AwsNamespaces.S3);
+            for (String flag : List.of("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")) {
+                String value = resolveOptional(pab, flag, engine);
+                if (value != null && !value.isBlank()) {
+                    xml.elem(flag, value);
+                }
+            }
+            s3Service.putPublicAccessBlock(bucketName, xml.end("PublicAccessBlockConfiguration").build());
+        }
+
+        JsonNode encryption = props.get("BucketEncryption");
+        if (encryption != null && !encryption.isNull() && encryption.has("ServerSideEncryptionConfiguration")) {
+            XmlBuilder xml = new XmlBuilder().start("ServerSideEncryptionConfiguration", AwsNamespaces.S3);
+            for (JsonNode rule : encryption.get("ServerSideEncryptionConfiguration")) {
+                xml.start("Rule");
+                JsonNode byDefault = rule.get("ServerSideEncryptionByDefault");
+                if (byDefault != null && !byDefault.isNull()) {
+                    xml.start("ApplyServerSideEncryptionByDefault");
+                    appendResolved(xml, "SSEAlgorithm", byDefault, "SSEAlgorithm", engine);
+                    appendResolved(xml, "KMSMasterKeyID", byDefault, "KMSMasterKeyID", engine);
+                    xml.end("ApplyServerSideEncryptionByDefault");
+                }
+                appendResolved(xml, "BucketKeyEnabled", rule, "BucketKeyEnabled", engine);
+                xml.end("Rule");
+            }
+            s3Service.putBucketEncryption(bucketName, xml.end("ServerSideEncryptionConfiguration").build());
+        }
+
+        JsonNode lifecycle = props.get("LifecycleConfiguration");
+        if (lifecycle != null && !lifecycle.isNull() && lifecycle.has("Rules")) {
+            s3Service.putBucketLifecycle(bucketName, lifecycleXml(lifecycle.get("Rules"), engine), null);
+        }
+
+        JsonNode tags = props.get("Tags");
+        if (tags != null && tags.isArray() && !tags.isEmpty()) {
+            Map<String, String> tagMap = new LinkedHashMap<>();
+            for (JsonNode tag : tags) {
+                String key = resolveOptional(tag, "Key", engine);
+                if (key != null && !key.isBlank()) {
+                    String value = resolveOptional(tag, "Value", engine);
+                    tagMap.put(key, value == null ? "" : value);
+                }
+            }
+            s3Service.putBucketTagging(bucketName, tagMap);
+        }
+    }
+
+    /** CloudFormation's lifecycle rule property names, spelled as the S3 API's XML. */
+    private String lifecycleXml(JsonNode rules, CloudFormationTemplateEngine engine) {
+        XmlBuilder xml = new XmlBuilder().start("LifecycleConfiguration", AwsNamespaces.S3);
+        for (JsonNode rule : rules) {
+            xml.start("Rule");
+            appendResolved(xml, "ID", rule, "Id", engine);
+            appendResolved(xml, "Status", rule, "Status", engine);
+
+            // S3 requires a Filter (or the deprecated top-level Prefix) on every rule; a rule that
+            // declares neither applies to the whole bucket, which is an empty prefix filter.
+            String prefix = resolveOptional(rule, "Prefix", engine);
+            JsonNode tagFilters = rule.get("TagFilters");
+            boolean hasTags = tagFilters != null && tagFilters.isArray() && !tagFilters.isEmpty();
+            xml.start("Filter");
+            if (hasTags && (tagFilters.size() > 1 || (prefix != null && !prefix.isEmpty()))) {
+                xml.start("And");
+                if (prefix != null && !prefix.isEmpty()) {
+                    xml.elem("Prefix", prefix);
+                }
+                for (JsonNode tag : tagFilters) {
+                    appendLifecycleTag(xml, tag, engine);
+                }
+                xml.end("And");
+            } else if (hasTags) {
+                appendLifecycleTag(xml, tagFilters.get(0), engine);
+            } else {
+                xml.elem("Prefix", prefix == null ? "" : prefix);
+            }
+            xml.end("Filter");
+
+            String expirationDays = resolveOptional(rule, "ExpirationInDays", engine);
+            String expirationDate = resolveOptional(rule, "ExpirationDate", engine);
+            String deleteMarker = resolveOptional(rule, "ExpiredObjectDeleteMarker", engine);
+            if (isSet(expirationDays) || isSet(expirationDate) || isSet(deleteMarker)) {
+                xml.start("Expiration");
+                if (isSet(expirationDays)) {
+                    xml.elem("Days", expirationDays);
+                }
+                if (isSet(expirationDate)) {
+                    xml.elem("Date", expirationDate);
+                }
+                if (isSet(deleteMarker)) {
+                    xml.elem("ExpiredObjectDeleteMarker", deleteMarker);
+                }
+                xml.end("Expiration");
+            }
+            JsonNode noncurrent = rule.get("NoncurrentVersionExpiration");
+            if (noncurrent != null && !noncurrent.isNull()) {
+                xml.start("NoncurrentVersionExpiration");
+                appendResolved(xml, "NoncurrentDays", noncurrent, "NoncurrentDays", engine);
+                appendResolved(xml, "NewerNoncurrentVersions", noncurrent, "NewerNoncurrentVersions", engine);
+                xml.end("NoncurrentVersionExpiration");
+            }
+            JsonNode abort = rule.get("AbortIncompleteMultipartUpload");
+            if (abort != null && !abort.isNull()) {
+                xml.start("AbortIncompleteMultipartUpload");
+                appendResolved(xml, "DaysAfterInitiation", abort, "DaysAfterInitiation", engine);
+                xml.end("AbortIncompleteMultipartUpload");
+            }
+            appendLifecycleTransitions(xml, rule.get("Transitions"), "Transition", "Days", engine);
+            appendLifecycleTransitions(xml, rule.get("NoncurrentVersionTransitions"),
+                    "NoncurrentVersionTransition", "NoncurrentDays", engine);
+            xml.end("Rule");
+        }
+        return xml.end("LifecycleConfiguration").build();
+    }
+
+    private void appendLifecycleTransitions(XmlBuilder xml, JsonNode transitions, String element,
+                                            String daysElement, CloudFormationTemplateEngine engine) {
+        if (transitions == null || !transitions.isArray()) {
+            return;
+        }
+        for (JsonNode transition : transitions) {
+            xml.start(element);
+            appendResolved(xml, daysElement, transition, "TransitionInDays", engine);
+            appendResolved(xml, "StorageClass", transition, "StorageClass", engine);
+            xml.end(element);
+        }
+    }
+
+    private void appendLifecycleTag(XmlBuilder xml, JsonNode tag, CloudFormationTemplateEngine engine) {
+        xml.start("Tag");
+        appendResolved(xml, "Key", tag, "Key", engine);
+        appendResolved(xml, "Value", tag, "Value", engine);
+        xml.end("Tag");
+    }
+
+    private void appendResolved(XmlBuilder xml, String element, JsonNode props, String property,
+                                CloudFormationTemplateEngine engine) {
+        String value = resolveOptional(props, property, engine);
+        if (isSet(value)) {
+            xml.elem(element, value);
+        }
+    }
+
+    private static boolean isSet(String value) {
+        return value != null && !value.isBlank();
     }
 
 
