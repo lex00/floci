@@ -680,6 +680,8 @@ floci:
       emit-mode: synchronous
     oam:
       enabled: true
+    mediapackagev2:
+      enabled: true
     mediapackage:
       enabled: true
     medialive:

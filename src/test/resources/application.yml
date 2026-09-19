@@ -379,6 +379,8 @@ floci:
       emit-mode: off
     oam:
       enabled: true
+    mediapackagev2:
+      enabled: true
     mediapackage:
       enabled: true
     medialive:

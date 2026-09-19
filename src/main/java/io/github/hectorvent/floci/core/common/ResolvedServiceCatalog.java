@@ -30,6 +30,7 @@ import io.github.hectorvent.floci.services.lambdamicrovms.LambdaMicrovmsControll
 import io.github.hectorvent.floci.services.lambdamicrovms.LambdaNetworkConnectorsController;
 import io.github.hectorvent.floci.services.opensearch.OpenSearchController;
 import io.github.hectorvent.floci.services.oam.OamController;
+import io.github.hectorvent.floci.services.mediapackagev2.MediaPackageV2Controller;
 import io.github.hectorvent.floci.services.mediapackage.MediaPackageController;
 import io.github.hectorvent.floci.services.medialive.MediaLiveController;
 import io.github.hectorvent.floci.services.cloudfront.CloudFrontController;
@@ -606,6 +607,10 @@ public class ResolvedServiceCatalog {
                         "mediapackage", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
                         protocols(ServiceProtocol.REST_JSON),
                         Set.of(), Set.of("mediapackage"), Set.of(), Set.of(MediaPackageController.class)),
+                descriptor("mediapackagev2", "mediapackagev2", config.services().mediapackagev2().enabled(), true,
+                        "mediapackagev2", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
+                        protocols(ServiceProtocol.REST_JSON),
+                        Set.of(), Set.of("mediapackagev2"), Set.of(), Set.of(MediaPackageV2Controller.class)),
                 descriptor("cloudfront", "cloudfront", config.services().cloudfront().enabled(), true,
                         "cloudfront", storageMode(config.storage().services().cloudfront().mode(), config.storage().mode()),
                         5000L, AwsNamespaces.CLOUDFRONT, ServiceProtocol.REST_XML,
