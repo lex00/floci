@@ -20,6 +20,7 @@ import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentC
 import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreResourcePolicyController;
 import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreToolsController;
 import io.github.hectorvent.floci.services.bedrockruntime.BedrockRuntimeController;
+import io.github.hectorvent.floci.services.mediapackage.MediaPackageController;
 import io.github.hectorvent.floci.services.medialive.MediaLiveController;
 import io.github.hectorvent.floci.services.cloudfront.CloudFrontController;
 import io.github.hectorvent.floci.services.cloudfront.CloudFrontServingController;
@@ -633,6 +634,10 @@ public class ResolvedServiceCatalog {
                         "medialive", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
                         protocols(ServiceProtocol.REST_JSON),
                         Set.of(), Set.of("medialive"), Set.of(), Set.of(MediaLiveController.class)),
+                descriptor("mediapackage", "mediapackage", config.services().mediapackage().enabled(), true,
+                        "mediapackage", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
+                        protocols(ServiceProtocol.REST_JSON),
+                        Set.of(), Set.of("mediapackage"), Set.of(), Set.of(MediaPackageController.class)),
                 descriptor("cloudfront", "cloudfront", config.services().cloudfront().enabled(), true,
                         "cloudfront", storageMode(config.storage().services().cloudfront().mode(), config.storage().mode()),
                         5000L, AwsNamespaces.CLOUDFRONT, ServiceProtocol.REST_XML,
