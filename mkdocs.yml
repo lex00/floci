@@ -172,6 +172,7 @@ nav:
     - OpenSearch: services/opensearch.md
     - EC2: services/ec2.md
     - Lightsail: services/lightsail.md
+    - App Runner: services/apprunner.md
     - AppConfig: services/appconfig.md
     - Bedrock: services/bedrock.md
     - Bedrock Runtime: services/bedrock-runtime.md

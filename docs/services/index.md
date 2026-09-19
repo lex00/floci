@@ -91,6 +91,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [AppConfig](appconfig.md) | `/applications/...`, `/deploymentstrategies/...` | REST JSON | 16 |
 | [AppConfigData](appconfig.md#data-plane) | `/configurationsessions`, `/configuration` | REST JSON | 2 |
 | [AppSync](appsync.md) | `/v1/apis/...` | REST JSON | 33 |
+| [App Runner](apprunner.md) | `POST /` + `X-Amz-Target: AppRunner.*` | JSON 1.0 | 31 |
 | [Amazon Bedrock](bedrock.md) | `/guardrails`, `/guardrails/{guardrailIdentifier}`, `/tagResource`, `/untagResource`, `/listTagsForResource` | REST JSON | 9 |
 | [Bedrock Runtime](bedrock-runtime.md) | `/model/{modelId}/converse`, `/model/{modelId}/invoke` | REST JSON | 2 (stub; streaming returns 501) |
 | [Bedrock AgentCore Control](bedrock-agentcore.md) | `/runtimes/*`, `/gateways/*`, `/memories/*`, `/identities/*`, `/browsers*`, `/browser-profiles*`, `/code-interpreters*`, `/resourcepolicy/*`, `/tags/{resourceArn}` | REST JSON | 61 (+ 3 tagging via shared `/tags/{arn}` route) |
