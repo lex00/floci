@@ -38,6 +38,28 @@ Region filtering follows the ARN region when present. Global ARNs, such as S3
 bucket ARNs, are visible across regions because their ARN region segment is
 empty.
 
+## IAM resources
+
+IAM is the exception to the rule above, and its empty ARN region segment is why.
+Real AWS was measured against a live account on 2026-09-14:
+
+| Resource type | Served by `GetResources` |
+|---|---|
+| `iam:policy` | Yes, in `us-east-1` only, where global IAM indexes |
+| `iam:instance-profile` | Yes, in `us-east-1` only |
+| `iam:role` | No, in any region, however the tag was written |
+| every other IAM type | No, because nobody has measured them |
+
+Floci follows that. The rule applies to `GetResources`, `GetTagKeys` and
+`GetTagValues` alike, and to tags written through IAM's own API as well as tags
+written through `TagResources`. The write side is untouched: `TagResources` and
+`UntagResources` accept IAM ARNs of all eight types AWS documents.
+
+One known deviation. On real AWS a newly created policy or instance profile takes
+roughly 500 seconds to reach the index, and floci serves it at once, so a caller
+that creates one and reads the index in the same breath passes here and can still
+find nothing on AWS. Only the steady state is emulated.
+
 ## Configuration
 
 | Variable | Default | Description |
