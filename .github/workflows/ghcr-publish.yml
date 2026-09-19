@@ -32,6 +32,11 @@ env:
 
 jobs:
   # Gate: the build/merge jobs below must not run unless the suite is green.
+  #
+  # Sharded four ways like ci.yml, and for the same reason. Quarkus pays augmentation
+  # per distinct @TestProfile, so one unsharded `mvn test` holds every profile's beans
+  # in a single JVM and exhausts the heap. That is how run 35425823537 failed on
+  # 2026-09-19, inside ArcProcessor#registerBeans, before a single test ran.
   # This duplicates ci.yml's test steps rather than depending on the CI
   # workflow's own run (workflow_run) or calling into it (workflow_call).
   # Why:
@@ -53,9 +58,15 @@ jobs:
   # here, once in ci.yml's own push trigger) - this is a low-traffic fork
   # merged in batches, so the CI-minutes cost is worth never publishing red.
   test:
-    name: Test suite (publish gate)
+    name: Test suite (publish gate, shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      SHARD_TOTAL: 4
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -65,8 +76,27 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
+      - name: Compile
+        run: ./mvnw test-compile -B
+
+      - name: Compute shard include list
+        run: |
+          cd target/test-classes
+          find . \( -name '*Test.class' -o -name 'Test*.class' \
+                    -o -name '*Tests.class' -o -name '*TestCase.class' \) \
+                  ! -name '*$*' \
+            | sed 's|^\./||; s|\.class$||' | LC_ALL=C sort \
+            > "$GITHUB_WORKSPACE/all-classes.txt"
+          cd "$GITHUB_WORKSPACE"
+          .github/ci/partition.sh all-classes.txt "$SHARD_TOTAL" "${{ matrix.shard }}" > shard.txt
+          test -s shard.txt
+          echo "shard ${{ matrix.shard }}/$SHARD_TOTAL: $(wc -l < shard.txt) classes"
+
       - name: Run tests
-        run: mvn test -B
+        run: >
+          ./mvnw surefire:test -B
+          -Dsurefire.includesFile="$GITHUB_WORKSPACE/shard.txt"
+          -Dsurefire.failIfNoTests=true
 
   build:
     name: build ${{ matrix.platform }}
