@@ -369,6 +369,7 @@ public interface EmulatorConfig {
         OpenSearchStorageConfig opensearch();
         AppConfigStorageConfig appconfig();
         AppConfigDataStorageConfig appconfigdata();
+        AppRunnerStorageConfig apprunner();
         ElastiCacheStorageConfig elasticache();
         MemoryDbStorageConfig memorydb();
         RdsStorageConfig rds();
@@ -548,6 +549,13 @@ public interface EmulatorConfig {
     }
 
     interface ResourceExplorer2StorageConfig {
+        Optional<String> mode();
+
+        @WithDefault("5000")
+        long flushIntervalMs();
+    }
+
+    interface AppRunnerStorageConfig {
         Optional<String> mode();
 
         @WithDefault("5000")
@@ -762,6 +770,7 @@ public interface EmulatorConfig {
         EcsServiceConfig ecs();
         AppConfigServiceConfig appconfig();
         AppConfigDataServiceConfig appconfigdata();
+        AppRunnerServiceConfig apprunner();
         EcrServiceConfig ecr();
         ResourceGroupsTaggingServiceConfig tagging();
         BedrockServiceConfig bedrock();
@@ -2377,6 +2386,11 @@ public interface EmulatorConfig {
          * addresses. Empty by default to match CloudFront's public custom-origin boundary.
          */
         Optional<List<String>> allowedPrivateOriginHosts();
+    }
+
+    interface AppRunnerServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
     }
 
     interface AppSyncServiceConfig {

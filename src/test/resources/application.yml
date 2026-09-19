@@ -77,6 +77,8 @@ floci:
       elasticbeanstalk:
         flush-interval-ms: 60000
       cloudfront:
+      apprunner:
+        flush-interval-ms: 60000
       appsync:
         flush-interval-ms: 60000
       rum:
@@ -325,6 +327,8 @@ floci:
       host-volume-roots: []
       allow-unsafe-host-volumes: false
       image-pull-behavior: prefer-cached
+    apprunner:
+      enabled: true
     appconfig:
       enabled: true
     appconfigdata:
