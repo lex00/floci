@@ -824,6 +824,7 @@ public interface EmulatorConfig {
         BcmDataExportsServiceConfig bcmDataExports();
         OamServiceConfig oam();
         MediaLiveServiceConfig medialive();
+        MediaPackageServiceConfig mediapackage();
         BcmPricingCalculatorServiceConfig bcmPricingCalculator();
         TimestreamInfluxDbServiceConfig timestreamInfluxdb();
         ConfigServiceConfig configservice();
@@ -2636,6 +2637,11 @@ public interface EmulatorConfig {
     }
 
     interface MediaLiveServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface MediaPackageServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }
