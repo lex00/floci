@@ -44,7 +44,8 @@ class CloudFormationS3BucketPropertiesIntegrationTest {
                       "ServerSideEncryptionByDefault": { "SSEAlgorithm": "aws:kms", "KMSMasterKeyID": "arn:aws:kms:us-east-1:000000000000:key/abc" },
                       "BucketKeyEnabled": true
                     } ] },
-                    "Tags": [ { "Key": "purpose", "Value": "records" } ]
+                    "Tags": [ { "Key": "purpose", "Value": "records" },
+                              { "Key": "escaped", "Value": { "Fn::Sub": "${!NotAVariable}-${AWS::Region}" } } ]
                   }
                 },
                 "recordsBucketPolicy": {
@@ -93,6 +94,9 @@ class CloudFormationS3BucketPropertiesIntegrationTest {
             .body(containsString("<BucketKeyEnabled>true</BucketKeyEnabled>"));
 
         bucketGet(bucket, "tagging").body(containsString("<Key>purpose</Key>")).body(containsString("<Value>records</Value>"));
+        // Fn::Sub: ${!Name} is a literal, ${AWS::Region} a pseudo-parameter, and (in the policy
+        // below) ${recordsBucket.Arn} the GetAtt shorthand, which used to come back unresolved.
+        bucketGet(bucket, "tagging").body(containsString("<Value>${NotAVariable}-us-east-1</Value>"));
 
         // The policy is on the bucket, with its intrinsics resolved to the bucket's real ARN.
         bucketGet(bucket, "policy")

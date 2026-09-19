@@ -193,10 +193,14 @@ public class CloudFormationTemplateEngine {
                     break;
                 }
                 String varName = template.substring(i + 2, end);
-                if (vars.containsKey(varName)) {
+                if (varName.startsWith("!")) {
+                    // ${!Literal} is the escape: it yields the text "${Literal}" and resolves nothing.
+                    result.append("${").append(varName, 1, varName.length()).append("}");
+                } else if (vars.containsKey(varName)) {
                     result.append(vars.get(varName));
-                } else if (varName.contains("!")) {
-                    // Fn::GetAtt shorthand: ${LogicalId.Attr}
+                } else if (varName.contains(".")) {
+                    // Fn::GetAtt shorthand: ${LogicalId.Attr}. Neither a logical id nor a
+                    // pseudo-parameter (AWS::Region) contains a dot, so a dot means an attribute.
                     String[] parts = varName.split("\\.", 2);
                     result.append(resolveGetAttParts(parts[0], parts.length > 1 ? parts[1] : ""));
                 } else {
