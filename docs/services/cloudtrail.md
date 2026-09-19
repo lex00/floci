@@ -51,7 +51,7 @@ against a bucket matched by an active trail's selectors:
 Both success and `AwsException` paths emit; the latter populates
 `errorCode` / `errorMessage` (`NoSuchKey`, `NoSuchBucketPolicy`, etc.).
 
-If `floci.iam.enforcement-enabled` is set, IAM-deny responses also emit
+If `floci.services.iam.enforcement-enabled` is set, IAM-deny responses also emit
 records with `errorCode: "AccessDenied"` for the same op set.
 
 ## Configuration

@@ -203,6 +203,102 @@ class S3ConditionalWriteIntegrationTest {
         assertObjectBody(bucket, "object.txt", "second");
     }
 
+    /**
+     * A conditional write checks an existing object, so with no object to check the answer is
+     * 404 NoSuchKey rather than 412. The S3 User Guide is explicit under "Conditional write
+     * behavior": with an If-Match header, "if there's no current object version with the same
+     * name, or if the current object version is a delete marker, the operation fails with a
+     * 404 Not Found error". A caller that mistakes this for 412 keeps retrying a conditional
+     * overwrite instead of falling back to an unconditional create, which is the trap
+     * lex00/floci#213 reported after hitting it in a hand-written test double.
+     */
+    @Test
+    void putObject_ifMatch_404WhenKeyIsMissing() {
+        String bucket = createBucket("put-if-match-missing");
+
+        given()
+            .header("If-Match", "\"6805f2cfc46c0f04559748bb039d69ae\"")
+            .body("should not be stored")
+        .when()
+            .put("/" + bucket + "/absent.txt")
+        .then()
+            .statusCode(404)
+            .body("Error.Code", equalTo("NoSuchKey"));
+
+        given()
+        .when()
+            .head("/" + bucket + "/absent.txt")
+        .then()
+            .statusCode(404);
+    }
+
+    @Test
+    void putObject_ifMatch_404WhenTheKeyWasDeleted() {
+        String bucket = createBucket("put-if-match-deleted");
+        String eTag = putObject(bucket, "object.txt", "first");
+
+        given()
+        .when()
+            .delete("/" + bucket + "/object.txt")
+        .then()
+            .statusCode(204);
+
+        given()
+            .header("If-Match", eTag)
+            .body("should not be stored")
+        .when()
+            .put("/" + bucket + "/object.txt")
+        .then()
+            .statusCode(404)
+            .body("Error.Code", equalTo("NoSuchKey"));
+    }
+
+    @Test
+    void putObject_ifMatch_404WhenTheCurrentVersionIsADeleteMarker() {
+        String bucket = createBucket("put-if-match-delete-marker");
+        given()
+            .contentType("application/xml")
+            .body("<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>")
+        .when()
+            .put("/" + bucket + "?versioning")
+        .then()
+            .statusCode(200);
+
+        String eTag = putObject(bucket, "object.txt", "first");
+
+        given()
+        .when()
+            .delete("/" + bucket + "/object.txt")
+        .then()
+            .statusCode(204);
+
+        given()
+            .header("If-Match", eTag)
+            .body("should not be stored")
+        .when()
+            .put("/" + bucket + "/object.txt")
+        .then()
+            .statusCode(404)
+            .body("Error.Code", equalTo("NoSuchKey"));
+    }
+
+    @Test
+    void completeMultipartUpload_ifMatch_404WhenKeyIsMissing() {
+        String bucket = createBucket("mpu-if-match-missing");
+        String uploadId = initiateMultipartUpload(bucket, "object.txt");
+        String partETag = uploadPart(bucket, "object.txt", uploadId, 1, "first");
+
+        given()
+            .contentType("application/xml")
+            .header("If-Match", "\"6805f2cfc46c0f04559748bb039d69ae\"")
+            .body(completeMultipartXml(1, partETag))
+        .when()
+            .post("/" + bucket + "/object.txt?uploadId=" + uploadId)
+        .then()
+            .statusCode(404)
+            .body("Error.Code", equalTo("NoSuchKey"));
+    }
+
     @Test
     void completeMultipartUpload_ifNoneMatchStar_412WhenKeyExists() {
         String bucket = createBucket("mpu-if-none-existing");
