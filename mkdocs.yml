@@ -159,6 +159,7 @@ nav:
     - CloudWatch OAM: services/oam.md
     - CloudWatch RUM: services/rum.md
     - Amazon IVS: services/ivs.md
+    - Amazon IVS Chat: services/ivschat.md
     - Managed Prometheus (AMP): services/managed-prometheus.md
     - GuardDuty: services/guardduty.md
     - Connect: services/connect.md

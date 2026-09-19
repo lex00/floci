@@ -68,6 +68,7 @@ import io.github.hectorvent.floci.services.marketplace.MarketplaceDeploymentCont
 import io.github.hectorvent.floci.services.marketplace.MarketplaceDiscoveryController;
 import io.github.hectorvent.floci.services.marketplace.MarketplaceReportingController;
 import io.github.hectorvent.floci.services.ivs.IvsController;
+import io.github.hectorvent.floci.services.ivschat.IvschatController;
 import io.github.hectorvent.floci.services.sagemaker.SageMakerRuntimeController;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -734,6 +735,11 @@ public class ResolvedServiceCatalog {
                         config.storage().services().ivs().flushIntervalMs(), null, ServiceProtocol.REST_JSON,
                         protocols(ServiceProtocol.REST_JSON),
                         Set.of(), Set.of("ivs"), Set.of(), Set.of(IvsController.class)),
+                descriptor("ivschat", "ivschat", config.services().ivschat().enabled(), true,
+                        "ivschat", storageMode(config.storage().services().ivschat().mode(), config.storage().mode()),
+                        config.storage().services().ivschat().flushIntervalMs(), null, ServiceProtocol.REST_JSON,
+                        protocols(ServiceProtocol.REST_JSON),
+                        Set.of(), Set.of("ivschat"), Set.of(), Set.of(IvschatController.class)),
                 descriptor("marketplace", "marketplace", config.services().marketplace().enabled(), true,
                         "marketplace", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
                         protocols(ServiceProtocol.REST_JSON, ServiceProtocol.JSON, ServiceProtocol.CBOR),

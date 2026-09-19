@@ -351,6 +351,8 @@ public interface EmulatorConfig {
         SageMakerStorageConfig sagemaker();
 
         IvsStorageConfig ivs();
+
+        IvschatStorageConfig ivschat();
     }
 
     interface ApsStorageConfig {
@@ -648,6 +650,13 @@ public interface EmulatorConfig {
         long flushIntervalMs();
     }
 
+    interface IvschatStorageConfig {
+        Optional<String> mode();
+
+        @WithDefault("5000")
+        long flushIntervalMs();
+    }
+
     interface CodeDeployStorageConfig {
         Optional<String> mode();
 
@@ -798,6 +807,7 @@ public interface EmulatorConfig {
 
         LakeFormationServiceConfig lakeformation();
         IvsServiceConfig ivs();
+        IvschatServiceConfig ivschat();
         EfsServiceConfig efs();
         CodeGuruReviewerServiceConfig codegurureviewer();
         CodeArtifactServiceConfig codeartifact();
@@ -1024,6 +1034,11 @@ public interface EmulatorConfig {
     }
 
     interface IvsServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface IvschatServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }
