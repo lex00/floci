@@ -387,6 +387,12 @@ floci:
       emit-mode: off
     oam:
       enabled: true
+    mediapackagev2:
+      enabled: true
+    mediapackage:
+      enabled: true
+    medialive:
+      enabled: true
     cloudtrail:
       enabled: true
       flush-interval-seconds: 3600
