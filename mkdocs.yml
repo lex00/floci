@@ -198,6 +198,7 @@ nav:
     - Route 53 Resolver: services/route53resolver.md
     - AWS Cloud Map: services/cloudmap.md
     - AWS IoT Core: services/iot.md
+    - MediaPackage: services/mediapackage.md
     - MediaLive: services/medialive.md
     - AppSync: services/appsync.md
     - Transfer Family: services/transfer.md

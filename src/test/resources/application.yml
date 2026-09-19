@@ -379,6 +379,8 @@ floci:
       emit-mode: off
     oam:
       enabled: true
+    mediapackage:
+      enabled: true
     medialive:
       enabled: true
     cloudtrail:
