@@ -84,6 +84,15 @@ public class IamConditionContextResolver {
             case "s3:PutBucketTagging" -> s3PutBucketTaggingConditionContext(ctx);
             case "s3:GetBucketTagging", "s3:DeleteBucketTagging", "s3:DeleteBucket" ->
                     s3ResourceTagConditionContext(ctx);
+            // Object tags. Which action is given which key is what real AWS was MEASURED to do
+            // (INTENTIUS/choudoufu#1342), not what reads naturally: s3:DeleteObject is given
+            // neither key, and s3:PutObject is given the tags of the REQUEST only, never those of
+            // an object it is about to overwrite. See S3ObjectTagConditionEnforcementIntegrationTest.
+            case "s3:GetObject", "s3:GetObjectVersion", "s3:GetObjectTagging", "s3:GetObjectAcl",
+                 "s3:PutObjectAcl", "s3:DeleteObjectTagging" -> s3ExistingObjectTagConditionContext(ctx);
+            case "s3:PutObject" -> s3RequestObjectTagConditionContext(ctx);
+            case "s3:PutObjectTagging" -> merge(s3ExistingObjectTagConditionContext(ctx),
+                    s3PutObjectTaggingBodyConditionContext(ctx));
             default -> null;
         };
     }
@@ -110,6 +119,94 @@ public class IamConditionContextResolver {
         Map<String, String> conditions = new LinkedHashMap<>();
         tags.forEach((key, value) -> conditions.put("aws:RequestTag/" + key, value));
         return conditions;
+    }
+
+    /**
+     * {@code s3:ExistingObjectTag/<key>} from the target object's current tags. An object that
+     * does not exist, or has no tags, offers no keys - so a {@code StringEquals} on one does not
+     * match, and an allow conditioned on it does not apply.
+     */
+    private Map<String, String> s3ExistingObjectTagConditionContext(ContainerRequestContext ctx) {
+        if (ctx.getUriInfo() == null) {
+            return null;
+        }
+        String path = ctx.getUriInfo().getPath();
+        String bucket = extractS3BucketName(path);
+        String key = extractS3ObjectKey(path);
+        if (bucket == null || key == null || s3Service == null) {
+            return null;
+        }
+        Map<String, String> tags;
+        try {
+            tags = s3Service.getObjectTagging(bucket, key);
+        } catch (RuntimeException e) {
+            LOG.debugv(e, "Could not read object tags for condition context: {0}/{1}", bucket, key);
+            return null;
+        }
+        if (tags == null || tags.isEmpty()) {
+            return null;
+        }
+        Map<String, String> conditions = new LinkedHashMap<>();
+        tags.forEach((k, v) -> conditions.put("s3:ExistingObjectTag/" + k, v));
+        return conditions;
+    }
+
+    /** {@code s3:RequestObjectTag/<key>} from a PutObject's {@code x-amz-tagging} header. */
+    private Map<String, String> s3RequestObjectTagConditionContext(ContainerRequestContext ctx) {
+        String header = ctx.getHeaderString("x-amz-tagging");
+        if (header == null || header.isBlank()) {
+            return null;
+        }
+        Map<String, String> conditions = new LinkedHashMap<>();
+        for (String pair : header.split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq <= 0) {
+                continue;
+            }
+            conditions.put("s3:RequestObjectTag/" + urlDecode(pair.substring(0, eq)), urlDecode(pair.substring(eq + 1)));
+        }
+        return conditions.isEmpty() ? null : conditions;
+    }
+
+    /** {@code s3:RequestObjectTag/<key>} from the {@code <Tagging>} XML body of PutObjectTagging. */
+    private Map<String, String> s3PutObjectTaggingBodyConditionContext(ContainerRequestContext ctx) {
+        byte[] body = bufferEntity(ctx);
+        if (body == null || body.length == 0) {
+            return null;
+        }
+        Map<String, String> tags = XmlParser.extractPairs(new String(body, StandardCharsets.UTF_8), "Tag", "Key", "Value");
+        if (tags.isEmpty()) {
+            return null;
+        }
+        Map<String, String> conditions = new LinkedHashMap<>();
+        tags.forEach((k, v) -> conditions.put("s3:RequestObjectTag/" + k, v));
+        return conditions;
+    }
+
+    private static Map<String, String> merge(Map<String, String> a, Map<String, String> b) {
+        if (a == null) {
+            return b;
+        }
+        if (b == null) {
+            return a;
+        }
+        Map<String, String> merged = new LinkedHashMap<>(a);
+        merged.putAll(b);
+        return merged;
+    }
+
+    private static String urlDecode(String value) {
+        return java.net.URLDecoder.decode(value, StandardCharsets.UTF_8);
+    }
+
+    /** The object key of a path-style (or filter-rewritten) S3 path, null for a bucket-level one. */
+    private static String extractS3ObjectKey(String path) {
+        String stripped = path.startsWith("/") ? path.substring(1) : path;
+        int slash = stripped.indexOf('/');
+        if (slash < 0 || slash == stripped.length() - 1) {
+            return null;
+        }
+        return stripped.substring(slash + 1);
     }
 
     /** {@code aws:ResourceTag/<key>} from the target bucket's current tags. */
