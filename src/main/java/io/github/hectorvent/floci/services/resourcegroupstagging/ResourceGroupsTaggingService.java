@@ -9,6 +9,7 @@ import io.github.hectorvent.floci.services.resourcegroupstagging.model.ResourceT
 import io.github.hectorvent.floci.core.common.Resettable;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 
 import java.nio.charset.StandardCharsets;
@@ -21,14 +22,17 @@ public class ResourceGroupsTaggingService implements Resettable {
 
     private final StorageFactory storageFactory;
     private final TaggedResourceScanner scanner;
+    private final Instance<TaggedResourceWriter> taggedResourceWriters;
 
     // region::arn → ResourceTagMapping
     private Map<String, ResourceTagMapping> store = new ConcurrentHashMap<>();
 
     @Inject
-    public ResourceGroupsTaggingService(StorageFactory storageFactory, TaggedResourceScanner scanner) {
+    public ResourceGroupsTaggingService(StorageFactory storageFactory, TaggedResourceScanner scanner,
+                                        Instance<TaggedResourceWriter> taggedResourceWriters) {
         this.storageFactory = storageFactory;
         this.scanner = scanner;
+        this.taggedResourceWriters = taggedResourceWriters;
     }
 
     /**
@@ -36,7 +40,7 @@ public class ResourceGroupsTaggingService implements Resettable {
      * round-trip through this service's own store, with no estate-wide scan.
      */
     public ResourceGroupsTaggingService(StorageFactory storageFactory) {
-        this(storageFactory, null);
+        this(storageFactory, null, null);
     }
 
     @PostConstruct
@@ -58,6 +62,11 @@ public class ResourceGroupsTaggingService implements Resettable {
     // the get-mutate-put sequence would otherwise lose updates under concurrent calls.
     public synchronized void tagResources(List<String> resourceArns, Map<String, String> tags, String region) {
         for (String arn : resourceArns) {
+            if (writtenThrough(w -> w.tag(arn, tags))) {
+                // The owning service holds the tags now, as it does on AWS; the read side sees
+                // them through its TaggedResourceProvider.
+                continue;
+            }
             String storeKey = key(region, arn);
             ResourceTagMapping mapping = store.get(storeKey);
             if (mapping == null) {
@@ -73,6 +82,9 @@ public class ResourceGroupsTaggingService implements Resettable {
 
     public synchronized void untagResources(List<String> resourceArns, List<String> tagKeys, String region) {
         for (String arn : resourceArns) {
+            // Both, not either: a tag written before the owning service took its ARNs over may
+            // still sit in this service's store, and an untag has to clear it from there too.
+            writtenThrough(w -> w.untag(arn, tagKeys));
             String storeKey = key(region, arn);
             ResourceTagMapping mapping = store.get(storeKey);
             if (mapping != null) {
@@ -80,6 +92,22 @@ public class ResourceGroupsTaggingService implements Resettable {
                 store.put(storeKey, mapping);
             }
         }
+    }
+
+    /**
+     * Offers a write to each {@link TaggedResourceWriter}, and reports whether one of them owned
+     * the ARN and applied it.
+     */
+    private boolean writtenThrough(java.util.function.Predicate<TaggedResourceWriter> write) {
+        if (taggedResourceWriters == null) {
+            return false;
+        }
+        for (TaggedResourceWriter writer : taggedResourceWriters) {
+            if (write.test(writer)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public synchronized void deleteResources(List<String> resourceArns, String region) {
