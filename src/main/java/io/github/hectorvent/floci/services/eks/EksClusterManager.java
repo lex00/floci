@@ -217,7 +217,7 @@ public class EksClusterManager {
         // filesystem, so chmod works correctly and data persists across container restarts.
         String volumeName = cluster.getDockerName();
 
-        List<String> serverArgs = buildServerArgs(config.services().eks().disableCni());
+        List<String> serverArgs = buildServerArgs(config.services().eks().disableCni(), containerName);
 
         // The account label comes from the cluster record when set (restore runs with no request
         // context); regionResolver is the fallback for the create path.
@@ -564,9 +564,24 @@ public class EksClusterManager {
      * {@code disableCni} config javadoc for why this must happen at startup, not after the fact.
      */
     static List<String> buildServerArgs(boolean disableCni) {
+        return buildServerArgs(disableCni, null);
+    }
+
+    /**
+     * {@link #buildServerArgs(boolean)} plus a SAN for the k3s container's own name. In
+     * {@code endpoint-mode=network} the public endpoint is {@code https://<containerName>:6443}
+     * (see {@link #resolvePublicEndpoint}), and a client on the Docker network that verifies the
+     * CA {@code describe-cluster} returns needs that name in the certificate; without it the only
+     * way to reach a network-mode cluster was {@code insecure = true}. The SAN is added in every
+     * mode, since a name the client never dials costs nothing. A blank name adds nothing.
+     */
+    static List<String> buildServerArgs(boolean disableCni, String containerName) {
         List<String> serverArgs = new ArrayList<>(List.of("server",
                 "--disable=traefik",
                 "--tls-san=localhost"));
+        if (containerName != null && !containerName.isBlank()) {
+            serverArgs.add("--tls-san=" + containerName);
+        }
         if (disableCni) {
             serverArgs.add("--flannel-backend=none");
             serverArgs.add("--disable-network-policy");

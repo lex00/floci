@@ -190,6 +190,21 @@ class EksClusterManagerTest {
     }
 
     @Test
+    void serverArgsCarryTheContainerNameAsASan() {
+        List<String> args = EksClusterManager.buildServerArgs(false, "floci-ns-eks-demo");
+
+        // network endpoint mode publishes https://<containerName>:6443, so the cert must name it.
+        assertTrue(args.contains("--tls-san=floci-ns-eks-demo"));
+        assertTrue(args.contains("--tls-san=localhost"));
+    }
+
+    @Test
+    void serverArgsAddNoSanForABlankContainerName() {
+        assertEquals(EksClusterManager.buildServerArgs(false),
+                EksClusterManager.buildServerArgs(false, " "));
+    }
+
+    @Test
     void rshareEntrypointIsPosixShCompatible() {
         String script = EksClusterManager.RSHARE_ENTRYPOINT.get(2);
 
