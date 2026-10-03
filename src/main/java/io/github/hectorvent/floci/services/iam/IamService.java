@@ -83,6 +83,20 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
     /** Guards the read-modify-write in the OIDC provider mutators. */
     private final Object oidcProviderLock = new Object();
 
+    /*
+     * Guard the check-then-insert in each name-keyed create (and the rename paths, which insert
+     * under a new name the same way). The stores offer only get/put, so without a lock two
+     * concurrent creates of one name both pass the existence check and both answer 200; AWS
+     * answers the second with 409 EntityAlreadyExists, and callers that retry or race on that
+     * contract (Terraform's create-or-adopt, CloudFormation replacement) diverge. One lock per
+     * store, shared across accounts: creates are rare and the critical section is a map lookup.
+     */
+    private final Object userLock = new Object();
+    private final Object groupLock = new Object();
+    private final Object roleLock = new Object();
+    private final Object policyLock = new Object();
+    private final Object instanceProfileLock = new Object();
+
     private static final String SERVICE_LINKED_ROLE_PATH = "/aws-service-role/";
     private static final String SERVICE_LINKED_ROLE_NAME_PREFIX = "AWSServiceRoleFor";
     private static final Map<String, String> SERVICE_LINKED_ROLE_NAMES = Map.of(
@@ -120,10 +134,9 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
      */
     private final StorageBackend<String, String> accountAliases;
     /**
-     * Guards the check-then-write in alias create/delete. Unlike a named resource, where two
-     * racing creates carry the same name and either winner is equivalent, racing alias creates
-     * carry different values — an unguarded race would report success to both callers while
-     * silently keeping only one. A single lock across accounts is enough: alias writes are rare.
+     * Guards the check-then-write in alias create/delete. Racing alias creates carry different
+     * values — an unguarded race would report success to both callers while silently keeping
+     * only one. A single lock across accounts is enough: alias writes are rare.
      */
     private final Object accountAliasLock = new Object();
     /**
@@ -352,15 +365,17 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
     // =========================================================================
 
     public IamUser createUser(String userName, String path) {
-        if (users.get(userName).isPresent()) {
-            throw new AwsException("EntityAlreadyExists",
-                    "User with name " + userName + " already exists.", 409);
-        }
         String userId = "AIDA" + randomId(16);
         String normalizedPath = normalizePath(path);
         String arn = iamArn("user", normalizedPath, userName);
         IamUser user = new IamUser(userId, userName, normalizedPath, arn);
-        users.put(userName, user);
+        synchronized (userLock) {
+            if (users.get(userName).isPresent()) {
+                throw new AwsException("EntityAlreadyExists",
+                        "User with name " + userName + " already exists.", 409);
+            }
+            users.put(userName, user);
+        }
         LOG.infov("Created IAM user: {0}", userName);
         return user;
     }
@@ -421,15 +436,17 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
                             + "refusing to apply an update meant for the original user.", 409);
         }
         if (newUserName != null && !newUserName.equals(userName)) {
-            if (users.get(newUserName).isPresent()) {
-                throw new AwsException("EntityAlreadyExists",
-                        "User with name " + newUserName + " already exists.", 409);
+            synchronized (userLock) {
+                if (users.get(newUserName).isPresent()) {
+                    throw new AwsException("EntityAlreadyExists",
+                            "User with name " + newUserName + " already exists.", 409);
+                }
+                users.delete(userName);
+                user.setUserName(newUserName);
+                if (newPath != null) user.setPath(normalizePath(newPath));
+                user.setArn(iamArn("user", user.getPath(), newUserName));
+                users.put(newUserName, user);
             }
-            users.delete(userName);
-            user.setUserName(newUserName);
-            if (newPath != null) user.setPath(normalizePath(newPath));
-            user.setArn(iamArn("user", user.getPath(), newUserName));
-            users.put(newUserName, user);
         } else {
             if (newPath != null) {
                 user.setPath(normalizePath(newPath));
@@ -460,15 +477,17 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
     // =========================================================================
 
     public IamGroup createGroup(String groupName, String path) {
-        if (groups.get(groupName).isPresent()) {
-            throw new AwsException("EntityAlreadyExists",
-                    "Group with name " + groupName + " already exists.", 409);
-        }
         String groupId = "AGPA" + randomId(16);
         String normalizedPath = normalizePath(path);
         String arn = iamArn("group", normalizedPath, groupName);
         IamGroup group = new IamGroup(groupId, groupName, normalizedPath, arn);
-        groups.put(groupName, group);
+        synchronized (groupLock) {
+            if (groups.get(groupName).isPresent()) {
+                throw new AwsException("EntityAlreadyExists",
+                        "Group with name " + groupName + " already exists.", 409);
+            }
+            groups.put(groupName, group);
+        }
         LOG.infov("Created IAM group: {0}", groupName);
         return group;
     }
@@ -485,15 +504,17 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
         validateIamPath(newPath, "NewPath");
         IamGroup group = getGroup(groupName);
         if (newGroupName != null && !newGroupName.equals(groupName)) {
-            if (groups.get(newGroupName).isPresent()) {
-                throw new AwsException("EntityAlreadyExists",
-                        "Group with name " + newGroupName + " already exists.", 409);
+            synchronized (groupLock) {
+                if (groups.get(newGroupName).isPresent()) {
+                    throw new AwsException("EntityAlreadyExists",
+                            "Group with name " + newGroupName + " already exists.", 409);
+                }
+                groups.delete(groupName);
+                group.setGroupName(newGroupName);
+                if (newPath != null) group.setPath(normalizePath(newPath));
+                group.setArn(iamArn("group", group.getPath(), newGroupName));
+                groups.put(newGroupName, group);
             }
-            groups.delete(groupName);
-            group.setGroupName(newGroupName);
-            if (newPath != null) group.setPath(normalizePath(newPath));
-            group.setArn(iamArn("group", group.getPath(), newGroupName));
-            groups.put(newGroupName, group);
             // Members still carry the old name in their own groupNames list — without this,
             // ListGroupsForUser drops the renamed group and its policies stop resolving for them.
             for (String memberName : group.getUserNames()) {
@@ -568,10 +589,6 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
 
     public IamRole createRole(String roleName, String path, String assumeRolePolicyDocument,
                               String description, int maxSessionDuration, Map<String, String> tags) {
-        if (roles.get(roleName).isPresent()) {
-            throw new AwsException("EntityAlreadyExists",
-                    "Role with name " + roleName + " already exists.", 409);
-        }
         String roleId = "AROA" + randomId(16);
         String normalizedPath = normalizePath(path);
         String arn = iamArn("role", normalizedPath, roleName);
@@ -579,7 +596,13 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
         role.setDescription(description);
         if (maxSessionDuration > 0) role.setMaxSessionDuration(maxSessionDuration);
         if (tags != null) role.getTags().putAll(tags);
-        roles.put(roleName, role);
+        synchronized (roleLock) {
+            if (roles.get(roleName).isPresent()) {
+                throw new AwsException("EntityAlreadyExists",
+                        "Role with name " + roleName + " already exists.", 409);
+            }
+            roles.put(roleName, role);
+        }
         LOG.infov("Created IAM role: {0}", roleName);
         return role;
     }
@@ -667,19 +690,24 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
                     "The derived role name " + roleName + " exceeds the "
                             + ROLE_NAME_MAX_LENGTH + "-character role name limit.", 400);
         }
-        // createRole would answer EntityAlreadyExists, which this action does not document; the
-        // duplicate-suffix case is an InvalidInput as far as its published error list is concerned.
-        if (roles.get(roleName).isPresent()) {
-            throw new AwsException("InvalidInput",
-                    "A role named " + roleName + " already exists; supply a different CustomSuffix.", 400);
-        }
         String trustPolicy = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\","
                 + "\"Principal\":{\"Service\":\"" + awsServiceName + "\"},\"Action\":\"sts:AssumeRole\"}]}";
-        IamRole role = createRole(roleName, SERVICE_LINKED_ROLE_PATH + awsServiceName + "/",
-                trustPolicy, description, 0, Map.of());
-        role.setServiceLinkedRole(true);
-        roles.put(roleName, role);
-        return role;
+        // Held across the check, createRole and the flag write (the monitor is reentrant), so a
+        // racing duplicate gets this action's InvalidInput rather than createRole's undocumented
+        // EntityAlreadyExists, and no reader sees the role before it is marked service-linked.
+        synchronized (roleLock) {
+            // createRole would answer EntityAlreadyExists, which this action does not document; the
+            // duplicate-suffix case is an InvalidInput as far as its published error list is concerned.
+            if (roles.get(roleName).isPresent()) {
+                throw new AwsException("InvalidInput",
+                        "A role named " + roleName + " already exists; supply a different CustomSuffix.", 400);
+            }
+            IamRole role = createRole(roleName, SERVICE_LINKED_ROLE_PATH + awsServiceName + "/",
+                    trustPolicy, description, 0, Map.of());
+            role.setServiceLinkedRole(true);
+            roles.put(roleName, role);
+            return role;
+        }
     }
 
     /**
@@ -809,14 +837,16 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
                                   String document, Map<String, String> tags) {
         String normalizedPath = normalizePath(path);
         String arn = iamArn("policy", normalizedPath, policyName);
-        if (policies.get(arn).isPresent()) {
-            throw new AwsException("EntityAlreadyExists",
-                    "Policy " + arn + " already exists.", 409);
-        }
         String policyId = "ANPA" + randomId(16);
         IamPolicy policy = new IamPolicy(policyId, policyName, normalizedPath, arn, description, document);
         if (tags != null) policy.getTags().putAll(tags);
-        policies.put(arn, policy);
+        synchronized (policyLock) {
+            if (policies.get(arn).isPresent()) {
+                throw new AwsException("EntityAlreadyExists",
+                        "Policy " + arn + " already exists.", 409);
+            }
+            policies.put(arn, policy);
+        }
         LOG.infov("Created IAM policy: {0}", arn);
         return policy;
     }
@@ -1422,10 +1452,6 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
      */
     public InstanceProfile createInstanceProfile(String instanceProfileName, String path,
                                                  Map<String, String> tags) {
-        if (instanceProfiles.get(instanceProfileName).isPresent()) {
-            throw new AwsException("EntityAlreadyExists",
-                    "Instance profile " + instanceProfileName + " already exists.", 409);
-        }
         String profileId = "AIPA" + randomId(16);
         String normalizedPath = normalizePath(path);
         String arn = iamArn("instance-profile", normalizedPath, instanceProfileName);
@@ -1433,7 +1459,13 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
         if (tags != null) {
             profile.getTags().putAll(tags);
         }
-        instanceProfiles.put(instanceProfileName, profile);
+        synchronized (instanceProfileLock) {
+            if (instanceProfiles.get(instanceProfileName).isPresent()) {
+                throw new AwsException("EntityAlreadyExists",
+                        "Instance profile " + instanceProfileName + " already exists.", 409);
+            }
+            instanceProfiles.put(instanceProfileName, profile);
+        }
         LOG.infov("Created instance profile: {0}", instanceProfileName);
         return profile;
     }
