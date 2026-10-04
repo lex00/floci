@@ -143,6 +143,20 @@ public class EksAccessEntryService {
                 .map(StoredEntry::entry).filter(entry -> "EC2_LINUX".equals(entry.type()));
     }
 
+    /**
+     * The STANDARD access entry for a principal, when its stored principal id still matches the
+     * caller's (a recreated role with the same ARN does not inherit the old role's entry, as on
+     * AWS). Used by {@link EksWorkerAuthentication} when principal identity is enabled.
+     */
+    synchronized Optional<AccessEntry> standardEntry(Cluster cluster, String accountId, String principal, String principalId) {
+        requireApiAccess(cluster);
+        String key = prefix(cluster) + principal;
+        Optional<StoredEntry> stored = entries instanceof AccountAwareStorageBackend<StoredEntry> aware
+                ? aware.getForAccount(accountId, key) : entries.get(key);
+        return stored.filter(value -> principalId != null && principalId.equals(value.principalId()))
+                .map(StoredEntry::entry).filter(entry -> "STANDARD".equals(entry.type()));
+    }
+
     public synchronized AccessEntry describe(Cluster cluster, String principal) {
         requireApiAccess(cluster);
         return entries.get(prefix(cluster) + principal).map(StoredEntry::entry)

@@ -15,6 +15,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -26,7 +27,7 @@ class EksTokenWebhookControllerTest {
     private static final String DEFAULT_ACCOUNT = "000000000000";
     private final IamService iamService = IamServiceTestHelper.iamServiceWithAccessKeyInAccount(
             ACCESS_KEY_ID, SECRET_ACCESS_KEY, DEFAULT_ACCOUNT);
-    private final EmulatorConfig config = mock(EmulatorConfig.class);
+    private final EmulatorConfig config = mock(EmulatorConfig.class, RETURNS_DEEP_STUBS);
     private final EksTokenWebhookController controller = new EksTokenWebhookController(
             new EksTokenValidator(iamService), new EksWorkerAuthentication(iamService, null, null, null, config));
 
