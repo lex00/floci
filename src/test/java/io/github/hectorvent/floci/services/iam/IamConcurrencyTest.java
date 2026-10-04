@@ -346,6 +346,134 @@ class IamConcurrencyTest {
         }
     }
 
+    /**
+     * Racing creates of one name must leave exactly one caller with a success and answer every
+     * other caller with the conflict AWS documents (409 EntityAlreadyExists; InvalidInput for
+     * CreateServiceLinkedRole). Before the create paths took a per-store lock, two concurrent
+     * CreateRole calls for one name both returned 200.
+     */
+    @TestFactory
+    Stream<DynamicTest> concurrentSameNameCreatesLeaveExactlyOneWinner() {
+        record Scenario(String name, String expectedError, java.util.function.Consumer<IamService> create,
+                        ToIntFunction<IamService> storedCount) {}
+
+        List<Scenario> scenarios = List.of(
+                new Scenario("createUser", "EntityAlreadyExists",
+                        iam -> iam.createUser("race", "/"),
+                        iam -> iam.listUsers(null).size()),
+                new Scenario("createGroup", "EntityAlreadyExists",
+                        iam -> iam.createGroup("race", "/"),
+                        iam -> iam.listGroups(null).size()),
+                new Scenario("createRole", "EntityAlreadyExists",
+                        iam -> iam.createRole("race", "/", "{}", null, 3600, null),
+                        iam -> iam.listRoles(null).size()),
+                new Scenario("createPolicy", "EntityAlreadyExists",
+                        iam -> iam.createPolicy("race", "/", null, "{}", null),
+                        iam -> iam.listPolicies("Local", null).size()),
+                new Scenario("createInstanceProfile", "EntityAlreadyExists",
+                        iam -> iam.createInstanceProfile("race", "/"),
+                        iam -> iam.listInstanceProfiles(null).size()),
+                new Scenario("createServiceLinkedRole", "InvalidInput",
+                        iam -> iam.createServiceLinkedRole("es.amazonaws.com", null, null),
+                        iam -> iam.listRoles(null).size())
+        );
+
+        return scenarios.stream().map(s -> DynamicTest.dynamicTest(s.name(),
+                () -> runCreateRace(s.name(), s.expectedError(), s.create(), s.storedCount())));
+    }
+
+    private void runCreateRace(String name, String expectedError, java.util.function.Consumer<IamService> create,
+                               ToIntFunction<IamService> storedCount) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(THREADS);
+        try {
+            for (int trial = 0; trial < TRIALS; trial++) {
+                IamService iam = newIamService();
+                CountDownLatch start = new CountDownLatch(1);
+                CountDownLatch done = new CountDownLatch(N);
+                java.util.concurrent.atomic.AtomicInteger winners = new java.util.concurrent.atomic.AtomicInteger();
+                List<String> unexpected = new CopyOnWriteArrayList<>();
+
+                for (int i = 0; i < N; i++) {
+                    pool.execute(() -> {
+                        try {
+                            start.await(10, TimeUnit.SECONDS);
+                            create.accept(iam);
+                            winners.incrementAndGet();
+                        } catch (io.github.hectorvent.floci.core.common.AwsException e) {
+                            if (!expectedError.equals(e.getErrorCode())) {
+                                unexpected.add(e.getErrorCode());
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        } catch (Throwable t) {
+                            unexpected.add(t.toString());
+                        } finally {
+                            done.countDown();
+                        }
+                    });
+                }
+                start.countDown();
+                assertTrue(done.await(30, TimeUnit.SECONDS), name + ": workers stalled");
+
+                int stored = storedCount.applyAsInt(iam);
+                if (winners.get() != 1 || stored != 1 || !unexpected.isEmpty()) {
+                    fail(name + " trial " + trial + ": expected exactly one success, got winners="
+                            + winners.get() + " stored=" + stored + " unexpectedErrors=" + unexpected);
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /** Renames insert under the new name the same way a create does, so they race the same way. */
+    @Test
+    void concurrentRenamesOntoOneNameLeaveExactlyOneWinner() throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(THREADS);
+        try {
+            for (int trial = 0; trial < TRIALS; trial++) {
+                IamService iam = newIamService();
+                for (int i = 0; i < N; i++) iam.createUser("u" + i, "/");
+                CountDownLatch start = new CountDownLatch(1);
+                CountDownLatch done = new CountDownLatch(N);
+                java.util.concurrent.atomic.AtomicInteger winners = new java.util.concurrent.atomic.AtomicInteger();
+                List<String> unexpected = new CopyOnWriteArrayList<>();
+
+                for (int i = 0; i < N; i++) {
+                    String from = "u" + i;
+                    pool.execute(() -> {
+                        try {
+                            start.await(10, TimeUnit.SECONDS);
+                            iam.updateUser(from, "race", null);
+                            winners.incrementAndGet();
+                        } catch (io.github.hectorvent.floci.core.common.AwsException e) {
+                            if (!"EntityAlreadyExists".equals(e.getErrorCode())) {
+                                unexpected.add(e.getErrorCode());
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        } catch (Throwable t) {
+                            unexpected.add(t.toString());
+                        } finally {
+                            done.countDown();
+                        }
+                    });
+                }
+                start.countDown();
+                assertTrue(done.await(30, TimeUnit.SECONDS), "rename workers stalled");
+
+                int total = iam.listUsers(null).size();
+                if (winners.get() != 1 || total != N || !unexpected.isEmpty()) {
+                    fail("updateUser rename trial " + trial + ": expected one rename and " + N
+                            + " users, got winners=" + winners.get() + " users=" + total
+                            + " unexpectedErrors=" + unexpected);
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
     private static String[] createPolicies(IamService iam, String prefix) {
         String[] arns = new String[N];
         for (int i = 0; i < N; i++) {
