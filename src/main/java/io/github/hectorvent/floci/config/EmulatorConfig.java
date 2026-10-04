@@ -2857,6 +2857,16 @@ public interface EmulatorConfig {
         boolean iamAuthWebhook();
 
         /**
+         * When true, an assumed-role session's {@code aws eks get-token} token authenticates as the
+         * username and kubernetesGroups of that role's STANDARD access entry, and is rejected when
+         * the role has none, as on AWS. When false (the default), every non-worker credential is
+         * mapped to {@code system:masters}, the behaviour this webhook has always had. Static keys
+         * (the account itself) keep cluster-admin either way.
+         */
+        @WithDefault("false")
+        boolean principalIdentity();
+
+        /**
          * When true (and ECR is enabled), each new k3s cluster gets a generated
          * {@code /etc/rancher/k3s/registries.yaml} that mirrors every ECR repository URI the
          * emulator can mint to the registry container's in-network endpoint, so pods can pull

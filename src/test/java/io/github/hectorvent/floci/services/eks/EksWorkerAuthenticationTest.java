@@ -150,6 +150,62 @@ class EksWorkerAuthenticationTest {
         return auth.authenticate(verified, "demo", ACCOUNT, REGION, CREATED.toString());
     }
 
+    private static final String ALICE = "arn:aws:iam::" + ACCOUNT + ":role/alice";
+    private static final String ALICE_KEY = "ASIAALICE";
+
+    private EksTokenValidator.VerifiedToken aliceSession() {
+        IamRole alice = new IamRole("AROA-alice", "alice", "/", ALICE, "{}");
+        when(iam.findRole(ACCOUNT, "alice")).thenReturn(Optional.of(alice));
+        when(iam.findEksSessionIdentity(ALICE_KEY)).thenReturn(Optional.of(
+                new EksSessionIdentity(ACCOUNT, ALICE, alice.getRoleId(), null)));
+        return new EksTokenValidator.VerifiedToken(ALICE_KEY, REGION);
+    }
+
+    @Test
+    void principalIdentityMapsAnAssumedRoleToItsAccessEntry() {
+        EksTokenValidator.VerifiedToken token = aliceSession();
+        entries.create(cluster, new CreateAccessEntryRequest(ALICE, "STANDARD", "alice",
+                List.of("estate-app"), null, null));
+        EksWorkerAuthentication withPrincipals = new EksWorkerAuthentication(iam, eks, ec2, entries, true);
+
+        Map<String, Object> user = withPrincipals.authenticate(token, "demo", ACCOUNT, REGION,
+                String.valueOf(cluster.getCreatedAt())).orElseThrow();
+        assertEquals("alice", user.get("username"));
+        assertEquals(List.of("estate-app"), user.get("groups"));
+    }
+
+    @Test
+    void principalIdentityFillsTheSessionNamePlaceholder() {
+        EksTokenValidator.VerifiedToken token = aliceSession();
+        entries.create(cluster, new CreateAccessEntryRequest(ALICE, "STANDARD", null, null, null, null));
+        EksWorkerAuthentication withPrincipals = new EksWorkerAuthentication(iam, eks, ec2, entries, true);
+
+        Map<String, Object> user = withPrincipals.authenticate(token, "demo", ACCOUNT, REGION,
+                String.valueOf(cluster.getCreatedAt())).orElseThrow();
+        assertEquals("arn:aws:sts::" + ACCOUNT + ":assumed-role/alice/" + EksWorkerAuthentication.SESSION_NAME,
+                user.get("username"));
+        assertEquals(List.of(), user.get("groups"));
+    }
+
+    @Test
+    void principalIdentityRejectsARoleWithNoAccessEntry() {
+        EksTokenValidator.VerifiedToken token = aliceSession();
+        EksWorkerAuthentication withPrincipals = new EksWorkerAuthentication(iam, eks, ec2, entries, true);
+
+        assertTrue(withPrincipals.authenticate(token, "demo", ACCOUNT, REGION,
+                String.valueOf(cluster.getCreatedAt())).isEmpty());
+    }
+
+    @Test
+    void withoutPrincipalIdentityAnAssumedRoleKeepsTheLegacyAdministrator() {
+        EksTokenValidator.VerifiedToken token = aliceSession();
+
+        Map<String, Object> user = auth.authenticate(token, "demo", ACCOUNT, REGION,
+                String.valueOf(cluster.getCreatedAt())).orElseThrow();
+        assertEquals("floci:aws-iam", user.get("username"));
+        assertEquals(List.of("system:masters"), user.get("groups"));
+    }
+
     private void createEntry(String type) {
         entries.create(cluster, new CreateAccessEntryRequest(ROLE, type, null, null, null, null));
     }
