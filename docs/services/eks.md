@@ -17,6 +17,11 @@ EKS uses a standard REST API with JSON bodies — not the JSON 1.1 (`X-Amz-Targe
 | `DescribeAccessEntry` | Describe an access entry by IAM principal ARN |
 | `ListAccessEntries` | List principal ARNs with pagination |
 | `DeleteAccessEntry` | Delete access-entry metadata |
+| `CreatePodIdentityAssociation` | Create Pod Identity association metadata |
+| `DescribePodIdentityAssociation` | Describe an association by ID |
+| `ListPodIdentityAssociations` | List associations, filtered by namespace and service account, with pagination |
+| `UpdatePodIdentityAssociation` | Change an association's role, target role, or session-tag setting |
+| `DeletePodIdentityAssociation` | Delete an association |
 | `CreateNodegroup` | Create node group metadata for a cluster |
 | `DescribeNodegroup` | Describe a node group by cluster and name |
 | `ListNodegroups` | List node group names for a cluster |
@@ -25,9 +30,9 @@ EKS uses a standard REST API with JSON bodies — not the JSON 1.1 (`X-Amz-Targe
 | `DescribeFargateProfile` | Describe a Fargate profile by cluster and name |
 | `ListFargateProfiles` | List Fargate profile names for a cluster |
 | `DeleteFargateProfile` | Delete a Fargate profile |
-| `TagResource` | Add tags to a cluster |
-| `UntagResource` | Remove tags from a cluster |
-| `ListTagsForResource` | List tags on a cluster |
+| `TagResource` | Add tags to a cluster or Pod Identity association |
+| `UntagResource` | Remove tags from a cluster or Pod Identity association |
+| `ListTagsForResource` | List tags on a cluster or Pod Identity association |
 
 ## Access-entry management
 
@@ -66,6 +71,19 @@ aws --endpoint-url http://localhost:4566 eks create-access-entry \
   --cluster-name local-nodes --principal-arn arn:aws:iam::000000000000:role/worker \
   --type EC2_LINUX
 ```
+
+## Pod Identity associations
+
+Associations are stored per cluster and keyed by a generated `a-` ID; the ARN has the form
+`arn:aws:eks:<region>:<account>:podidentityassociation/<cluster>/<id>`. A second association for the
+same namespace and service account returns `ResourceInUseException` (409), and an unknown ID returns
+`ResourceNotFoundException` (404). `roleArn` and `targetRoleArn` must be IAM role ARNs; the roles are
+not looked up. Setting `targetRoleArn` generates an `externalId`, and updating it to an empty string
+removes both. Repeating a create with the same client token and parameters returns the existing
+association. Cluster deletion removes its associations.
+
+Associations are metadata only: Floci does not run the EKS Pod Identity Agent, so pods in a k3s
+cluster do not receive credentials from them.
 
 ## Modes
 
