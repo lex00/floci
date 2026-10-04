@@ -67,12 +67,14 @@ public class EksService implements TagHandler, ResourceProvider {
     private final Ec2Service ec2Service;
     private final EksOidcService oidcService;
     private final EksAccessEntryService accessEntries;
+    private final EksPodIdentityAssociationService podIdentityAssociations;
     private final ScheduledExecutorService poller = Executors.newSingleThreadScheduledExecutor();
 
     @Inject
     public EksService(StorageFactory storageFactory, EmulatorConfig config,
             RegionResolver regionResolver, EksClusterManager clusterManager, Ec2Service ec2Service,
-            EksOidcService oidcService, EksAccessEntryService accessEntries) {
+            EksOidcService oidcService, EksAccessEntryService accessEntries,
+            EksPodIdentityAssociationService podIdentityAssociations) {
         this.storage = storageFactory.create("eks", "eks-clusters.json",
                 new TypeReference<Map<String, Cluster>>() {
                 });
@@ -88,6 +90,7 @@ public class EksService implements TagHandler, ResourceProvider {
         this.ec2Service = ec2Service;
         this.oidcService = oidcService;
         this.accessEntries = accessEntries;
+        this.podIdentityAssociations = podIdentityAssociations;
     }
 
     @PostConstruct
@@ -330,6 +333,7 @@ public class EksService implements TagHandler, ResourceProvider {
             clusterManager.stopCluster(cluster);
         }
         accessEntries.deleteClusterEntries(cluster);
+        podIdentityAssociations.deleteClusterAssociations(cluster);
         storage.delete(name);
         oidcService.deleteKey(name);
         return cluster;
@@ -502,6 +506,11 @@ public class EksService implements TagHandler, ResourceProvider {
 
     @Override
     public void tagResource(String region, String resourceArn, Map<String, String> tags) {
+        String[] association = EksPodIdentityAssociationService.parseAssociationArn(resourceArn);
+        if (association != null) {
+            podIdentityAssociations.tagResource(associationCluster(association, resourceArn), resourceArn, tags);
+            return;
+        }
         String clusterName = extractClusterName(resourceArn);
         Cluster cluster = storage.get(clusterName)
                 .orElseThrow(() -> new AwsException("ResourceNotFoundException",
@@ -516,6 +525,11 @@ public class EksService implements TagHandler, ResourceProvider {
 
     @Override
     public void untagResource(String region, String resourceArn, List<String> tagKeys) {
+        String[] association = EksPodIdentityAssociationService.parseAssociationArn(resourceArn);
+        if (association != null) {
+            podIdentityAssociations.untagResource(associationCluster(association, resourceArn), resourceArn, tagKeys);
+            return;
+        }
         String clusterName = extractClusterName(resourceArn);
         Cluster cluster = storage.get(clusterName)
                 .orElseThrow(() -> new AwsException("ResourceNotFoundException",
@@ -529,6 +543,10 @@ public class EksService implements TagHandler, ResourceProvider {
 
     @Override
     public Map<String, String> listTags(String region, String resourceArn) {
+        String[] association = EksPodIdentityAssociationService.parseAssociationArn(resourceArn);
+        if (association != null) {
+            return podIdentityAssociations.listTags(associationCluster(association, resourceArn), resourceArn);
+        }
         String clusterName = extractClusterName(resourceArn);
         Cluster cluster = storage.get(clusterName)
                 .orElseThrow(() -> new AwsException("ResourceNotFoundException",
@@ -547,6 +565,11 @@ public class EksService implements TagHandler, ResourceProvider {
 
     public Map<String, String> listTagsForResource(String resourceArn) {
         return listTags(null, resourceArn);
+    }
+
+    private Cluster associationCluster(String[] association, String resourceArn) {
+        return storage.get(association[0]).orElseThrow(() -> new AwsException("ResourceNotFoundException",
+                "Resource not found: " + resourceArn, 404));
     }
 
     private String extractClusterName(String resourceArn) {
