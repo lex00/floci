@@ -115,6 +115,7 @@ A message older than the queue's `MessageRetentionPeriod` is no longer returned 
 | `FLOCI_SERVICES_SQS_MAX_MESSAGE_SIZE` | `1048576` | Maximum message size in bytes (1 MiB) |
 | `FLOCI_SERVICES_SQS_CLEAR_FIFO_DEDUPLICATION_CACHE_ON_PURGE` | `false` | When `true`, `PurgeQueue` also clears the FIFO deduplication cache for the queue and any SNS FIFO topics subscribed to it |
 | `FLOCI_SERVICES_SQS_RECEIPT_HANDLE_SECRET` | `local-emulator-secret` | HMAC secret that signs receipt handles, so a handle that was edited or built by hand is rejected |
+| `FLOCI_SERVICES_SQS_ENDPOINT_STRATEGY` | `standard` | Shape of the returned `QueueUrl`, see [Queue URL Format](#queue-url-format) |
 
 ## Examples
 
@@ -166,5 +167,9 @@ aws sqs set-queue-attributes \
 ## Queue URL Format
 
 ```
-http://localhost:4566/000000000000/<queue-name>
+https://sqs.<region>.amazonaws.com/000000000000/<queue-name>
 ```
+
+`CreateQueue`, `GetQueueUrl`, `ListQueues` and `ListDeadLetterSourceQueues` return the queue URL AWS would return. The region is the one the request was signed for, and the host carries that region's partition DNS suffix, so a queue in `cn-north-1` is reported as `https://sqs.cn-north-1.amazonaws.com.cn/...`. SDKs send requests to the endpoint you configured and take only the path from the URL, while tooling that parses queue URLs, such as the Terraform/OpenTofu `aws_sqs_queue` importer, accepts nothing else.
+
+Set `FLOCI_SERVICES_SQS_ENDPOINT_STRATEGY=path` to get Floci's own endpoint form instead, `http://localhost:4566/000000000000/<queue-name>`, for clients that send requests to the host in the returned URL, such as the AWS SDK for Java 1.x. Under either setting every form is accepted as input: the canonical URL, the Floci URL, any other host with the same `/<account>/<queue-name>` path, and the bare queue name. Queues persisted by an earlier version are reported in the current form.

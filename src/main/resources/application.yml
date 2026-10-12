@@ -361,6 +361,9 @@ floci:
       max-message-size: 1048576
       clear-fifo-deduplication-cache-on-purge: false
       receipt-handle-secret: local-emulator-secret
+      # standard -> https://sqs.<region>.<partition dns suffix>/<account>/<name>
+      # path     -> <base-url>/<account>/<name>
+      endpoint-strategy: standard
     s3:
       enabled: true
       enforce-auth: false

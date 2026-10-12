@@ -139,6 +139,7 @@ floci:
       enabled: true
       default-visibility-timeout: 30
       max-message-size: 1048576
+      endpoint-strategy: standard
     s3:
       enabled: true
       enforce-auth: false
