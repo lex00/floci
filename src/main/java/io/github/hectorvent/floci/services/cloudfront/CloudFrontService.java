@@ -204,7 +204,7 @@ public class CloudFrontService implements ServerCertificateReferenceProvider {
             dist.setEtag(UUID.randomUUID().toString());
             if (tags != null && !tags.isEmpty()) {
                 dist.setTags(tags);
-                tagStore.put("distribution/" + id, tags);
+                tagStore.put(dist.getArn(), tags);
             }
             distStore.put(id, dist);
             return dist;
@@ -347,7 +347,7 @@ public class CloudFrontService implements ServerCertificateReferenceProvider {
         }
         distStore.delete(id);
         invalidationStore.delete(id);
-        tagStore.delete("distribution/" + id);
+        tagStore.delete(existing.getArn());
     }
 
     /**
@@ -356,9 +356,9 @@ public class CloudFrontService implements ServerCertificateReferenceProvider {
      * which owns the resource lifecycle at the stack level.
      */
     public synchronized void removeDistribution(String id) {
+        distStore.get(id).ifPresent(existing -> tagStore.delete(existing.getArn()));
         distStore.delete(id);
         invalidationStore.delete(id);
-        tagStore.delete("distribution/" + id);
     }
 
     public List<Distribution> listDistributions(String marker, int maxItems) {

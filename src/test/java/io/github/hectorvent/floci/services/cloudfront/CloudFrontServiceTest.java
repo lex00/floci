@@ -365,6 +365,35 @@ class CloudFrontServiceTest {
     }
 
     @Test
+    void createDistributionStoresTagsUnderTheResourceArn() {
+        CloudFrontService service = serviceWithDomainSuffix(DEFAULT_DOMAIN_SUFFIX);
+
+        Distribution dist = service.createDistribution(distribution(true, List.of()), Map.of("estate", "probe"));
+
+        assertEquals(Map.of("estate", "probe"), service.listTagsForResource(dist.getArn()));
+    }
+
+    @Test
+    void deleteDistributionDropsItsTags() {
+        CloudFrontService service = serviceWithDomainSuffix(DEFAULT_DOMAIN_SUFFIX);
+        Distribution dist = service.createDistribution(distribution(false, List.of()), Map.of("estate", "probe"));
+
+        service.deleteDistribution(dist.getId(), dist.getEtag());
+
+        assertTrue(service.listTagsForResource(dist.getArn()).isEmpty());
+    }
+
+    @Test
+    void removeDistributionDropsItsTags() {
+        CloudFrontService service = serviceWithDomainSuffix(DEFAULT_DOMAIN_SUFFIX);
+        Distribution dist = service.createDistribution(distribution(true, List.of()), Map.of("estate", "probe"));
+
+        service.removeDistribution(dist.getId());
+
+        assertTrue(service.listTagsForResource(dist.getArn()).isEmpty());
+    }
+
+    @Test
     void createStreamingDistributionHonorsConfiguredDomainSuffix() {
         CloudFrontService service = serviceWithDomainSuffix("cloudfront.local");
 
@@ -1271,7 +1300,7 @@ class CloudFrontServiceTest {
         CloudFrontController controller =
                 new CloudFrontController(serviceWithDomainSuffix(DEFAULT_DOMAIN_SUFFIX));
 
-        Response response = controller.createDistribution(null, DISTRIBUTION_CONFIG_XML);
+        Response response = controller.createDistribution(DISTRIBUTION_CONFIG_XML);
         String xml = response.getEntity().toString();
         String distributionId = XmlParser.extractFirst(xml, ID_ELEMENT, null);
 
@@ -1290,7 +1319,7 @@ class CloudFrontServiceTest {
                 new CloudFrontController(serviceWithDomainSuffix(DEFAULT_DOMAIN_SUFFIX));
 
         Response response =
-                controller.createDistribution(null, GEO_RESTRICTED_DISTRIBUTION_CONFIG_XML);
+                controller.createDistribution(GEO_RESTRICTED_DISTRIBUTION_CONFIG_XML);
         String xml = response.getEntity().toString();
         String distributionId = XmlParser.extractFirst(xml, ID_ELEMENT, null);
 

@@ -137,7 +137,10 @@ PUT, PATCH and DELETE).
   the value a signed URL carries as `Key-Pair-Id`. Key group, cache policy, origin request policy and
   response headers policy IDs are UUIDs, as they are on AWS.
 - ARNs are global — no region segment: `arn:aws:cloudfront::{accountId}:distribution/{id}`.
-- Invalidations are immediately marked `Completed`.
+- Invalidations are immediately marked `Completed`, so `InProgressInvalidationBatches` is always `0`.
+- Tags passed to `CreateDistributionWithTags` are stored under the distribution ARN, so
+  `ListTagsForResource`, `TagResource` and `UntagResource` see them. Deleting the distribution drops
+  its tags.
 - `DeleteDistribution` returns `DistributionNotDisabled` (409) if `Enabled` is `true` in the config.
 - All mutating operations (`PUT`, `DELETE`) require an `If-Match` header containing the current
   `ETag`. Response headers policies, public keys, and key groups distinguish a missing header

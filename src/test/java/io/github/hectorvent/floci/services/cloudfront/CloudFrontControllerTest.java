@@ -134,7 +134,7 @@ class CloudFrontControllerTest {
             return d;
         });
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
 
@@ -175,7 +175,7 @@ class CloudFrontControllerTest {
             return d;
         });
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
 
@@ -220,7 +220,7 @@ class CloudFrontControllerTest {
             return d;
         });
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
 
@@ -271,7 +271,7 @@ class CloudFrontControllerTest {
             d.setEtag("etag-2");
             return d;
         });
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
         when(service.getDistribution("dist-2")).thenReturn(captor.getValue());
@@ -310,7 +310,7 @@ class CloudFrontControllerTest {
             d.setEtag("etag-3");
             return d;
         });
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
         when(service.getDistribution("dist-3")).thenReturn(captor.getValue());
@@ -337,7 +337,7 @@ class CloudFrontControllerTest {
                 </LambdaFunctionAssociation></Items></LambdaFunctionAssociations>
                 """);
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(400, created.getStatus());
             assertTrue(((String) created.getEntity()).contains("InvalidArgument"));
         }
@@ -355,7 +355,7 @@ class CloudFrontControllerTest {
                 </LambdaFunctionAssociation></Items></LambdaFunctionAssociations>
                 """);
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(400, created.getStatus());
             assertTrue(((String) created.getEntity()).contains("InconsistentQuantities"));
         }
@@ -377,7 +377,7 @@ class CloudFrontControllerTest {
             d.setEtag("etag-ssl");
             return d;
         });
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
         when(service.getDistribution("dist-ssl")).thenReturn(captor.getValue());
@@ -411,7 +411,7 @@ class CloudFrontControllerTest {
             d.setEtag("etag-ssl2");
             return d;
         });
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
         when(service.getDistribution("dist-ssl2")).thenReturn(captor.getValue());
@@ -438,7 +438,7 @@ class CloudFrontControllerTest {
                         + "<SslProtocol>TLSv1.2</SslProtocol>"
                         + "</Items></OriginSslProtocols></CustomOriginConfig>");
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(400, created.getStatus());
             assertTrue(((String) created.getEntity()).contains("InconsistentQuantities"));
         }
@@ -454,7 +454,7 @@ class CloudFrontControllerTest {
                 "<OriginProtocolPolicy>https-only</OriginProtocolPolicy>"
                         + "<OriginReadTimeout>121</OriginReadTimeout></CustomOriginConfig>");
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(400, created.getStatus());
             assertTrue(((String) created.getEntity()).contains("InvalidOriginReadTimeout"));
         }
@@ -470,7 +470,7 @@ class CloudFrontControllerTest {
                 "<OriginProtocolPolicy>https-only</OriginProtocolPolicy>"
                         + "<OriginKeepaliveTimeout>0</OriginKeepaliveTimeout></CustomOriginConfig>");
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(400, created.getStatus());
             assertTrue(((String) created.getEntity()).contains("InvalidOriginKeepaliveTimeout"));
         }
@@ -486,7 +486,7 @@ class CloudFrontControllerTest {
                 "<OriginProtocolPolicy>https-only</OriginProtocolPolicy>"
                         + "<OriginReadTimeout>fast</OriginReadTimeout></CustomOriginConfig>");
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(400, created.getStatus());
             assertTrue(((String) created.getEntity()).contains("InvalidOriginReadTimeout"));
         }
@@ -503,7 +503,7 @@ class CloudFrontControllerTest {
                         + "<OriginReadTimeout>60</OriginReadTimeout></CustomOriginConfig>"
                         + "<ResponseCompletionTimeout>30</ResponseCompletionTimeout>");
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(400, created.getStatus());
             assertTrue(((String) created.getEntity()).contains("InvalidArgument"));
         }
@@ -521,7 +521,7 @@ class CloudFrontControllerTest {
                         + "<OriginReadTimeout>60</OriginReadTimeout></CustomOriginConfig>"
                         + "<ResponseCompletionTimeout>60</ResponseCompletionTimeout>");
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
     }
@@ -536,7 +536,7 @@ class CloudFrontControllerTest {
                 "<OriginProtocolPolicy>https-only</OriginProtocolPolicy></CustomOriginConfig>"
                         + "<ResponseCompletionTimeout>10</ResponseCompletionTimeout>");
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(400, created.getStatus());
             assertTrue(((String) created.getEntity()).contains("InvalidArgument"));
         }
@@ -558,7 +558,7 @@ class CloudFrontControllerTest {
             d.setEtag("etag-fv");
             return d;
         });
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
         when(service.getDistribution("dist-fv")).thenReturn(captor.getValue());
@@ -592,7 +592,7 @@ class CloudFrontControllerTest {
             d.setEtag("etag-ttl0");
             return d;
         });
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
         when(service.getDistribution("dist-ttl0")).thenReturn(captor.getValue());
@@ -621,7 +621,7 @@ class CloudFrontControllerTest {
             d.setEtag("etag-ttlabsent");
             return d;
         });
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
         when(service.getDistribution("dist-ttlabsent")).thenReturn(captor.getValue());
@@ -659,7 +659,7 @@ class CloudFrontControllerTest {
             d.setEtag("etag-fvnames");
             return d;
         });
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
         when(service.getDistribution("dist-fvnames")).thenReturn(captor.getValue());
@@ -729,7 +729,7 @@ class CloudFrontControllerTest {
             return d;
         });
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
 
@@ -760,7 +760,7 @@ class CloudFrontControllerTest {
             return d;
         });
 
-        try (Response created = controller.createDistribution(null, body)) {
+        try (Response created = controller.createDistribution(body)) {
             assertEquals(201, created.getStatus());
         }
 

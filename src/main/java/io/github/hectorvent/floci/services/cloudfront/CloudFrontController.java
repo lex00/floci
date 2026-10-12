@@ -66,11 +66,11 @@ public class CloudFrontController {
 
     @POST
     @Path("/distribution")
-    public Response createDistribution(@QueryParam("WithTags") String withTags, String body) {
+    public Response createDistribution(String body) {
         try {
             DistributionConfig config = parseDistributionConfig(body);
             Map<String, String> tags = new LinkedHashMap<>();
-            if (withTags != null) {
+            if ("DistributionConfigWithTags".equals(XmlParser.rootElementName(body))) {
                 tags = parseTags(body);
             }
             Distribution dist = new Distribution();
@@ -1761,6 +1761,7 @@ public class CloudFrontController {
                 .elem("DomainName", dist.getDomainName())
                 .elem("LastModifiedTime",
                         dist.getLastModifiedTime() != null ? dist.getLastModifiedTime().toString() : "")
+                .elem("InProgressInvalidationBatches", 0)
                 .raw(xmlActiveTrustedKeyGroups(dist.getConfig()))
                 .start("ActiveTrustedSigners")
                 .elem("Enabled", false)
@@ -1785,7 +1786,7 @@ public class CloudFrontController {
                 .elem("HttpVersion", cfg.getHttpVersion() != null ? cfg.getHttpVersion() : "http2")
                 .elem("PriceClass", cfg.getPriceClass() != null ? cfg.getPriceClass() : "PriceClass_All")
                 .elem("IsIPV6Enabled", cfg.isIPV6Enabled())
-                .elem("WebAclId", cfg.getWebAclId() != null ? cfg.getWebAclId() : "");
+                .elem("WebACLId", cfg.getWebAclId() != null ? cfg.getWebAclId() : "");
 
         List<Origin> origins = cfg.getOrigins();
         xml.raw(xmlQuantityItems("Origins", "Origin", origins != null ? origins.size() : 0,
@@ -2258,7 +2259,8 @@ public class CloudFrontController {
                 .elem("PriceClass", d.getConfig() != null && d.getConfig().getPriceClass() != null
                         ? d.getConfig().getPriceClass() : "PriceClass_All")
                 .elem("IsIPV6Enabled", d.getConfig() != null && d.getConfig().isIPV6Enabled())
-                .elem("WebAclId", "");
+                .elem("WebACLId", d.getConfig() != null && d.getConfig().getWebAclId() != null
+                        ? d.getConfig().getWebAclId() : "");
 
         DistributionConfig cfg = d.getConfig();
         List<Origin> origins = cfg != null ? cfg.getOrigins() : null;
@@ -2511,7 +2513,7 @@ public class CloudFrontController {
                 values.getOrDefault("PriceClass", "PriceClass_All"));
         cfg.setIPV6Enabled("true".equalsIgnoreCase(
                 values.getOrDefault("IsIPV6Enabled", "true")));
-        cfg.setWebAclId(values.get("WebAclId"));
+        cfg.setWebAclId(values.get("WebACLId"));
         cfg.setContinuousDeploymentPolicyId(
                 values.get("ContinuousDeploymentPolicyId"));
         cfg.setStaging("true".equalsIgnoreCase(
@@ -2590,7 +2592,7 @@ public class CloudFrontController {
                     "HttpVersion",
                     "PriceClass",
                     "IsIPV6Enabled",
-                    "WebAclId",
+                    "WebACLId",
                     "ContinuousDeploymentPolicyId",
                     "Staging" -> true;
             default -> false;
