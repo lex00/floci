@@ -798,7 +798,8 @@ class ServiceLastAccessedIntegrationTest {
         String jobId = generateJobFor(arn);
 
         iam("GetServiceLastAccessedDetails")
-            .formParam("JobId", jobId).formParam("Marker", "999").formParam("MaxItems", "0")
+            .formParam("JobId", jobId).formParam("Marker", IamQueryHandler.encodeMarker("zzz"))
+            .formParam("MaxItems", "0")
         .when().post("/").then()
             .statusCode(400)
             .body("ErrorResponse.Error.Code", equalTo("ValidationError"))
@@ -826,7 +827,7 @@ class ServiceLastAccessedIntegrationTest {
         iam("ListPoliciesGrantingServiceAccess").formParam("Arn", arn)
             .formParam("ServiceNamespaces.member.1", "s3")
             .formParam("ServiceNamespaces.member.2", "dynamodb")
-            .formParam("Marker", "1")
+            .formParam("Marker", IamQueryHandler.encodeMarker("s3"))
         .when().post("/").then()
             .statusCode(200)
             .body(containsString("<ServiceNamespace>dynamodb</ServiceNamespace>"))
@@ -880,7 +881,7 @@ class ServiceLastAccessedIntegrationTest {
 
         iam("GetServiceLastAccessedDetails")
             .formParam("JobId", generateJobFor(arn))
-            .formParam("Marker", "1")
+            .formParam("Marker", IamQueryHandler.encodeMarker("dynamodb"))
             .formParam("MaxItems", "1000")
         .when().post("/").then()
             .statusCode(200)

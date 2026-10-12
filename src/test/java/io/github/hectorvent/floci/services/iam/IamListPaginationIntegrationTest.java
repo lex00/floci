@@ -243,4 +243,102 @@ class IamListPaginationIntegrationTest {
                 .body("ErrorResponse.Error.Code", equalTo("InvalidInput"));
         }
     }
+
+    /**
+     * The marker names the last role a page returned, so roles created ahead of it between two
+     * calls are not pulled into the next page and push nothing back onto it.
+     */
+    @Test
+    void listRolesNextPageIgnoresRolesCreatedBeforeTheBoundary() {
+        String tag = suffix();
+        String path = "/pg-insert-" + tag + "/";
+        String prefix = "pg-insert-" + tag + "-";
+        List<String> created = new ArrayList<>(List.of(prefix + "1", prefix + "3", prefix + "5", prefix + "7"));
+        created.forEach(name -> createRole(name, path));
+        try {
+            Page first = rolePage(path, "2", null);
+            assertEquals(List.of(prefix + "1", prefix + "3"), first.names());
+            assertTrue(first.truncated());
+
+            for (String early : List.of(prefix + "0", prefix + "2")) {
+                createRole(early, path);
+                created.add(early);
+            }
+
+            Page second = rolePage(path, "2", first.marker());
+            assertEquals(List.of(prefix + "5", prefix + "7"), second.names(),
+                    "no role repeats from the first page and none is skipped");
+            assertFalse(second.truncated());
+        } finally {
+            created.forEach(IamListPaginationIntegrationTest::deleteRole);
+        }
+    }
+
+    /**
+     * Deleting roles ahead of the boundary, including the one the marker names, leaves the next
+     * page starting at the first role after it.
+     */
+    @Test
+    void listRolesNextPageIgnoresRolesDeletedBeforeTheBoundary() {
+        String tag = suffix();
+        String path = "/pg-delete-" + tag + "/";
+        String prefix = "pg-delete-" + tag + "-";
+        List<String> remaining = new ArrayList<>();
+        for (int i = 1; i <= 5; i++) {
+            remaining.add(prefix + i);
+        }
+        remaining.forEach(name -> createRole(name, path));
+        try {
+            Page first = rolePage(path, "2", null);
+            assertEquals(List.of(prefix + "1", prefix + "2"), first.names());
+
+            for (String gone : List.of(prefix + "1", prefix + "2")) {
+                deleteRole(gone);
+                remaining.remove(gone);
+            }
+
+            Page second = rolePage(path, "2", first.marker());
+            assertEquals(List.of(prefix + "3", prefix + "4"), second.names(),
+                    "the role after the marker comes next even though the marked role is gone");
+            assertTrue(second.truncated());
+        } finally {
+            remaining.forEach(IamListPaginationIntegrationTest::deleteRole);
+        }
+    }
+
+    @Test
+    void listPoliciesNextPageIgnoresPoliciesCreatedBeforeTheBoundary() {
+        String tag = suffix();
+        String path = "/pg-policy-insert-" + tag + "/";
+        String prefix = "pg-policy-insert-" + tag + "-";
+        List<String> arns = new ArrayList<>();
+        arns.add(createPolicy(prefix + "1", path));
+        arns.add(createPolicy(prefix + "3", path));
+        try {
+            Page first = policyPage("Local", path, "1", null);
+            assertEquals(List.of(arns.get(0)), first.names());
+
+            arns.add(createPolicy(prefix + "0", path));
+
+            Page second = policyPage("Local", path, "1", first.marker());
+            assertEquals(List.of(arns.get(1)), second.names());
+            assertFalse(second.truncated());
+        } finally {
+            arns.forEach(IamListPaginationIntegrationTest::deletePolicy);
+        }
+    }
+
+    /** A list offset is not a marker the handler issues, so a number sent as one is refused. */
+    @Test
+    void listRolesAndListPoliciesRejectANumericMarker() {
+        for (String action : List.of("ListRoles", "ListPolicies")) {
+            for (String marker : List.of("2", "12", "100")) {
+                iam(action).formParam("Marker", marker)
+                .when().post("/").then()
+                    .statusCode(400)
+                    .body("ErrorResponse.Error.Code", equalTo("InvalidInput"))
+                    .body("ErrorResponse.Error.Message", equalTo("The marker " + marker + " is not valid."));
+            }
+        }
+    }
 }
