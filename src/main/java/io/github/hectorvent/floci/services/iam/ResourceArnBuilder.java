@@ -88,6 +88,8 @@ public class ResourceArnBuilder {
             case "ssm"            -> List.of(buildSsmArn(ctx, region, accountId));
             case "kms"            -> List.of(buildKmsArn(path, region, accountId));
             case "iam"            -> buildIamArns(ctx, region, accountId);
+            case "cognito-idp"    -> buildCognitoIdpArns(ctx, region, accountId);
+            case "logs"           -> buildLogsArns(ctx, region, accountId);
             default               -> List.of("*");
         };
     }
@@ -906,7 +908,158 @@ public class ResourceArnBuilder {
         return AwsArnUtils.Arn.of("kms", region, accountId, "key/" + keyId).toString();
     }
 
+    // ── Cognito user pools ───────────────────────────────────────────────────────
+
+    /**
+     * The tagging actions, which name their user pool by ARN. Every other action the Service
+     * Authorization Reference gives the {@code userpool} resource type carries a {@code UserPoolId},
+     * and no action without that type does, so the parameter alone decides the resource.
+     */
+    private static final Set<String> COGNITO_IDP_ARN_ACTIONS =
+            Set.of("TagResource", "UntagResource", "ListTagsForResource");
+
+    /**
+     * The user pool a Cognito action is evaluated against, {@code userpool/<UserPoolId>}. User pool
+     * clients, groups, users and domains have no resource type of their own, so an action on any of
+     * them is authorized against the pool that holds it. Actions the reference lists with no
+     * resource type, such as {@code CreateUserPool} and {@code ListUserPools}, stay on {@code *}.
+     */
+    private List<String> buildCognitoIdpArns(ContainerRequestContext ctx, String region, String accountId) {
+        JsonNode json = readJsonBody(ctx);
+        if (json == null || !json.isObject()) {
+            return List.of("*");
+        }
+        String userPoolId = json.path("UserPoolId").asText("").trim();
+        if (!userPoolId.isEmpty()) {
+            return List.of(AwsArnUtils.Arn.of("cognito-idp", region, accountId,
+                    "userpool/" + userPoolId).toString());
+        }
+        String resourceArn = json.path("ResourceArn").asText("").trim();
+        if (COGNITO_IDP_ARN_ACTIONS.contains(jsonTargetOperation(ctx))
+                && AwsArnUtils.isArnFor(resourceArn, "cognito-idp")) {
+            return List.of(resourceArn);
+        }
+        return List.of("*");
+    }
+
+    // ── CloudWatch Logs ──────────────────────────────────────────────────────────
+
+    /**
+     * The actions the Service Authorization Reference gives the {@code log-group} resource type and
+     * whose request names the group. {@code GetQueryResults} and {@code GetLogRecord} are typed
+     * {@code log-group} too, but carry only a query id or a record pointer, so they stay on
+     * {@code *}.
+     */
+    static final Set<String> LOGS_LOG_GROUP_ACTIONS = Set.of(
+            "AssociateKmsKey", "CreateExportTask", "CreateLogGroup", "DeleteDataProtectionPolicy",
+            "DeleteLogGroup", "DeleteMetricFilter", "DeleteRetentionPolicy", "DeleteSubscriptionFilter",
+            "DeleteSyslogConfiguration", "DeleteTransformer", "DescribeLogStreams",
+            "DescribeMetricFilters", "DescribeSubscriptionFilters", "DisassociateKmsKey",
+            "FilterLogEvents", "GetDataProtectionPolicy", "GetLogGroupFields", "GetTransformer",
+            "ListTagsLogGroup", "PutBearerTokenAuthentication", "PutDataProtectionPolicy",
+            "PutLogGroupDeletionProtection", "PutMetricFilter", "PutRetentionPolicy",
+            "PutSubscriptionFilter", "PutSyslogConfiguration", "PutTransformer", "StartLiveTail",
+            "StartQuery", "TagLogGroup", "UntagLogGroup");
+
+    /** The actions the reference gives the {@code log-stream} resource type. */
+    static final Set<String> LOGS_LOG_STREAM_ACTIONS = Set.of(
+            "CreateLogStream", "DeleteLogStream", "GetLogEvents", "PutLogEvents");
+
+    /** The tagging actions, which name their resource by an ARN without the trailing {@code :*}. */
+    private static final Set<String> LOGS_ARN_ACTIONS =
+            Set.of("TagResource", "UntagResource", "ListTagsForResource");
+
+    /**
+     * The log groups or log stream a CloudWatch Logs action is evaluated against.
+     *
+     * <p>A log-group action is evaluated against {@code log-group:<name>:log-stream:}, the resource
+     * AWS names in the AccessDenied message for one. That is why the CloudWatch Logs API Reference
+     * tells a policy to use the log group ARN with a trailing {@code :*} for most actions: the
+     * {@code :*} form matches it and the bare {@code log-group:<name>} form does not. The tagging
+     * actions are the documented exception and are matched against the ARN they carry.
+     *
+     * <p>{@code StartQuery} and {@code StartLiveTail} name several groups, and each is authorized,
+     * so a query cannot reach a group the policy does not allow by listing it beside one it does.
+     */
+    private List<String> buildLogsArns(ContainerRequestContext ctx, String region, String accountId) {
+        String operation = jsonTargetOperation(ctx);
+        JsonNode json = readJsonBody(ctx);
+        if (operation == null || json == null || !json.isObject()) {
+            return List.of("*");
+        }
+        if (LOGS_ARN_ACTIONS.contains(operation)) {
+            String resourceArn = json.path("resourceArn").asText("").trim();
+            return AwsArnUtils.isArnFor(resourceArn, "logs") ? List.of(resourceArn) : List.of("*");
+        }
+        if (LOGS_LOG_STREAM_ACTIONS.contains(operation)) {
+            String group = firstText(json, "logGroupName", "logGroupIdentifier");
+            String stream = json.path("logStreamName").asText("").trim();
+            if (group == null || stream.isEmpty()) {
+                return List.of("*");
+            }
+            return List.of(logGroupArnPrefix(group, region, accountId) + ":log-stream:" + stream);
+        }
+        if (!LOGS_LOG_GROUP_ACTIONS.contains(operation)) {
+            return List.of("*");
+        }
+        Set<String> groups = new LinkedHashSet<>();
+        String single = firstText(json, "logGroupName", "logGroupIdentifier");
+        if (single == null && json.path("resourceIdentifier").asText("").contains(":log-group:")) {
+            single = json.path("resourceIdentifier").asText().trim();
+        }
+        if (single != null) {
+            groups.add(single);
+        }
+        for (String field : List.of("logGroupNames", "logGroupIdentifiers")) {
+            for (JsonNode item : json.path(field)) {
+                String group = item.asText("").trim();
+                if (!group.isEmpty()) {
+                    groups.add(group);
+                }
+            }
+        }
+        if (groups.isEmpty()) {
+            return List.of("*");
+        }
+        List<String> arns = new ArrayList<>(groups.size());
+        for (String group : groups) {
+            arns.add(logGroupArnPrefix(group, region, accountId) + ":log-stream:");
+        }
+        return arns;
+    }
+
+    /**
+     * {@code arn:<partition>:logs:<region>:<account>:log-group:<name>} for a group given by name or
+     * by ARN. An identifier ARN keeps its own account, which is how a monitoring account names a
+     * source account's group, and loses the {@code :*} some callers append.
+     */
+    private static String logGroupArnPrefix(String group, String region, String accountId) {
+        if (AwsArnUtils.isArnFor(group, "logs") && group.contains(":log-group:")) {
+            return group.endsWith(":*") ? group.substring(0, group.length() - 2) : group;
+        }
+        return AwsArnUtils.Arn.of("logs", region, accountId, "log-group:" + group).toString();
+    }
+
+    private static String firstText(JsonNode json, String... fields) {
+        for (String field : fields) {
+            String value = json.path(field).asText("").trim();
+            if (!value.isEmpty()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────
+
+    /** The operation a JSON 1.1 request names in {@code X-Amz-Target}, as the action registry reads it. */
+    private static String jsonTargetOperation(ContainerRequestContext ctx) {
+        String target = ctx.getHeaderString("X-Amz-Target");
+        if (target == null || !target.contains(".")) {
+            return null;
+        }
+        return target.substring(target.lastIndexOf('.') + 1);
+    }
 
     private JsonNode readJsonBody(ContainerRequestContext ctx) {
         Object cached = ctx.getProperty("floci.bufferedJsonBody");

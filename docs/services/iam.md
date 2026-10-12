@@ -1117,7 +1117,7 @@ These identities always bypass enforcement (backward-compatible defaults):
 
 **IAM's own resources are named.** When enforcement evaluates a request, the target resource comes
 from `ResourceArnBuilder`, which builds an ARN for S3, Lambda, SQS, SNS, DynamoDB, Kinesis, Secrets
-Manager, SSM, KMS and IAM. Within IAM the resource type each action is evaluated against is the one
+Manager, SSM, KMS, IAM, Cognito user pools and CloudWatch Logs. Within IAM the resource type each action is evaluated against is the one
 the Service Authorization Reference gives it, so a statement naming a specific user, role, group,
 instance profile, managed policy, MFA device, identity provider or server certificate constrains
 it: a `Deny` on `arn:aws:iam::123456789012:user/bob` stops `DeleteUser` for Bob and leaves other
@@ -1175,6 +1175,21 @@ authorized once per resource, so a `Deny` on either name refuses the rename and 
 its original name and path. An update that changes neither the name nor the path names a single
 resource. The destination ARN is built beside the stored one, keeping the resource's own partition
 and account, since a rename moves a resource within an account rather than between partitions.
+
+**Cognito and CloudWatch Logs name their pool, group or stream.** A Cognito action that carries a
+`UserPoolId` is evaluated against `arn:aws:cognito-idp:<region>:<account>:userpool/<UserPoolId>`, the
+only resource type the Service Authorization Reference gives Cognito user pool actions, so a grant on
+one pool also covers that pool's clients, groups and users. `TagResource`, `UntagResource` and
+`ListTagsForResource` use the `ResourceArn` they carry. A CloudWatch Logs action the reference types
+`log-group` is evaluated against `arn:aws:logs:<region>:<account>:log-group:<name>:log-stream:`, the
+resource AWS names in its AccessDenied message, and a `log-stream` action such as `PutLogEvents`
+against `...:log-group:<name>:log-stream:<stream>`. That is why the CloudWatch Logs API Reference
+has a policy name a group as `log-group:<name>:*`: that form matches, and the bare
+`log-group:<name>` does not. The group comes from `logGroupName` or `logGroupIdentifier`, by name or
+by ARN. `StartQuery` and `StartLiveTail` name several groups and each one is authorized, so every
+group a query names must be allowed. The Logs tagging actions use the `resourceArn` they carry.
+Actions with no resource type, such as `CreateUserPool`, `ListUserPools` and `DescribeLogGroups`,
+stay on `*`, and so does `GetQueryResults`, whose request names only a query id.
 
 **Exception:** a bare 12-digit account-id key that equals its own account and sits under
 an effective SCP ceiling is **not** treated as an unknown key — it is evaluated against
