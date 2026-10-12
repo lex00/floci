@@ -20,7 +20,7 @@ import java.util.Map;
  * memories), so unlike {@code error} and {@code stringMap}/{@code text}, that one isn't actually
  * one shared behavior wearing several copies, it's genuinely different behavior per resource type.
  */
-final class BedrockAgentCoreControllerSupport {
+public final class BedrockAgentCoreControllerSupport {
 
     private BedrockAgentCoreControllerSupport() {
     }
@@ -31,7 +31,7 @@ final class BedrockAgentCoreControllerSupport {
      * {@code ValidationException} and gets logged under the caller's own logger so log lines still
      * attribute to the right controller.
      */
-    static Response error(Logger log, Exception e, String action) {
+    public static Response error(Logger log, Exception e, String action) {
         if (e instanceof AwsException aws) {
             return Response.status(aws.getHttpStatus())
                     .type(MediaType.APPLICATION_JSON)

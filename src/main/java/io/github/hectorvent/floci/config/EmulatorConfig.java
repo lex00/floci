@@ -3305,6 +3305,13 @@ public interface EmulatorConfig {
         /** Reply used when a request carries no user message, which is a legitimate call. */
         @WithDefault("No user message was supplied.")
         String harnessEmptyReply();
+
+        /**
+         * Score every AgentCore Evaluations result carries: each {@code Evaluate} result and each
+         * evaluator's average in a completed batch evaluation. No judge model runs.
+         */
+        @WithDefault("1.0")
+        double evaluationScore();
     }
 
     /** Classic (2012-06-01) Elastic Load Balancing — a separate API from {@link ElbV2ServiceConfig}. */
