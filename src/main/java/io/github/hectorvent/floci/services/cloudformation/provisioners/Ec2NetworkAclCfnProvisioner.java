@@ -106,6 +106,7 @@ public class Ec2NetworkAclCfnProvisioner implements CfnResourceProvisioner {
                 ctx.resolveOptional(props, "RuleAction"),
                 egress,
                 ctx.resolveOptional(props, "CidrBlock"),
+                ctx.resolveOptional(props, "Ipv6CidrBlock"),
                 // RuleNumber, Egress and NetworkAclId are the createOnly key, so re-provisioning
                 // the same key is an update. replace=false would raise NetworkAclEntryAlreadyExists
                 // on every stack update.

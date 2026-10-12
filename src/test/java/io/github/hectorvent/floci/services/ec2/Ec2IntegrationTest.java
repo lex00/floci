@@ -4994,6 +4994,79 @@ class Ec2IntegrationTest {
             .body("Response.Errors.Error.Code", equalTo("DependencyViolation"));
     }
 
+    private String newNetworkAcl(String vpcId) {
+        return given()
+            .formParam("Action", "CreateNetworkAcl")
+            .formParam("VpcId", vpcId)
+            .header("Authorization", AUTH_HEADER)
+        .when().post("/")
+        .then().statusCode(200)
+            .extract().path("CreateNetworkAclResponse.networkAcl.networkAclId");
+    }
+
+    private void putNetworkAclEntry(String action, String aclId, int ruleNumber, boolean egress,
+                                    String cidrParam, String cidr) {
+        given()
+            .formParam("Action", action)
+            .formParam("NetworkAclId", aclId)
+            .formParam("RuleNumber", String.valueOf(ruleNumber))
+            .formParam("Protocol", "-1")
+            .formParam("RuleAction", "allow")
+            .formParam("Egress", String.valueOf(egress))
+            .formParam(cidrParam, cidr)
+            .header("Authorization", AUTH_HEADER)
+        .when().post("/")
+        .then().statusCode(200)
+            .body(action + "Response.return", equalTo("true"));
+    }
+
+    private XmlPath describeNetworkAcl(String aclId) {
+        return new XmlPath(given()
+            .formParam("Action", "DescribeNetworkAcls")
+            .formParam("NetworkAclId.1", aclId)
+            .header("Authorization", AUTH_HEADER)
+        .when().post("/")
+        .then().statusCode(200)
+            .extract().asString());
+    }
+
+    private static String naclEntryPath(int ruleNumber, boolean egress) {
+        return "DescribeNetworkAclsResponse.networkAclSet.item.entrySet.item.find { it.ruleNumber == '"
+                + ruleNumber + "' && it.egress == '" + egress + "' }";
+    }
+
+    // lex00/floci#104: an entry created with only Ipv6CidrBlock came back with no CIDR at all.
+    @Test
+    @Order(314)
+    void createNetworkAclEntryKeepsIpv6CidrBlock() {
+        String aclId = newNetworkAcl(newVpc("10.34.0.0/16"));
+        putNetworkAclEntry("CreateNetworkAclEntry", aclId, 100, false, "CidrBlock", "0.0.0.0/0");
+        putNetworkAclEntry("CreateNetworkAclEntry", aclId, 101, false, "Ipv6CidrBlock", "::/0");
+        putNetworkAclEntry("CreateNetworkAclEntry", aclId, 101, true, "Ipv6CidrBlock", "::/0");
+
+        XmlPath acl = describeNetworkAcl(aclId);
+
+        assertEquals("0.0.0.0/0", acl.getString(naclEntryPath(100, false) + ".cidrBlock"));
+        assertEquals(0, acl.getInt(naclEntryPath(100, false) + ".ipv6CidrBlock.size()"));
+        for (boolean egress : new boolean[] {false, true}) {
+            assertEquals("::/0", acl.getString(naclEntryPath(101, egress) + ".ipv6CidrBlock"));
+            assertEquals(0, acl.getInt(naclEntryPath(101, egress) + ".cidrBlock.size()"));
+        }
+    }
+
+    @Test
+    @Order(314)
+    void replaceNetworkAclEntrySwitchesToIpv6CidrBlock() {
+        String aclId = newNetworkAcl(newVpc("10.35.0.0/16"));
+        putNetworkAclEntry("CreateNetworkAclEntry", aclId, 120, false, "CidrBlock", "10.0.0.0/8");
+        putNetworkAclEntry("ReplaceNetworkAclEntry", aclId, 120, false, "Ipv6CidrBlock", "2001:db8::/32");
+
+        XmlPath acl = describeNetworkAcl(aclId);
+
+        assertEquals("2001:db8::/32", acl.getString(naclEntryPath(120, false) + ".ipv6CidrBlock"));
+        assertEquals(0, acl.getInt(naclEntryPath(120, false) + ".cidrBlock.size()"));
+    }
+
     @Test
     @Order(315)
     void describePrefixListsReturnsManagedS3() {

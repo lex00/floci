@@ -364,8 +364,8 @@ matching how AWS itself responds.
 | CreateNetworkAcl | Creates a network ACL in a VPC. |
 | DescribeNetworkAcls | Lists or returns stored network ACLs. |
 | DeleteNetworkAcl | Deletes a network ACL from the local EC2 store. |
-| CreateNetworkAclEntry | Adds an entry to a network ACL. |
-| ReplaceNetworkAclEntry | Replaces an entry in a network ACL. |
+| CreateNetworkAclEntry | Adds an entry to a network ACL. The entry keeps whichever of `CidrBlock` or `Ipv6CidrBlock` was supplied, and `DescribeNetworkAcls` returns it under the same name. |
+| ReplaceNetworkAclEntry | Replaces an entry in a network ACL, including its `CidrBlock` or `Ipv6CidrBlock`. |
 | DeleteNetworkAclEntry | Removes an entry from a network ACL. |
 | ReplaceNetworkAclAssociation | Replaces the network ACL associated with a subnet. |
 
