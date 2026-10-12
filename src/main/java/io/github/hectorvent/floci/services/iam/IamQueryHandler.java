@@ -49,6 +49,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -65,6 +66,8 @@ public class IamQueryHandler {
     /** {@code MaxItems} on the readers that page through {@link #paginate}: "defaults to 100", range 1 to 1000. */
     private static final int DEFAULT_MAX_ITEMS = 100;
     private static final int MAX_MAX_ITEMS = 1000;
+    /** Leads every decoded {@code Marker}, so a value this handler did not issue is told apart. */
+    private static final String MARKER_PREFIX = "c1:";
     /** {@code sortKeyType} on {@code GetOrganizationsAccessReport}. */
     private static final Set<String> SORT_KEYS = Set.of("SERVICE_NAMESPACE_ASCENDING",
             "SERVICE_NAMESPACE_DESCENDING", "LAST_AUTHENTICATED_TIME_ASCENDING",
@@ -459,7 +462,8 @@ public class IamQueryHandler {
      */
     private Response handleListVirtualMFADevices(MultivaluedMap<String, String> params) {
         Page<VirtualMfaDevice> page = paginate(
-                iamService.listVirtualMfaDevices(getParam(params, "AssignmentStatus")), params);
+                iamService.listVirtualMfaDevices(getParam(params, "AssignmentStatus")),
+                VirtualMfaDevice::getSerialNumber, params);
         XmlBuilder xml = new XmlBuilder().start("VirtualMFADevices");
         for (VirtualMfaDevice device : page.items()) {
             xml.start("member").elem("SerialNumber", device.getSerialNumber());
@@ -508,7 +512,8 @@ public class IamQueryHandler {
 
     private Response handleListMFADevices(MultivaluedMap<String, String> params, String authorization) {
         String userName = resolveUserName(params, authorization);
-        Page<VirtualMfaDevice> page = paginate(iamService.listMfaDevices(userName), params);
+        Page<VirtualMfaDevice> page = paginate(iamService.listMfaDevices(userName),
+                VirtualMfaDevice::getSerialNumber, params);
         XmlBuilder xml = new XmlBuilder().start("MFADevices");
         for (VirtualMfaDevice device : page.items()) {
             xml.start("member")
@@ -542,7 +547,7 @@ public class IamQueryHandler {
      */
     private Response handleListMFADeviceTags(MultivaluedMap<String, String> params) {
         Map<String, String> tags = new TreeMap<>(iamService.listMfaDeviceTags(getParam(params, "SerialNumber")));
-        Page<Map.Entry<String, String>> page = paginate(List.copyOf(tags.entrySet()), params);
+        Page<Map.Entry<String, String>> page = paginate(List.copyOf(tags.entrySet()), Map.Entry::getKey, params);
         XmlBuilder xml = new XmlBuilder().start("Tags");
         for (Map.Entry<String, String> tag : page.items()) {
             xml.start("member").elem("Key", tag.getKey()).elem("Value", tag.getValue()).end("member");
@@ -839,7 +844,8 @@ public class IamQueryHandler {
      */
     private Response handleListServerCertificates(MultivaluedMap<String, String> params) {
         Page<ServerCertificate> page = paginate(
-                iamService.listServerCertificates(getParam(params, "PathPrefix")), params);
+                iamService.listServerCertificates(getParam(params, "PathPrefix")),
+                ServerCertificate::getServerCertificateName, params);
         XmlBuilder xml = new XmlBuilder().start("ServerCertificateMetadataList");
         for (ServerCertificate certificate : page.items()) {
             xml.start("member").raw(serverCertificateMetadataXml(certificate)).end("member");
@@ -882,7 +888,8 @@ public class IamQueryHandler {
         String userName = allUsers ? null : resolveUserName(params, authorization);
         Page<ServiceSpecificCredential> page = paginate(
                 iamService.listServiceSpecificCredentials(
-                        userName, getParam(params, "ServiceName"), allUsers), params);
+                        userName, getParam(params, "ServiceName"), allUsers),
+                ServiceSpecificCredential::getServiceSpecificCredentialId, params);
         XmlBuilder xml = new XmlBuilder().start("ServiceSpecificCredentials");
         for (ServiceSpecificCredential credential : page.items()) {
             xml.start("member").raw(serviceCredentialXml(credential, false)).end("member");
@@ -1005,7 +1012,8 @@ public class IamQueryHandler {
     private Response handleListSshPublicKeys(MultivaluedMap<String, String> params,
                                              String authorization) {
         Page<SshPublicKey> page = paginate(
-                iamService.listSshPublicKeys(resolveUserName(params, authorization)), params);
+                iamService.listSshPublicKeys(resolveUserName(params, authorization)),
+                SshPublicKey::getSshPublicKeyId, params);
         XmlBuilder xml = new XmlBuilder().start("SSHPublicKeys");
         for (SshPublicKey key : page.items()) {
             xml.start("member")
@@ -1066,7 +1074,8 @@ public class IamQueryHandler {
     private Response handleListSigningCertificates(MultivaluedMap<String, String> params,
                                                    String authorization) {
         Page<SigningCertificate> page = paginate(
-                iamService.listSigningCertificates(resolveUserName(params, authorization)), params);
+                iamService.listSigningCertificates(resolveUserName(params, authorization)),
+                SigningCertificate::getCertificateId, params);
         XmlBuilder xml = new XmlBuilder().start("Certificates");
         for (SigningCertificate certificate : page.items()) {
             xml.start("member").raw(signingCertificateXml(certificate)).end("member");
@@ -1119,7 +1128,7 @@ public class IamQueryHandler {
     private Response handleListServerCertificateTags(MultivaluedMap<String, String> params) {
         Map<String, String> tags = new TreeMap<>(iamService.listServerCertificateTags(
                 getParam(params, "ServerCertificateName")));
-        Page<Map.Entry<String, String>> page = paginate(List.copyOf(tags.entrySet()), params);
+        Page<Map.Entry<String, String>> page = paginate(List.copyOf(tags.entrySet()), Map.Entry::getKey, params);
         XmlBuilder xml = new XmlBuilder().start("Tags");
         for (Map.Entry<String, String> tag : page.items()) {
             xml.start("member").elem("Key", tag.getKey()).elem("Value", tag.getValue()).end("member");
@@ -1404,7 +1413,8 @@ public class IamQueryHandler {
     }
 
     private Response handleListRoles(MultivaluedMap<String, String> params) {
-        Page<IamRole> page = paginate(iamService.listRoles(getParam(params, "PathPrefix")), params);
+        Page<IamRole> page = paginate(iamService.listRoles(getParam(params, "PathPrefix")),
+                IamRole::getRoleName, params);
         XmlBuilder xml = new XmlBuilder().start("Roles");
         for (IamRole r : page.items()) {
             xml.start("member").raw(roleXml(r, false)).end("member");
@@ -1474,7 +1484,8 @@ public class IamQueryHandler {
 
     private Response handleListPolicies(MultivaluedMap<String, String> params) {
         Page<IamPolicy> page = paginate(iamService.listPolicies(
-                getParam(params, "Scope"), getParam(params, "PathPrefix")), params);
+                getParam(params, "Scope"), getParam(params, "PathPrefix")),
+                IamQueryHandler::policyListKey, params);
         XmlBuilder xml = new XmlBuilder().start("Policies");
         for (IamPolicy p : page.items()) {
             xml.start("member").raw(policyXml(p, false)).end("member");
@@ -2258,7 +2269,7 @@ public class IamQueryHandler {
                                                          String authorization) {
         ServiceLastAccessedJob job = serviceLastAccessedService.get(
                 accountResolver.resolve(authorization), requireParam(params, "JobId"));
-        Page<String> page = paginate(job.getServiceNamespaces(), params);
+        Page<String> page = paginate(job.getServiceNamespaces(), Function.identity(), params);
         XmlBuilder xml = new XmlBuilder()
                 .elem("JobStatus", "COMPLETED")
                 .elem("JobType", job.getGranularity())
@@ -2334,8 +2345,8 @@ public class IamQueryHandler {
                        .end("ErrorDetails")
                        .build())).build();
         }
-        List<String> namespaces = sortedByKey(job.getServiceNamespaces(), sortKey);
-        Page<String> page = paginate(namespaces, params);
+        List<String> namespaces = job.getServiceNamespaces();
+        Page<String> page = paginate(namespaces, Function.identity(), namespaceOrder(sortKey), params);
         xml.elem("NumberOfServicesAccessible", namespaces.size())
            .elem("NumberOfServicesNotAccessed", namespaces.size())
            .start("AccessDetails");
@@ -2376,18 +2387,14 @@ public class IamQueryHandler {
     }
 
     /**
-     * Applies {@code SortKey}. The namespace keys sort the list the reference says they do, and
+     * The order {@code SortKey} asks for. The namespace keys sort the list the reference says they do, and
      * the two time keys leave it in namespace order: sorting by a last-authenticated time no
      * entry carries would be ordering on nothing, and the reference's default is the namespace
      * anyway.
      */
-    private static List<String> sortedByKey(List<String> namespaces, String sortKey) {
-        if (!"SERVICE_NAMESPACE_DESCENDING".equals(sortKey)) {
-            return namespaces;
-        }
-        List<String> descending = new ArrayList<>(namespaces);
-        descending.sort(Comparator.reverseOrder());
-        return descending;
+    private static Comparator<String> namespaceOrder(String sortKey) {
+        return "SERVICE_NAMESPACE_DESCENDING".equals(sortKey)
+                ? Comparator.reverseOrder() : Comparator.naturalOrder();
     }
 
     /**
@@ -2405,7 +2412,7 @@ public class IamQueryHandler {
         // The report named the services it covers, so an entity is only reported for one of those.
         List<ServiceLastAccessedEntity> reported = job.getServiceNamespaces().contains(namespace)
                 ? job.getEntities() : List.of();
-        Page<ServiceLastAccessedEntity> page = paginate(reported, params);
+        Page<ServiceLastAccessedEntity> page = paginate(reported, IamQueryHandler::entityListKey, params);
         XmlBuilder xml = new XmlBuilder()
                 .elem("JobStatus", "COMPLETED")
                 .elem("JobCreationDate", isoDate(job.getJobCreationDate()))
@@ -2446,7 +2453,8 @@ public class IamQueryHandler {
         List<GrantingPolicy> candidates = policiesForIdentity(accountId, arn);
         // The response list carries one entry per requested namespace, so that is what a Marker
         // walks through.
-        Page<String> page = paginateByMarker(namespaces, params);
+        Page<String> page = paginateByMarker(namespaces, Function.identity(),
+                Comparator.comparingInt(namespaces::indexOf), params);
         XmlBuilder xml = new XmlBuilder().start("PoliciesGrantingServiceAccess");
         for (String namespace : page.items()) {
             xml.start("member").elem("ServiceNamespace", namespace).start("Policies");
@@ -2746,12 +2754,21 @@ public class IamQueryHandler {
     private record Page<T>(List<T> items, boolean truncated, String marker) {}
 
     /**
-     * Applies {@code MaxItems} and {@code Marker}. The marker is the index the next page starts at,
-     * which is all a caller is meant to do with it: AWS documents it as opaque and only ever hands
-     * back one it produced itself.
+     * Applies {@code MaxItems} and {@code Marker}. The marker is a cursor on the last item a page
+     * returned, so the next page starts strictly after that item however the list has changed
+     * before it in between: a role created or deleted ahead of the page boundary neither repeats
+     * nor skips an entry. The list is served in ascending order of {@code key}, which must be
+     * unique within it.
      */
-    private <T> Page<T> paginate(List<T> items, MultivaluedMap<String, String> params) {
-        return paginate(items, params, true);
+    private <T> Page<T> paginate(List<T> items, Function<T, String> key,
+                                 MultivaluedMap<String, String> params) {
+        return paginate(items, key, Comparator.naturalOrder(), params, true);
+    }
+
+    /** As {@link #paginate(List, Function, MultivaluedMap)}, for a list served in another order. */
+    private <T> Page<T> paginate(List<T> items, Function<T, String> key, Comparator<String> order,
+                                 MultivaluedMap<String, String> params) {
+        return paginate(items, key, order, params, true);
     }
 
     /**
@@ -2759,14 +2776,16 @@ public class IamQueryHandler {
      * {@code Marker} but no {@code MaxItems}, and honouring a member AWS does not declare would be
      * inventing one.
      */
-    private <T> Page<T> paginateByMarker(List<T> items, MultivaluedMap<String, String> params) {
-        return paginate(items, params, false);
+    private <T> Page<T> paginateByMarker(List<T> items, Function<T, String> key, Comparator<String> order,
+                                         MultivaluedMap<String, String> params) {
+        return paginate(items, key, order, params, false);
     }
 
-    private <T> Page<T> paginate(List<T> items, MultivaluedMap<String, String> params, boolean maxItemsModeled) {
+    private <T> Page<T> paginate(List<T> items, Function<T, String> key, Comparator<String> order,
+                                 MultivaluedMap<String, String> params, boolean maxItemsModeled) {
         // Every input is validated before the bounds check, so a malformed request is rejected
         // rather than answered emptily just because the marker happens to sit past the end.
-        int from = markerIndex(params);
+        String after = markerKey(params);
         // An omitted MaxItems is not "no limit": the API reference states the count "defaults to
         // 100" on each reader paged here, so a list wider than that is truncated with a Marker as
         // it would be against AWS. Operations that model no MaxItems at all pass through whole.
@@ -2790,33 +2809,78 @@ public class IamQueryHandler {
                 }
             }
         }
-        if (from >= items.size()) {
+        // Sorted here rather than trusted from the caller, so the order a cursor is compared in is
+        // always the order the pages are cut in. The sort is stable, so a list already in order
+        // keeps it.
+        List<T> ordered = new ArrayList<>(items);
+        ordered.sort(Comparator.comparing(key, order));
+        int from = 0;
+        if (after != null) {
+            while (from < ordered.size() && order.compare(key.apply(ordered.get(from)), after) <= 0) {
+                from++;
+            }
+        }
+        if (from >= ordered.size()) {
             return new Page<>(List.of(), false, null);
         }
         // Counted from the remaining items rather than added to the offset, so a large MaxItems
         // cannot overflow into a negative index.
-        int to = from + Math.min(limit, items.size() - from);
-        boolean truncated = to < items.size();
-        return new Page<>(List.copyOf(items.subList(from, to)), truncated,
-                truncated ? Integer.toString(to) : null);
+        int to = from + Math.min(limit, ordered.size() - from);
+        boolean truncated = to < ordered.size();
+        return new Page<>(List.copyOf(ordered.subList(from, to)), truncated,
+                truncated ? encodeMarker(key.apply(ordered.get(to - 1))) : null);
     }
 
-    /** The index a {@code Marker} resumes at. Only a marker this handler produced is valid. */
-    private int markerIndex(MultivaluedMap<String, String> params) {
+    /**
+     * Where a policy sits in {@code ListPolicies}: customer managed policies by name, then the AWS
+     * managed catalog by name. A name is unique within each group but not across them, since an
+     * account may name its own policy after an AWS managed one.
+     */
+    private static String policyListKey(IamPolicy policy) {
+        return (AwsManagedPolicies.isManagedPolicyArn(policy.getArn()) ? "1" : "0") + policy.getPolicyName();
+    }
+
+    /**
+     * Where an entity sits in the last-accessed report: by name, then type, since a user and a
+     * role may share a name. Shorter than the ARN, which keeps the marker inside its 320 characters.
+     */
+    private static String entityListKey(ServiceLastAccessedEntity entity) {
+        return entity.getName() + "\0" + entity.getType();
+    }
+
+    /**
+     * The opaque {@code Marker} for a page ending at the item with this sort key. URL-safe base64
+     * without padding stays inside {@code markerType}'s character range.
+     */
+    static String encodeMarker(String key) {
+        return Base64.getUrlEncoder().withoutPadding()
+                .encodeToString((MARKER_PREFIX + key).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * The sort key a {@code Marker} resumes after, or null for the first page. Only a marker this
+     * handler produced is valid: one that does not decode, or decodes without the prefix
+     * {@link #encodeMarker} writes, is rejected, so a list offset or any other guess is refused.
+     */
+    private static String markerKey(MultivaluedMap<String, String> params) {
         String marker = params.getFirst("Marker");
         if (marker == null || marker.isBlank()) {
-            return 0;
+            return null;
         }
-        int index;
+        String decoded;
         try {
-            index = Integer.parseInt(marker.trim());
-        } catch (NumberFormatException e) {
-            throw new AwsException("InvalidInput", "The marker " + marker + " is not valid.", 400);
+            decoded = new String(Base64.getUrlDecoder().decode(marker.trim()), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            throw invalidMarker(marker);
         }
-        if (index < 0) {
-            throw new AwsException("InvalidInput", "The marker " + marker + " is not valid.", 400);
+        if (!decoded.startsWith(MARKER_PREFIX) || decoded.length() == MARKER_PREFIX.length()) {
+            throw invalidMarker(marker);
         }
-        return index;
+        return decoded.substring(MARKER_PREFIX.length());
+    }
+
+    private static AwsException invalidMarker(String marker) {
+        return new AwsException("InvalidInput", "The marker " + marker + " is not valid.", 400);
     }
 
     /**

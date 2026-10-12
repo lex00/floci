@@ -1,11 +1,13 @@
 package io.github.hectorvent.floci.services.iam;
 
 import io.github.hectorvent.floci.core.common.XmlParser;
+import io.github.hectorvent.floci.services.iam.model.IamPolicy;
 import io.github.hectorvent.floci.services.iam.model.IamRole;
 import io.github.hectorvent.floci.services.iam.model.ServerCertificate;
 import jakarta.ws.rs.core.MultivaluedHashMap;
 import jakarta.ws.rs.core.MultivaluedMap;
 import jakarta.ws.rs.core.Response;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -13,11 +15,14 @@ import org.w3c.dom.Document;
 import org.w3c.dom.NodeList;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -102,6 +107,99 @@ class IamQueryHandlerTest {
                 assertXmlMember(response, "CreateDate", expected);
             }
         }
+    }
+
+    /** The page is cut in the order the marker is compared in, whatever order the service hands back. */
+    @Test
+    void listRolesPagesInNameOrderWhateverOrderTheServiceReturns() throws Exception {
+        IamService service = mock(IamService.class);
+        when(service.listRoles(null)).thenReturn(List.of(role("c"), role("a"), role("b")));
+        IamQueryHandler handler = new IamQueryHandler(service, null, null, null, null, null, null, null);
+
+        MultivaluedMap<String, String> params = new MultivaluedHashMap<>();
+        params.putSingle("MaxItems", "2");
+        Document first = list(handler, "ListRoles", params);
+        assertEquals(List.of("a", "b"), texts(first, "RoleName"));
+        assertEquals("true", texts(first, "IsTruncated").get(0));
+
+        params.putSingle("Marker", texts(first, "Marker").get(0));
+        Document second = list(handler, "ListRoles", params);
+        assertEquals(List.of("c"), texts(second, "RoleName"));
+        assertTrue(texts(second, "Marker").isEmpty());
+    }
+
+    /**
+     * An account may name its own policy after an AWS managed one, so a cursor on the name alone
+     * would skip the second of the two. Customer managed policies come first, as before.
+     */
+    @Test
+    void listPoliciesKeepsACustomerPolicyAndAnAwsManagedOneOfTheSameNameApart() throws Exception {
+        IamPolicy local = policy("arn:aws:iam::000000000000:policy/ReadOnlyAccess");
+        IamPolicy managed = policy("arn:aws:iam::aws:policy/ReadOnlyAccess");
+        IamService service = mock(IamService.class);
+        when(service.listPolicies(null, null)).thenReturn(List.of(managed, local));
+        IamQueryHandler handler = new IamQueryHandler(service, null, null, null, null, null, null, null);
+
+        MultivaluedMap<String, String> params = new MultivaluedHashMap<>();
+        params.putSingle("MaxItems", "1");
+        List<String> arns = new ArrayList<>();
+        String marker;
+        do {
+            Document page = list(handler, "ListPolicies", params);
+            arns.addAll(texts(page, "Arn"));
+            List<String> markers = texts(page, "Marker");
+            marker = markers.isEmpty() ? null : markers.get(0);
+            params.putSingle("Marker", marker);
+        } while (marker != null);
+
+        assertEquals(List.of(local.getArn(), managed.getArn()), arns);
+    }
+
+    @Test
+    void encodedMarkerIsUrlSafeAndUnpadded() {
+        String marker = IamQueryHandler.encodeMarker("role-name");
+        assertFalse(marker.contains("="));
+        assertTrue(marker.matches("[A-Za-z0-9_-]+"), marker);
+    }
+
+    private static IamRole role(String name) {
+        IamRole role = new IamRole();
+        role.setRoleName(name);
+        role.setRoleId("role-id-" + name);
+        role.setPath("/");
+        role.setArn("arn:aws:iam::000000000000:role/" + name);
+        role.setAssumeRolePolicyDocument("{}");
+        role.setCreateDate(Instant.EPOCH);
+        return role;
+    }
+
+    private static IamPolicy policy(String arn) {
+        IamPolicy policy = new IamPolicy();
+        policy.setPolicyName(arn.substring(arn.lastIndexOf('/') + 1));
+        policy.setPolicyId("policy-id-" + arn.hashCode());
+        policy.setPath("/");
+        policy.setArn(arn);
+        policy.setDefaultVersionId("v1");
+        policy.setCreateDate(Instant.EPOCH);
+        policy.setUpdateDate(Instant.EPOCH);
+        return policy;
+    }
+
+    private static Document list(IamQueryHandler handler, String action,
+                                 MultivaluedMap<String, String> params) throws Exception {
+        try (Response response = handler.handle(action, params, null)) {
+            assertEquals(200, response.getStatus());
+            return XmlParser.parseDocument((String) response.getEntity());
+        }
+    }
+
+    private static List<String> texts(Document document, String member) {
+        NodeList matches = document.getElementsByTagNameNS("*", member);
+        List<String> values = new ArrayList<>();
+        for (int i = 0; i < matches.getLength(); i++) {
+            values.add(matches.item(i).getTextContent());
+        }
+        return values;
     }
 
     private static void assertXmlMember(Response response, String member, String expected) throws Exception {

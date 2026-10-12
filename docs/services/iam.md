@@ -102,8 +102,13 @@ or at the AWS Sign-In host of a region in the deployment's partition; any other 
 
 `ListRoles` and `ListPolicies` return 100 items when `MaxItems` is omitted and reject a value
 outside 1 to 1000. `PathPrefix` and `Scope` filter before paging, and roles and customer managed
-policies are listed in name order so a `Marker` resumes where the previous page stopped.
-`ListPolicies` does not yet apply `OnlyAttached` or `PolicyUsageFilter`.
+policies are listed in name order. `ListPolicies` does not yet apply `OnlyAttached` or
+`PolicyUsageFilter`.
+
+Every IAM reader that pages through `Marker` issues it as an opaque cursor on the last item the
+page returned. The next page starts after that item, so a role or policy created or deleted ahead
+of it between two calls does not shift the next page. A `Marker` the handler did not issue, such as
+a list offset, is rejected with `InvalidInput`.
 
 ### Permission Boundaries
 
