@@ -58,7 +58,7 @@ public class AutoScalingService {
     static final String INSTANCE_MAINTENANCE_POLICY_PARTIAL_CLEAR_MESSAGE =
             "To clear an InstanceMaintenancePolicy, specify -1 for both MinHealthyPercentage and MaxHealthyPercentage.";
     static final String INSTANCE_MAINTENANCE_POLICY_RANGE_MESSAGE =
-            "The difference between MaxHealthyPercentage and MinHealthyPercentage cannot be greater than 100.";
+            "The difference between MaxHealthyPercentage and MinHealthyPercentage must be less than or equal to 100.";
     static final Set<String> CAPACITY_DISTRIBUTION_STRATEGIES =
             Set.of("balanced-only", "balanced-best-effort", "reservations-then-balanced");
     static final String INVALID_CAPACITY_DISTRIBUTION_STRATEGY_MESSAGE =
