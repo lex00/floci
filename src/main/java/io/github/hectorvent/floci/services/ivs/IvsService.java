@@ -1,5 +1,8 @@
 package io.github.hectorvent.floci.services.ivs;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.common.Resettable;
@@ -9,8 +12,6 @@ import io.github.hectorvent.floci.core.storage.StorageFactory;
 import io.github.hectorvent.floci.services.ivs.model.IvsChannel;
 import io.github.hectorvent.floci.services.ivs.model.IvsPlaybackKeyPair;
 import io.github.hectorvent.floci.services.ivs.model.IvsRecordingConfiguration;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -397,8 +398,8 @@ public class IvsService implements TagHandler, Resettable {
             }
         }
 
-        com.fasterxml.jackson.databind.node.ObjectNode resolved =
-                ((com.fasterxml.jackson.databind.node.ObjectNode) thumbnailConfiguration).deepCopy();
+        ObjectNode resolved =
+                ((ObjectNode) thumbnailConfiguration).deepCopy();
         resolved.put("recordingMode", recordingMode);
         if ("INTERVAL".equals(recordingMode)) {
             int targetInterval = hasTargetInterval

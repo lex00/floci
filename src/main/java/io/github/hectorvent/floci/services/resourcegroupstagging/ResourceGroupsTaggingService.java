@@ -1,9 +1,9 @@
 package io.github.hectorvent.floci.services.resourcegroupstagging;
 
-import io.github.hectorvent.floci.core.common.AwsPartitions;
 import com.fasterxml.jackson.core.type.TypeReference;
 import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
+import io.github.hectorvent.floci.core.common.AwsPartitions;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.common.Resettable;
 import io.github.hectorvent.floci.core.common.TagHandler;
@@ -33,6 +33,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -234,7 +235,7 @@ public class ResourceGroupsTaggingService implements Resettable {
     }
 
     // Offers a write to each TaggedResourceWriter, and reports whether one of them owned the ARN.
-    private boolean writtenThrough(java.util.function.Predicate<TaggedResourceWriter> write) {
+    private boolean writtenThrough(Predicate<TaggedResourceWriter> write) {
         for (TaggedResourceWriter writer : taggedResourceWriters) {
             if (write.test(writer)) {
                 return true;

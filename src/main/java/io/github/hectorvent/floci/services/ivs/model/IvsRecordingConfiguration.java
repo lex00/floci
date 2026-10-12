@@ -1,8 +1,7 @@
 package io.github.hectorvent.floci.services.ivs.model;
 
-import io.quarkus.runtime.annotations.RegisterForReflection;
-
 import com.fasterxml.jackson.databind.JsonNode;
+import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.util.Map;
 

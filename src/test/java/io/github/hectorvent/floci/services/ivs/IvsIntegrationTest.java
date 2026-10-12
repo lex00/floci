@@ -1,6 +1,8 @@
 package io.github.hectorvent.floci.services.ivs;
 
 import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.response.ExtractableResponse;
+import io.restassured.response.Response;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
@@ -22,7 +24,7 @@ class IvsIntegrationTest {
     @Test
     @Order(1)
     void createChannel() {
-        var response = given()
+        ExtractableResponse<Response> response = given()
             .contentType("application/json")
             .body("""
                 {"name": "integration-channel", "tags": {"team": "video"}}
@@ -142,7 +144,7 @@ class IvsIntegrationTest {
     @Test
     @Order(8)
     void importAndGetPlaybackKeyPair() {
-        var response = given()
+        ExtractableResponse<Response> response = given()
             .contentType("application/json")
             .body("""
                 {"publicKeyMaterial": "placeholder", "name": "integration-key"}
@@ -170,7 +172,7 @@ class IvsIntegrationTest {
     @Test
     @Order(9)
     void createAndGetRecordingConfiguration() {
-        var response = given()
+        ExtractableResponse<Response> response = given()
             .contentType("application/json")
             .body("""
                 {"destinationConfiguration": {"s3": {"bucketName": "placeholder"}},
