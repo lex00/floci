@@ -1454,7 +1454,7 @@ request's account and region is evaluated as `secret:<name>`, and an ARN that ma
 
 **IAM's own resources are named.** When enforcement evaluates a request, the target resource comes
 from `ResourceArnBuilder`, which builds an ARN for S3, Lambda, SQS, SNS, DynamoDB, Kinesis, Secrets
-Manager, SSM, KMS and IAM. Within IAM the resource type each action is evaluated against is the one
+Manager, SSM, KMS, IAM and Cognito user pools. Within IAM the resource type each action is evaluated against is the one
 the Service Authorization Reference gives it, so a statement naming a specific user, role, group,
 instance profile, managed policy, MFA device, identity provider or server certificate constrains
 it: a `Deny` on `arn:aws:iam::123456789012:user/bob` stops `DeleteUser` for Bob and leaves other
@@ -1512,6 +1512,13 @@ authorized once per resource, so a `Deny` on either name refuses the rename and 
 its original name and path. An update that changes neither the name nor the path names a single
 resource. The destination ARN is built beside the stored one, keeping the resource's own partition
 and account, since a rename moves a resource within an account rather than between partitions.
+
+**Cognito names the user pool.** A Cognito action that carries a `UserPoolId` is evaluated against
+`arn:aws:cognito-idp:<region>:<account>:userpool/<UserPoolId>`, the only resource type the Service
+Authorization Reference gives Cognito user pool actions, so a grant on one pool also covers that
+pool's clients, groups and users. `TagResource`, `UntagResource` and `ListTagsForResource` use the
+`ResourceArn` they carry. Actions with no resource type, such as `CreateUserPool` and
+`ListUserPools`, stay on `*`.
 
 **Exception:** a bare 12-digit account-id key that equals its own account and sits under
 an effective SCP ceiling is **not** treated as an unknown key — it is evaluated against

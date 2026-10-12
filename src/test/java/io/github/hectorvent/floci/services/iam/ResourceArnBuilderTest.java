@@ -1269,4 +1269,43 @@ class ResourceArnBuilderTest {
         String arn = builder.build("lambda", ctx, "us-east-1", "000000000000");
         assertEquals("arn:aws:lambda:us-east-1:000000000000:function:my-function:1/durable-execution/run-1/0b1c", arn);
     }
+
+    // ── Cognito user pools ───────────────────────────────────────────────────────
+
+    private List<String> resourcesOf(String scope, String target, String json) {
+        setJsonBody(json);
+        when(ctx.getHeaderString("X-Amz-Target")).thenReturn(target);
+        return builder.buildResources(scope, ctx, "us-east-1", ACCOUNT);
+    }
+
+    private List<String> cognito(String operation, String json) {
+        return resourcesOf("cognito-idp", "AWSCognitoIdentityProviderService." + operation, json);
+    }
+
+    @Test
+    void cognitoNamesTheUserPoolOfEveryActionThatCarriesItsId() {
+        String arn = "arn:aws:cognito-idp:us-east-1:000000000000:userpool/us-east-1_Abc123";
+        for (String operation : List.of("DescribeUserPool", "DescribeUserPoolClient", "AdminGetUser",
+                "CreateGroup", "ListUsers")) {
+            assertEquals(List.of(arn),
+                    cognito(operation, "{\"UserPoolId\":\"us-east-1_Abc123\",\"ClientId\":\"c\"}"),
+                    operation);
+        }
+        assertEquals(List.of("*"), cognito("ListUserPools", "{\"MaxResults\":10}"));
+        assertEquals(List.of("*"), cognito("CreateUserPool", "{\"PoolName\":\"p\"}"));
+    }
+
+    @Test
+    void cognitoMintsTheUserPoolInTheRequestsPartition() {
+        setJsonBody("{\"UserPoolId\":\"cn-north-1_Abc123\"}");
+        when(ctx.getHeaderString("X-Amz-Target")).thenReturn("AWSCognitoIdentityProviderService.DescribeUserPool");
+        assertEquals("arn:aws-cn:cognito-idp:cn-north-1:000000000000:userpool/cn-north-1_Abc123",
+                builder.build("cognito-idp", ctx, "cn-north-1", ACCOUNT));
+    }
+
+    @Test
+    void cognitoTaggingNamesThePoolByItsArn() {
+        String arn = "arn:aws:cognito-idp:us-east-1:000000000000:userpool/us-east-1_Abc123";
+        assertEquals(List.of(arn), cognito("TagResource", "{\"ResourceArn\":\"" + arn + "\",\"Tags\":{}}"));
+    }
 }
