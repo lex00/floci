@@ -1,6 +1,8 @@
 package io.github.hectorvent.floci.services.route53;
 
+import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
+import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.services.resourcegroupstagging.TaggedResourceProvider;
 import io.github.hectorvent.floci.services.resourcegroupstagging.TaggedResourceWriter;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -18,20 +20,22 @@ import java.util.Map;
  * {@code TagResources} on {@code arn:aws:route53:::hostedzone/Z123} is a change to the zone's tags,
  * and a zone tagged through Route 53's own API is in the tag index.
  *
- * <p>The ARNs carry no region and no account, as on AWS.
+ * <p>The ARNs carry no region and no account, as on AWS, and are minted in the request's
+ * partition.
  */
 @ApplicationScoped
 public class Route53TaggedResources implements TaggedResourceProvider, TaggedResourceWriter {
 
-    static final String ARN_PREFIX = "arn:aws:route53:::";
     static final String HOSTED_ZONE = "hostedzone";
     static final String HEALTH_CHECK = "healthcheck";
 
     private final Route53Service route53;
+    private final RegionResolver regionResolver;
 
     @Inject
-    public Route53TaggedResources(Route53Service route53) {
+    public Route53TaggedResources(Route53Service route53, RegionResolver regionResolver) {
         this.route53 = route53;
+        this.regionResolver = regionResolver;
     }
 
     @Override
@@ -68,7 +72,7 @@ public class Route53TaggedResources implements TaggedResourceProvider, TaggedRes
     private void put(Map<String, Map<String, String>> byArn, String type, String id) {
         Map<String, String> tags = route53.listTagsForResource(type, id);
         if (tags != null && !tags.isEmpty()) {
-            byArn.put(ARN_PREFIX + type + "/" + id, Map.copyOf(tags));
+            byArn.put(regionResolver.buildGlobalArn("route53", "", type + "/" + id), Map.copyOf(tags));
         }
     }
 
@@ -78,10 +82,14 @@ public class Route53TaggedResources implements TaggedResourceProvider, TaggedRes
      * rather than failed here, so this change moves nothing but the ARNs Route 53 owns.
      */
     private String[] existing(String arn) {
-        if (arn == null || !arn.startsWith(ARN_PREFIX)) {
+        if (!AwsArnUtils.isArnFor(arn, "route53")) {
             return null;
         }
-        String resource = arn.substring(ARN_PREFIX.length());
+        AwsArnUtils.Arn parsed = AwsArnUtils.parse(arn);
+        if (!parsed.region().isEmpty() || !parsed.accountId().isEmpty()) {
+            return null;
+        }
+        String resource = parsed.resource();
         int slash = resource.indexOf('/');
         if (slash <= 0 || slash == resource.length() - 1) {
             return null;

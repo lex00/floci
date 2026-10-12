@@ -1,5 +1,6 @@
 package io.github.hectorvent.floci.services.apprunner;
 
+import io.github.hectorvent.floci.core.common.AwsRegions;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -963,7 +964,7 @@ public class AppRunnerService {
     }
 
     private static String arnPrefix(String region) {
-        return "arn:aws:apprunner:" + region + ":";
+        return "arn:" + AwsRegions.partitionFor(region) + ":apprunner:" + region + ":";
     }
 
     private static void requireArgument(String value, String field) {

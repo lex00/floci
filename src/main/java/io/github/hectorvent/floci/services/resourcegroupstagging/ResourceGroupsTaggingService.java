@@ -1,5 +1,6 @@
 package io.github.hectorvent.floci.services.resourcegroupstagging;
 
+import io.github.hectorvent.floci.core.common.AwsPartitions;
 import com.fasterxml.jackson.core.type.TypeReference;
 import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
@@ -42,13 +43,6 @@ public class ResourceGroupsTaggingService implements Resettable {
     private static final Pattern TYPE_DELIMITER = Pattern.compile("[/:]");
     private static final String WILDCARD_SUFFIX = ":*";
     private static final String GLOBAL_REGION = "global";
-
-    /**
-     * The one region whose tag index holds IAM resources. IAM is global and indexes in
-     * {@code us-east-1} only, so tagged IAM policies are invisible to {@code GetResources} called
-     * against any other region.
-     */
-    private static final String IAM_INDEX_REGION = "us-east-1";
 
     /**
      * The IAM resource types the index serves, as an allowlist of measured types. Measured against
@@ -512,6 +506,15 @@ public class ResourceGroupsTaggingService implements Resettable {
      * ARNs of every type. On AWS a new policy or instance profile takes roughly 500 seconds to
      * reach the index, and floci serves it at once.
      */
+    /**
+     * IAM is global and indexes in its partition's implicit global region only, which is
+     * {@code us-east-1} in the commercial partition where the rule was measured. Tagged IAM
+     * policies are invisible to {@code GetResources} called against any other region.
+     */
+    private static boolean isIamIndexRegion(String region) {
+        return region != null && region.equals(AwsPartitions.forRegionOrCommercial(region).implicitGlobalRegion());
+    }
+
     static boolean servedInRegion(String arn, String region) {
         if (arn == null) {
             return false;
@@ -521,7 +524,7 @@ public class ResourceGroupsTaggingService implements Resettable {
             return true;
         }
         if ("iam".equals(parts[2])) {
-            return IAM_INDEX_REGION.equals(region) && parts.length == 6
+            return isIamIndexRegion(region) && parts.length == 6
                     && IAM_TYPES_IN_TAG_INDEX.contains(parsedType(parts[5]));
         }
         return parts[3].isEmpty() || parts[3].equals(region);

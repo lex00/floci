@@ -1249,7 +1249,7 @@ public class Ec2ContainerManager {
             publicAddress = syntheticPublicIp(instance.getInstanceId());
         }
         instance.setPublicIpAddress(publicAddress);
-        instance.setPublicDnsName(publicDnsName(publicAddress));
+        instance.setPublicDnsName(publicDnsName(publicAddress, instance.getRegion()));
     }
 
     /**
@@ -1280,11 +1280,15 @@ public class Ec2ContainerManager {
      * prefers PublicDnsName over PublicIpAddress would be handed a dead name. Opt in for the AWS
      * form when a client only cares that the shape is right.
      */
-    String publicDnsName(String publicIp) {
+    String publicDnsName(String publicIp, String region) {
         if (!config.services().ec2().awsFaithfulPublicDns()) {
             return publicIp;
         }
-        return "ec2-" + publicIp.replace('.', '-') + ".compute-1.amazonaws.com";
+        // AWS names the public host compute-1 in the region whose private domain is ec2.internal,
+        // and <region>.compute everywhere else, under the partition's own DNS suffix.
+        String zone = "ec2.internal".equals(AwsRegions.ec2PrivateDnsDomain(region))
+                ? "compute-1" : region + ".compute";
+        return "ec2-" + publicIp.replace('.', '-') + "." + zone + "." + AwsRegions.dnsSuffixFor(region);
     }
 
     static void exposeReachablePrivateAddress(Instance instance, String privateIp) {

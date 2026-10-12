@@ -1,5 +1,6 @@
 package io.github.hectorvent.floci.services.mediapackagev2;
 
+import io.github.hectorvent.floci.core.common.AwsRegions;
 import com.fasterxml.jackson.core.type.TypeReference;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RegionResolver;
@@ -70,7 +71,7 @@ public class MediaPackageV2Service implements TagHandler {
         group.setChannelGroupName(name);
         group.setArn(regionResolver.buildArn("mediapackagev2", region, "channelGroup/" + name));
         group.setEgressDomain(randomId() + ".egress." + randomId() + ".mediapackagev2." + region
-                + ".amazonaws.com");
+                + "." + AwsRegions.dnsSuffixFor(region));
         // Null stays null. Terraform's provider rejects a create that echoes "" for a
         // description it never sent, reporting ".description: was null, but now
         // cty.StringVal(\"\")" as an inconsistent-result apply error.

@@ -44,8 +44,9 @@ class PartitionCrossServiceSmokeIntegrationTest {
             "configservice", "connect", "controlcatalog", "controltower", "datasync", "dlm", "dms", "dynamodb", "ec2",
             "ecr", "ecs", "efs", "eks", "elasticache", "elasticbeanstalk", "elbv2", "emr", "emrserverless",
             "eventbridge", "firehose", "fis", "glue", "guardduty", "iot", "kinesis", "kinesisanalytics", "lambda",
-            "lambdamicrovms", "lambdaweb", "memorydb", "msk", "mwaa", "networkfirewall", "oam", "opensearch", "organizations",
-            "pipes", "ram", "rds", "redshift", "redshiftserverless", "resourceexplorer2", "route53resolver",
+            "lambdamicrovms", "lambdaweb", "medialive", "mediapackage", "memorydb", "msk", "mwaa", "networkfirewall",
+            "oam", "opensearch", "organizations", "pipes", "ram", "rds", "redshift", "redshiftserverless",
+            "resourceexplorer2", "route53", "route53resolver",
             "s3tables", "s3vectors", "sagemaker", "scheduler", "secretsmanager", "servicequotas", "ses", "sns", "sqs",
             "stepfunctions", "timestreaminfluxdb", "transfer", "verifiedpermissions", "wafv2");
 
@@ -1442,6 +1443,66 @@ class PartitionCrossServiceSmokeIntegrationTest {
      * A service no partition lists (the newer ones {@code endpoints.json} omits) runs everywhere,
      * the same reading strict partition mode applies: silence there is not absence.
      */
+    @ParameterizedTest
+    @MethodSource("nonCommercialCases")
+    void mediaLiveMultiplexArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "medialive");
+        Response created = signed(region, "medialive")
+            .contentType(JSON)
+            .body("{\"name\":\"" + unique("smoke-multiplex", partitionCase) + "\","
+                    + "\"availabilityZones\":[\"" + region + "a\",\"" + region + "b\"],"
+                    + "\"multiplexSettings\":{\"transportStreamBitrate\":1000000,\"transportStreamId\":1},"
+                    + "\"requestId\":\"" + unique("smoke-request", partitionCase) + "\"}")
+        .when().post("/prod/multiplexes").then().statusCode(201).extract().response();
+        String id = created.jsonPath().getString("multiplex.id");
+        cleanup.register(() -> signed(region, "medialive").when().delete("/prod/multiplexes/" + id));
+        PartitionMatrix.assertArnIn(partitionCase, created.jsonPath().getString("multiplex.arn"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("nonCommercialCases")
+    void mediaPackageChannelArnAndIngestHost(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "mediapackage");
+        String id = unique("smoke-channel", partitionCase);
+        Response created = signed(region, "mediapackage")
+            .contentType(JSON)
+            .body("{\"id\":\"" + id + "\"}")
+        .when().post("/channels").then().statusCode(200).extract().response();
+        cleanup.register(() -> signed(region, "mediapackage").when().delete("/channels/" + id));
+        PartitionMatrix.assertArnIn(partitionCase, created.jsonPath().getString("arn"));
+        assertRegionalHostIn(partitionCase,
+                URI.create(created.jsonPath().getString("hlsIngest.ingestEndpoints[0].url")).getHost());
+    }
+
+    @ParameterizedTest
+    @MethodSource("nonCommercialCases")
+    void route53HostedZoneArnInTheTagIndex(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "route53");
+        offered(partitionCase, "tagging");
+        String location = signed(region, "route53")
+            .contentType("application/xml")
+            .body("<CreateHostedZoneRequest xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\">"
+                    + "<Name>" + unique("smoke", partitionCase) + ".example</Name>"
+                    + "<CallerReference>" + unique("smoke-zone", partitionCase) + "</CallerReference>"
+                    + "</CreateHostedZoneRequest>")
+        .when().post("/2013-04-01/hostedzone").then().statusCode(201).extract().header("Location");
+        String zoneId = location.substring(location.lastIndexOf('/') + 1);
+        cleanup.register(() -> signed(region, "route53").when().delete("/2013-04-01/hostedzone/" + zoneId));
+        String tagValue = unique("zone", partitionCase);
+        signed(region, "route53")
+            .contentType("application/xml")
+            .body("<ChangeTagsForResourceRequest xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\">"
+                    + "<AddTags><Tag><Key>smoke</Key><Value>" + tagValue + "</Value></Tag></AddTags>"
+                    + "</ChangeTagsForResourceRequest>")
+        .when().post("/2013-04-01/tags/hostedzone/" + zoneId).then().statusCode(200);
+        String arn = json11(region, "tagging", "ResourceGroupsTaggingAPI_20170126.GetResources",
+                "{\"TagFilters\":[{\"Key\":\"smoke\",\"Values\":[\"" + tagValue + "\"]}]}")
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath().getString("ResourceTagMappingList[0].ResourceARN");
+        PartitionMatrix.assertGlobalArnIn(partitionCase, arn);
+        assertTrue(arn.endsWith(":route53:::hostedzone/" + zoneId), arn);
+    }
+
     private static String offered(PartitionCase partitionCase, String signingName) {
         assumeTrue(!AwsPartitions.publishesSomewhere(signingName)
                         || AwsPartitions.byId(partitionCase.partition()).offersSigningName(signingName),
