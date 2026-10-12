@@ -43,9 +43,27 @@ public class ResourceGroupsTaggingService implements Resettable {
     private static final String WILDCARD_SUFFIX = ":*";
     private static final String GLOBAL_REGION = "global";
 
+    /**
+     * The one region whose tag index holds IAM resources. IAM is global and indexes in
+     * {@code us-east-1} only, so tagged IAM policies are invisible to {@code GetResources} called
+     * against any other region.
+     */
+    private static final String IAM_INDEX_REGION = "us-east-1";
+
+    /**
+     * The IAM resource types the index serves, as an allowlist of measured types. Measured against
+     * a live account on 2026-09-14. A tagged {@code policy} and a tagged {@code instance-profile}
+     * come back from {@code GetResources} in {@code us-east-1}, and a tagged {@code role} comes back
+     * nowhere. The other types {@code TagResources} accepts have not been probed and stay out until
+     * someone measures them.
+     */
+    private static final Set<String> IAM_TYPES_IN_TAG_INDEX = Set.of("policy", "instance-profile");
+
     private final StorageFactory storageFactory;
     private final Iterable<ResourceProvider> providers;
     private final Iterable<TagHandler> tagHandlers;
+    private final Iterable<TaggedResourceProvider> taggedResourceProviders;
+    private final Iterable<TaggedResourceWriter> taggedResourceWriters;
     private final RegionResolver regionResolver;
 
     // region::arn → ResourceTagMapping
@@ -55,10 +73,13 @@ public class ResourceGroupsTaggingService implements Resettable {
     public ResourceGroupsTaggingService(StorageFactory storageFactory,
                                         Instance<ResourceProvider> providers,
                                         @Any Instance<TagHandler> tagHandlers,
+                                        Instance<TaggedResourceProvider> taggedResourceProviders,
+                                        Instance<TaggedResourceWriter> taggedResourceWriters,
                                         RegionResolver regionResolver) {
         // The upcasts select the Iterable constructor instead of recursing into this one.
         this(storageFactory, (Iterable<ResourceProvider>) providers, (Iterable<TagHandler>) tagHandlers,
-                regionResolver);
+                (Iterable<TaggedResourceProvider>) taggedResourceProviders,
+                (Iterable<TaggedResourceWriter>) taggedResourceWriters, regionResolver);
     }
 
     public ResourceGroupsTaggingService(StorageFactory storageFactory) {
@@ -69,9 +90,20 @@ public class ResourceGroupsTaggingService implements Resettable {
                                  Iterable<ResourceProvider> providers,
                                  Iterable<TagHandler> tagHandlers,
                                  RegionResolver regionResolver) {
+        this(storageFactory, providers, tagHandlers, List.of(), List.of(), regionResolver);
+    }
+
+    ResourceGroupsTaggingService(StorageFactory storageFactory,
+                                 Iterable<ResourceProvider> providers,
+                                 Iterable<TagHandler> tagHandlers,
+                                 Iterable<TaggedResourceProvider> taggedResourceProviders,
+                                 Iterable<TaggedResourceWriter> taggedResourceWriters,
+                                 RegionResolver regionResolver) {
         this.storageFactory = storageFactory;
         this.providers = providers;
         this.tagHandlers = tagHandlers;
+        this.taggedResourceProviders = taggedResourceProviders;
+        this.taggedResourceWriters = taggedResourceWriters;
         this.regionResolver = regionResolver;
     }
 
@@ -156,7 +188,7 @@ public class ResourceGroupsTaggingService implements Resettable {
         Map<String, AwsException> failures = new LinkedHashMap<>();
         Map<String, TagHandler> owners = listedOwners(resourceArns, region, failures);
         for (String arn : resourceArns) {
-            if (failures.containsKey(arn)) {
+            if (failures.containsKey(arn) || writtenThrough(writer -> writer.tag(arn, tags))) {
                 continue;
             }
             TagHandler owner = owners.get(arn);
@@ -191,6 +223,9 @@ public class ResourceGroupsTaggingService implements Resettable {
         Map<String, TagHandler> owners = listedOwners(resourceArns, region, failures);
         List<String> resolved = resourceArns.stream().filter(arn -> !failures.containsKey(arn)).toList();
         for (String arn : resourceArns) {
+            if (!failures.containsKey(arn)) {
+                writtenThrough(writer -> writer.untag(arn, tagKeys));
+            }
             TagHandler owner = owners.get(arn);
             if (owner != null) {
                 try {
@@ -202,6 +237,16 @@ public class ResourceGroupsTaggingService implements Resettable {
         }
         untagResources(resolved, tagKeys, region);
         return failures;
+    }
+
+    // Offers a write to each TaggedResourceWriter, and reports whether one of them owned the ARN.
+    private boolean writtenThrough(java.util.function.Predicate<TaggedResourceWriter> write) {
+        for (TaggedResourceWriter writer : taggedResourceWriters) {
+            if (write.test(writer)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void rejectOtherRegion(List<String> resourceArns, String region, String operation) {
@@ -379,11 +424,25 @@ public class ResourceGroupsTaggingService implements Resettable {
         synchronized (this) {
             for (ResourceTagMapping stored : store.values()) {
                 String arn = stored.getResourceArn();
-                // ponytail: IAM is the only global service with store-only ARNs handled here; another would need adding.
-                if (isVisible(arn, region, accountId) && !AwsArnUtils.isArnFor(arn, "iam")) {
+                if (isVisible(arn, region, accountId)) {
                     byArn.computeIfAbsent(arn, ViewEntry::of).mapping().getTags().putAll(stored.getTags());
                 }
             }
+        }
+        for (TaggedResourceProvider provider : taggedResourceProviders) {
+            Map<String, Map<String, String>> tagged;
+            try {
+                tagged = provider.taggedResources();
+            } catch (RuntimeException e) {
+                LOG.warnv(e, "TaggedResourceProvider {0} failed to supply resources; excluding it from tag discovery",
+                        provider.getClass().getSimpleName());
+                continue;
+            }
+            tagged.forEach((arn, tags) -> {
+                if (!tags.isEmpty() && isVisible(arn, region, accountId)) {
+                    byArn.computeIfAbsent(arn, ViewEntry::of).mapping().getTags().putAll(tags);
+                }
+            });
         }
         for (ExplorerResource resource : providerResources().resources()) {
             String arn = withoutWildcard(resource.arn());
@@ -434,14 +493,38 @@ public class ResourceGroupsTaggingService implements Resettable {
         return new ProviderScan(resources, unreadServices);
     }
 
-    // Region and account come from the ARN (arn:<partition>:svc:region:acct:resource), and a string
-    // that is not an ARN, or an ARN without a region, stays visible as it always has.
     private static boolean isVisible(String arn, String region, String accountId) {
-        String[] parts = arn.split(":", 6);
-        if (parts.length >= 4 && !parts[3].isEmpty() && !parts[3].equals(region)) {
+        if (!servedInRegion(arn, region)) {
             return false;
         }
+        String[] parts = arn.split(":", 6);
         return accountId == null || parts.length < 5 || parts[4].isEmpty() || parts[4].equals(accountId);
+    }
+
+    /**
+     * Whether the tag index serves {@code arn} to a caller in {@code region}. Region comes from the
+     * ARN ({@code arn:<partition>:svc:region:acct:resource}). A regional ARN is served in its own
+     * region, and a string that is not an ARN, or an ARN without a region, is served everywhere.
+     *
+     * <p>IAM is the exception. Its ARNs carry no region, and real AWS serves a tagged IAM policy
+     * and instance profile from {@code us-east-1} alone and a tagged role from nowhere, however
+     * the tag was written. The write side is untouched, so {@code TagResources} still accepts IAM
+     * ARNs of every type. On AWS a new policy or instance profile takes roughly 500 seconds to
+     * reach the index, and floci serves it at once.
+     */
+    static boolean servedInRegion(String arn, String region) {
+        if (arn == null) {
+            return false;
+        }
+        String[] parts = arn.split(":", 6);
+        if (parts.length < 4) {
+            return true;
+        }
+        if ("iam".equals(parts[2])) {
+            return IAM_INDEX_REGION.equals(region) && parts.length == 6
+                    && IAM_TYPES_IN_TAG_INDEX.contains(parsedType(parts[5]));
+        }
+        return parts[3].isEmpty() || parts[3].equals(region);
     }
 
     // A provider resource's region is its ARN's, else the owner's region for it. Null means it has none,
