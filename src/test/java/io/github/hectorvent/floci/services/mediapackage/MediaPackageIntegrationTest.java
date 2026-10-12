@@ -1,6 +1,8 @@
 package io.github.hectorvent.floci.services.mediapackage;
 
 import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.response.ExtractableResponse;
+import io.restassured.response.Response;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
@@ -22,7 +24,7 @@ class MediaPackageIntegrationTest {
     @Test
     @Order(1)
     void createChannel() {
-        var response = given()
+        ExtractableResponse<Response> response = given()
             .contentType("application/json")
             .body("""
                 {"id": "integration-channel", "description": "test channel", "tags": {"team": "video"}}

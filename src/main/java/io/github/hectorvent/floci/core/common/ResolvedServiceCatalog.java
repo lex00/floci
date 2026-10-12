@@ -20,9 +20,6 @@ import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentC
 import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreResourcePolicyController;
 import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreToolsController;
 import io.github.hectorvent.floci.services.bedrockruntime.BedrockRuntimeController;
-import io.github.hectorvent.floci.services.mediapackagev2.MediaPackageV2Controller;
-import io.github.hectorvent.floci.services.mediapackage.MediaPackageController;
-import io.github.hectorvent.floci.services.medialive.MediaLiveController;
 import io.github.hectorvent.floci.services.cloudfront.CloudFrontController;
 import io.github.hectorvent.floci.services.cloudfront.CloudFrontServingController;
 import io.github.hectorvent.floci.services.codeartifact.CodeArtifactMavenController;
@@ -44,6 +41,8 @@ import io.github.hectorvent.floci.services.iot.IotController;
 import io.github.hectorvent.floci.services.iot.IotDataController;
 import io.github.hectorvent.floci.services.iot.IotDomainConfigurationController;
 import io.github.hectorvent.floci.services.iot.IotFleetIndexingController;
+import io.github.hectorvent.floci.services.ivs.IvsController;
+import io.github.hectorvent.floci.services.ivschat.IvschatController;
 import io.github.hectorvent.floci.services.lambda.LambdaController;
 import io.github.hectorvent.floci.services.lambda.durable.DurableExecutionController;
 import io.github.hectorvent.floci.services.lambdamicrovms.LambdaMicrovmsController;
@@ -53,6 +52,9 @@ import io.github.hectorvent.floci.services.marketplace.MarketplaceCatalogControl
 import io.github.hectorvent.floci.services.marketplace.MarketplaceDeploymentController;
 import io.github.hectorvent.floci.services.marketplace.MarketplaceDiscoveryController;
 import io.github.hectorvent.floci.services.marketplace.MarketplaceReportingController;
+import io.github.hectorvent.floci.services.medialive.MediaLiveController;
+import io.github.hectorvent.floci.services.mediapackage.MediaPackageController;
+import io.github.hectorvent.floci.services.mediapackagev2.MediaPackageV2Controller;
 import io.github.hectorvent.floci.services.mwaa.MwaaController;
 import io.github.hectorvent.floci.services.oam.OamController;
 import io.github.hectorvent.floci.services.opensearch.OpenSearchController;
@@ -83,8 +85,6 @@ import io.github.hectorvent.floci.services.ses.SesTemplateController;
 import io.github.hectorvent.floci.services.ses.SesTenantController;
 import io.github.hectorvent.floci.services.ssooidc.SsoOidcController;
 import io.github.hectorvent.floci.services.ssoportal.SsoPortalController;
-import io.github.hectorvent.floci.services.ivs.IvsController;
-import io.github.hectorvent.floci.services.ivschat.IvschatController;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 

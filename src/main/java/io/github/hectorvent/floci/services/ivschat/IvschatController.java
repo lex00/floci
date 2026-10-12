@@ -1,12 +1,13 @@
 package io.github.hectorvent.floci.services.ivschat;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.services.ivschat.model.IvschatLoggingConfiguration;
 import io.github.hectorvent.floci.services.ivschat.model.IvschatRoom;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
@@ -125,7 +126,7 @@ public class IvschatController {
             node.set("messageReviewHandler", room.getMessageReviewHandler());
         }
         node.set("tags", objectMapper.valueToTree(room.getTags()));
-        var identifiers = node.putArray("loggingConfigurationIdentifiers");
+        ArrayNode identifiers = node.putArray("loggingConfigurationIdentifiers");
         if (room.getLoggingConfigurationIdentifiers() != null) {
             room.getLoggingConfigurationIdentifiers().forEach(identifiers::add);
         }

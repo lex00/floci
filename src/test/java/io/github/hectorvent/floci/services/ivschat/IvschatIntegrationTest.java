@@ -1,6 +1,8 @@
 package io.github.hectorvent.floci.services.ivschat;
 
 import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.response.ExtractableResponse;
+import io.restassured.response.Response;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
@@ -23,7 +25,7 @@ class IvschatIntegrationTest {
     @Test
     @Order(1)
     void createRoom() {
-        var response = given()
+        ExtractableResponse<Response> response = given()
             .contentType("application/json")
             .body("""
                 {"name": "integration-room", "tags": {"team": "chat"}}
@@ -139,7 +141,7 @@ class IvschatIntegrationTest {
     @Test
     @Order(7)
     void loggingConfigurationRoundTrip() {
-        var response = given()
+        ExtractableResponse<Response> response = given()
             .contentType("application/json")
             .body("""
                 {"destinationConfiguration": {"s3": {"bucketName": "placeholder"}}}

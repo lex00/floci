@@ -1,8 +1,8 @@
 package io.github.hectorvent.floci.services.mediapackagev2;
 
-import io.github.hectorvent.floci.core.common.AwsRegions;
 import com.fasterxml.jackson.core.type.TypeReference;
 import io.github.hectorvent.floci.core.common.AwsException;
+import io.github.hectorvent.floci.core.common.AwsRegions;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.common.TagHandler;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
