@@ -103,9 +103,22 @@ decides, also for tags the tagging store holds for that ARN, so an
 `us-east-1`. A region-less ARN known only to the tagging store is visible in
 every region. As in AWS, a resource the owning service reports without a
 region, or in the region `global` as IAM does for users and roles, is never
-listed, and `TagResources` does not forward to its owning service; an IAM ARN
-is never listed at all, even one only the tagging store holds, for example
-after the role is deleted. Every store is per account, so results are scoped
+listed, and `TagResources` does not forward to its owning service.
+
+IAM follows the rule measured against AWS. A tagged customer managed policy or
+instance profile is listed from `us-east-1` alone, whether IAM or
+`TagResources` wrote the tag. A tagged role is never listed, and the other IAM
+types stay out until measured. AWS takes roughly 500 seconds to index a new
+policy or instance profile, and Floci lists it at once.
+
+Route 53 hosted zones and health checks are owned by Route 53 in both
+directions. `TagResources` and `UntagResources` on
+`arn:aws:route53:::hostedzone/<id>` or `arn:aws:route53:::healthcheck/<id>`
+change the resource's own tags, which Route 53 `ListTagsForResource` reads
+back, and tags written through `ChangeTagsForResource` are listed. An ARN for a
+zone or health check that does not exist goes to the tagging store.
+
+Every store is per account, so results are scoped
 to the calling account. An ARN with an empty account segment, such as an API
 Gateway ARN, only leaves the account out of the ARN; the resource is still
 listed for the account that owns it.
