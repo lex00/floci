@@ -31,11 +31,15 @@ import io.github.hectorvent.floci.services.secretsmanager.SecretsManagerService;
 import io.github.hectorvent.floci.services.ssm.SsmService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -63,12 +67,16 @@ class EcsContainerManagerSecurityGroupTest {
     private RegionResolver regionResolver;
     private Ec2Service ec2Service;
     private SecurityGroupFirewallManager firewallManager;
+    private EmulatorConfig config;
+    private ContainerBuilder containerBuilder;
+    private EcsTaskRoleCredentials taskRoleCredentials;
+    private EcsCredentialsProxy credentialsProxy;
     private EcsContainerManager manager;
 
     @BeforeEach
     void setUp() {
         builder = mock(ContainerBuilder.Builder.class, RETURNS_SELF);
-        ContainerBuilder containerBuilder = mock(ContainerBuilder.class);
+        containerBuilder = mock(ContainerBuilder.class);
         when(containerBuilder.newContainer(anyString())).thenReturn(builder);
         when(containerBuilder.resolveImage(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -80,7 +88,7 @@ class EcsContainerManagerSecurityGroupTest {
         when(lifecycleManager.getDockerClient()).thenReturn(dockerClient);
 
         containerDetector = mock(ContainerDetector.class);
-        EmulatorConfig config = mock(EmulatorConfig.class, RETURNS_DEEP_STUBS);
+        config = mock(EmulatorConfig.class, RETURNS_DEEP_STUBS);
         regionResolver = mock(RegionResolver.class);
         when(regionResolver.getAccountId()).thenReturn("000000000000");
         LaunchedContainerAwsEnv awsEnv = mock(LaunchedContainerAwsEnv.class);
@@ -90,6 +98,8 @@ class EcsContainerManagerSecurityGroupTest {
 
         ec2Service = mock(Ec2Service.class);
         firewallManager = mock(SecurityGroupFirewallManager.class);
+        taskRoleCredentials = mock(EcsTaskRoleCredentials.class);
+        credentialsProxy = mock(EcsCredentialsProxy.class);
 
         manager = new EcsContainerManager(
                 containerBuilder, lifecycleManager, mock(ContainerLogStreamer.class),
@@ -97,7 +107,7 @@ class EcsContainerManagerSecurityGroupTest {
                 mock(SsmService.class), mock(SecretsManagerService.class), mock(S3Service.class),
                 ecrRegistryManager, mock(HostVolumePolicy.class),
                 ec2Service, firewallManager,
-                mock(EcsTaskRoleCredentials.class), mock(EcsCredentialsProxy.class),
+                taskRoleCredentials, credentialsProxy,
                 new EcsTaskLinkLocalAddresses());
     }
 
@@ -105,7 +115,7 @@ class EcsContainerManagerSecurityGroupTest {
     void awsvpcTaskWithFirewallJoinsHelperNamespaceAndSkipsHostPorts() {
         when(containerDetector.isRunningInContainer()).thenReturn(false);
         when(firewallManager.enabled()).thenReturn(true);
-        when(firewallManager.createNamespace(eq("ecs"), eq("abc123"), any(), any(), any(), any(), any()))
+        when(firewallManager.createNamespace(eq("ecs"), eq("abc123"), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new SecurityGroupFirewallManager.Namespace("helper-id", "10.0.0.5"));
 
         NetworkInterface eni = new NetworkInterface();
@@ -139,6 +149,67 @@ class EcsContainerManagerSecurityGroupTest {
     }
 
     @Test
+    void protectedTaskGetsItsRoleCredentialsThroughTheHelpersLinkLocalAddress() {
+        String relativeUri = "/v2/credentials/0b5f1a6e-8c21-4c2e-9a4c-2f0d2b6c7a10";
+        when(config.services().ecs().taskRoleCredentials().enabled()).thenReturn(true);
+        when(containerBuilder.resolveDockerNetwork(any())).thenReturn(Optional.of("floci-ecs-net"));
+        when(taskRoleCredentials.issue(any(), any(), any(), any())).thenReturn(Optional.of(relativeUri));
+        stubProtectedNetwork();
+
+        TaskDefinition taskDef = awsvpcTaskDef(List.of());
+        taskDef.setTaskRoleArn("arn:aws:iam::000000000000:role/ecsTaskRole");
+        manager.startTask(awsvpcTask(), taskDef, List.of(), "us-east-1");
+
+        verify(credentialsProxy).ensureProxyOn("floci-ecs-net");
+        // The task's one address goes on the helper, whose namespace every container shares.
+        verify(firewallManager).createNamespace(eq("ecs"), eq("abc123"), any(), any(), any(), any(), any(),
+                eq("169.254.170.1"));
+        verify(builder, never()).withLinkLocalIp(anyString());
+        verify(builder).withNetworkMode("container:helper-id");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> env = ArgumentCaptor.forClass(List.class);
+        verify(builder).withEnv(env.capture());
+        assertTrue(env.getValue().contains("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI=" + relativeUri),
+                env.getValue().toString());
+    }
+
+    @Test
+    void protectedTaskRevokesItsCredentialsWhenTheNamespaceCannotBeBuilt() {
+        when(config.services().ecs().taskRoleCredentials().enabled()).thenReturn(true);
+        when(containerBuilder.resolveDockerNetwork(any())).thenReturn(Optional.of("floci-ecs-net"));
+        when(taskRoleCredentials.issue(any(), any(), any(), any()))
+                .thenReturn(Optional.of("/v2/credentials/0b5f1a6e-8c21-4c2e-9a4c-2f0d2b6c7a10"));
+        stubProtectedNetwork();
+        when(firewallManager.createNamespace(eq("ecs"), eq("abc123"), any(), any(), any(), any(), any(), any()))
+                .thenThrow(new IllegalStateException("rootless Docker"));
+
+        TaskDefinition taskDef = awsvpcTaskDef(List.of());
+        taskDef.setTaskRoleArn("arn:aws:iam::000000000000:role/ecsTaskRole");
+        assertThrows(IllegalStateException.class,
+                () -> manager.startTask(awsvpcTask(), taskDef, List.of(), "us-east-1"));
+
+        verify(taskRoleCredentials).revoke("arn:aws:ecs:us-east-1:000000000000:task/test-cluster/abc123");
+    }
+
+    private void stubProtectedNetwork() {
+        when(containerDetector.isRunningInContainer()).thenReturn(false);
+        when(firewallManager.enabled()).thenReturn(true);
+        when(firewallManager.createNamespace(eq("ecs"), eq("abc123"), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new SecurityGroupFirewallManager.Namespace("helper-id", "10.0.0.5"));
+        NetworkInterface eni = new NetworkInterface();
+        eni.setNetworkInterfaceId("eni-1");
+        eni.setVpcId("vpc-1");
+        eni.setPrivateIpAddress("10.0.0.10");
+        eni.setGroups(List.of(new GroupIdentifier("sg-1", "default")));
+        when(ec2Service.createNetworkInterface(any(), eq("subnet-1"), any(), any(), any(), any(), any()))
+                .thenReturn(eni);
+        SecurityGroup sg = new SecurityGroup();
+        sg.setGroupId("sg-1");
+        when(ec2Service.describeSecurityGroups(any(), eq(List.of("sg-1")), any(), any()))
+                .thenReturn(List.of(sg));
+    }
+
+    @Test
     void disabledFirewallDoesNotJoinNamespace() {
         when(containerDetector.isRunningInContainer()).thenReturn(false);
         when(firewallManager.enabled()).thenReturn(false);
@@ -156,7 +227,7 @@ class EcsContainerManagerSecurityGroupTest {
     void stopTaskUnregistersEniAndReleasingTheTaskNetworkDeletesIt() {
         when(containerDetector.isRunningInContainer()).thenReturn(false);
         when(firewallManager.enabled()).thenReturn(true);
-        when(firewallManager.createNamespace(eq("ecs"), eq("abc123"), any(), any(), any(), any(), any()))
+        when(firewallManager.createNamespace(eq("ecs"), eq("abc123"), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new SecurityGroupFirewallManager.Namespace("helper-id", "10.0.0.5"));
 
         NetworkInterface eni = new NetworkInterface();
@@ -192,7 +263,7 @@ class EcsContainerManagerSecurityGroupTest {
     void firelensRouterAndAppBothJoinTheHelperNamespace() {
         when(containerDetector.isRunningInContainer()).thenReturn(false);
         when(firewallManager.enabled()).thenReturn(true);
-        when(firewallManager.createNamespace(eq("ecs"), eq("abc123"), any(), any(), any(), any(), any()))
+        when(firewallManager.createNamespace(eq("ecs"), eq("abc123"), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new SecurityGroupFirewallManager.Namespace("helper-id", "10.0.0.5"));
 
         NetworkInterface eni = new NetworkInterface();
@@ -240,7 +311,7 @@ class EcsContainerManagerSecurityGroupTest {
         verify(builder, times(2)).withNetworkMode("container:helper-id");
         verify(builder, times(2)).withLabels(Map.of("io.floci.security-group.workload", "true"));
 
-        verify(firewallManager).createNamespace(eq("ecs"), eq("abc123"), any(), any(), any(), any(), any());
+        verify(firewallManager).createNamespace(eq("ecs"), eq("abc123"), any(), any(), any(), any(), any(), any());
         verify(lifecycleManager).create(any());
         verify(lifecycleManager).startCreated(eq("router-id"), any());
         verify(lifecycleManager).createAndStart(any());

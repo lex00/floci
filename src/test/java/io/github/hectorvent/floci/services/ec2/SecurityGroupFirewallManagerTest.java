@@ -65,6 +65,35 @@ class SecurityGroupFirewallManagerTest {
     }
 
     @Test
+    void helperTakesTheLinkLocalAddressItsWorkloadsShare() {
+        EmulatorConfig config = mock(EmulatorConfig.class, RETURNS_DEEP_STUBS);
+        when(config.network().securityGroupEnforcement().enabled()).thenReturn(true);
+        when(config.network().securityGroupEnforcement().helperImage()).thenReturn("floci/network-helper:local");
+        when(config.docker().resourceNamespace()).thenReturn(Optional.empty());
+        when(config.docker().imageRegistryBase()).thenReturn(Optional.empty());
+        DockerClient dockerClient = mock(DockerClient.class, RETURNS_DEEP_STUBS);
+        Info linux = mock(Info.class);
+        when(linux.getOsType()).thenReturn("linux");
+        when(dockerClient.infoCmd().exec()).thenReturn(linux);
+        when(dockerClient.inspectImageCmd(anyString()).exec()).thenReturn(null);
+        EmbeddedDnsServer embeddedDnsServer = mock(EmbeddedDnsServer.class);
+        when(embeddedDnsServer.getServerIp()).thenReturn(Optional.empty());
+        ContainerLifecycleManager lifecycleManager = mock(ContainerLifecycleManager.class);
+        when(lifecycleManager.createAndStart(any())).thenThrow(new IllegalStateException("stop after the spec"));
+        SecurityGroupFirewallManager manager = new SecurityGroupFirewallManager(dockerClient,
+                new ContainerBuilder(config, mock(DockerHostResolver.class), embeddedDnsServer), lifecycleManager,
+                config, embeddedDnsServer);
+
+        assertThrows(IllegalStateException.class, () -> manager.createNamespace("ecs", "task-1", "000000000000",
+                "us-east-1", Optional.of("floci-ecs-net"), Map.of(), Map.of(), "169.254.170.1"));
+
+        ArgumentCaptor<ContainerSpec> helper = ArgumentCaptor.forClass(ContainerSpec.class);
+        verify(lifecycleManager).createAndStart(helper.capture());
+        assertEquals(List.of("169.254.170.1"), helper.getValue().linkLocalIps());
+        assertEquals("floci-ecs-net", helper.getValue().networkMode());
+    }
+
+    @Test
     void onlyFlocisDnsIsExemptFromTheSecurityGroups() {
         EmbeddedDnsServer embeddedDnsServer = mock(EmbeddedDnsServer.class);
         when(embeddedDnsServer.getServerIp()).thenReturn(Optional.of("172.18.0.2"));
