@@ -1328,8 +1328,8 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
     }
 
     public void createNetworkAclEntry(String region, String networkAclId, int ruleNumber, String protocol,
-                                      String ruleAction, boolean egress, String cidrBlock, Integer from, Integer to,
-                                      boolean replace) {
+                                      String ruleAction, boolean egress, String cidrBlock, String ipv6CidrBlock,
+                                      Integer from, Integer to, boolean replace) {
         synchronized (lockFor(key(region, networkAclId))) {
             NetworkAcl acl = getRequiredNetworkAcl(region, networkAclId);
             boolean exists = acl.getEntries().stream()
@@ -1341,6 +1341,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
             List<NetworkAclEntry> next = new ArrayList<>(acl.getEntries());
             next.removeIf(e -> e.getRuleNumber() == ruleNumber && e.isEgress() == egress);
             NetworkAclEntry entry = naclEntry(ruleNumber, protocol, ruleAction, egress, cidrBlock);
+            entry.setIpv6CidrBlock(ipv6CidrBlock);
             entry.setPortRangeFrom(from);
             entry.setPortRangeTo(to);
             next.add(entry);
