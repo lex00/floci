@@ -257,7 +257,9 @@ class AutoScalingGroupOptionalStructuresIntegrationTest {
         rejectedCreate("opt-structures-wide-spread",
                 "InstanceMaintenancePolicy.MinHealthyPercentage", "0",
                 "InstanceMaintenancePolicy.MaxHealthyPercentage", "150")
-                .body(containsString("cannot be greater than 100"));
+                .body(containsString(
+                        "The difference between MaxHealthyPercentage and MinHealthyPercentage "
+                                + "must be less than or equal to 100."));
     }
 
     @Test
