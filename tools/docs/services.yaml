@@ -48,6 +48,9 @@ services:
       - { path: src/main/java/io/github/hectorvent/floci/services/bedrockagentcorecontrol/BedrockAgentCoreToolsController.java, mode: rest }
       - { path: src/main/java/io/github/hectorvent/floci/services/bedrockagentcorecontrol/BedrockAgentCoreGatewayRuleController.java, mode: rest }
       - { path: src/main/java/io/github/hectorvent/floci/services/bedrockagentcorecontrol/BedrockAgentCoreResourcePolicyController.java, mode: rest }
+      - { path: src/main/java/io/github/hectorvent/floci/services/bedrockagentcorecontrol/BedrockAgentCoreEvaluatorController.java, mode: rest }
+      - { path: src/main/java/io/github/hectorvent/floci/services/bedrockagentcorecontrol/BedrockAgentCoreOnlineEvaluationController.java, mode: rest }
+      - { path: src/main/java/io/github/hectorvent/floci/services/bedrockagentcore/BedrockAgentCoreEvaluationController.java, mode: rest }
     rename_actions:
       CreateEndpoint: CreateAgentRuntimeEndpoint
       GetEndpoint: GetAgentRuntimeEndpoint

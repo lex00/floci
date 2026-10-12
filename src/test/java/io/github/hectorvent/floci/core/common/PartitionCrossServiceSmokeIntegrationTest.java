@@ -39,7 +39,7 @@ class PartitionCrossServiceSmokeIntegrationTest {
 
     static final Set<String> COVERED_PACKAGES = Set.of(
             "accessanalyzer", "acm", "amazonmq", "apigateway", "apigatewayv2", "applicationautoscaling", "appsync",
-            "aps", "autoscaling", "backup", "batch", "bcmdataexports", "bedrock", "bedrockagentcorecontrol", "ce",
+            "aps", "autoscaling", "backup", "batch", "bcmdataexports", "bedrock", "bedrockagentcore", "bedrockagentcorecontrol", "ce",
             "cloudfront", "cloudmap", "cloudwatch", "codebuild", "codedeploy", "codepipeline", "cognito",
             "configservice", "connect", "controlcatalog", "controltower", "datasync", "dlm", "dms", "dynamodb", "ec2",
             "ecr", "ecs", "efs", "eks", "elasticache", "elasticbeanstalk", "elbv2", "emr", "emrserverless",
@@ -642,6 +642,29 @@ class PartitionCrossServiceSmokeIntegrationTest {
         cleanup.register(() -> signed(region, "bedrock-agentcore").when().delete("/gateways/" + gatewayId + "/"));
         PartitionMatrix.assertArnIn(partitionCase, created.jsonPath().getString("gatewayArn"));
         assertRegionalHostIn(partitionCase, URI.create(created.jsonPath().getString("gatewayUrl")).getHost());
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void bedrockAgentCoreBatchEvaluationAndBuiltinEvaluatorArns(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "bedrock-agentcore");
+        String body = """
+                {"batchEvaluationName": "%s",
+                 "dataSourceConfig": {"cloudWatchLogs": {"serviceNames": ["smoke.agent"]}}}
+                """.formatted("smoke" + Long.toString(System.nanoTime(), 36));
+        Response started = signed(region, "bedrock-agentcore")
+            .contentType(JSON)
+            .body(body)
+        .when().post("/evaluations/batch-evaluate").then().statusCode(202).extract().response();
+        String batchId = started.jsonPath().getString("batchEvaluationId");
+        cleanup.register(() -> signed(region, "bedrock-agentcore")
+            .when().delete("/evaluations/batch-evaluate/" + batchId));
+        PartitionMatrix.assertArnIn(partitionCase, started.jsonPath().getString("batchEvaluationArn"));
+
+        String builtinArn = signed(region, "bedrock-agentcore")
+        .when().get("/evaluators/Builtin.Helpfulness").then().statusCode(200)
+            .extract().jsonPath().getString("evaluatorArn");
+        PartitionMatrix.assertGlobalArnIn(partitionCase, builtinArn);
     }
 
     @ParameterizedTest

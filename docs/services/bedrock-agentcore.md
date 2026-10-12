@@ -5,7 +5,8 @@
 
 Emulates the Amazon Bedrock AgentCore **control plane** (`bedrock-agentcore-control`)
 as a stateful local registry across runtimes, endpoints, gateways, memories, browser/code-interpreter
-resources, credential providers, gateway rules, and resource policies. No real agent execution:
+resources, credential providers, gateway rules, resource policies, and AgentCore Evaluations
+evaluators and online evaluation configurations. No real agent execution:
 runtimes reach `READY` immediately and hold metadata only. See
 [the design note](../design/bedrock-agentcore.md) for scope and protocol details.
 
@@ -79,6 +80,22 @@ runtimes reach `READY` immediately and hold metadata only. See
 | `GetResourcePolicy` | Returns the policy attached to an AgentCore resource |
 | `PutResourcePolicy` | Creates or replaces a policy on an AgentCore resource |
 | `DeleteResourcePolicy` | Deletes the policy attached to an AgentCore resource |
+| `CreateEvaluator` | Creates a custom evaluator (LLM-as-a-judge, code-based or derived) |
+| `GetEvaluator` | Returns a custom or built-in evaluator; `includedData=METADATA_ONLY` drops instructions and rating scale |
+| `UpdateEvaluator` | Updates a custom evaluator; refused while an enabled online evaluation config uses it |
+| `DeleteEvaluator` | Deletes a custom evaluator; refused while an enabled online evaluation config uses it |
+| `ListEvaluators` | Lists the AWS `Builtin.*` evaluators and the account's custom evaluators |
+| `CreateOnlineEvaluationConfig` | Creates an online evaluation configuration (stored only, no traffic is sampled) |
+| `GetOnlineEvaluationConfig` | Returns an online evaluation configuration |
+| `UpdateOnlineEvaluationConfig` | Updates an online evaluation configuration, including its `executionStatus` |
+| `DeleteOnlineEvaluationConfig` | Deletes an online evaluation configuration |
+| `ListOnlineEvaluationConfigs` | Lists online evaluation configurations (paginated) |
+| `Evaluate` | Data plane. Scores OpenTelemetry spans with a canned score, one result per session, trace or tool span |
+| `StartBatchEvaluation` | Data plane. Starts a batch evaluation, returned as `IN_PROGRESS` |
+| `GetBatchEvaluation` | Data plane. Returns a batch evaluation, completed with canned scores |
+| `ListBatchEvaluations` | Data plane. Lists batch evaluations (paginated) |
+| `StopBatchEvaluation` | Data plane. Stops a batch evaluation that has not completed |
+| `DeleteBatchEvaluation` | Data plane. Deletes a batch evaluation in a terminal status |
 <!-- floci:actions:end -->
 
 A `DEFAULT` endpoint is created automatically with each runtime, and each runtime
@@ -103,6 +120,46 @@ than a fixed answer. Behaviour measured against real AgentCore:
 
 Memory *records* (extraction and retrieval) are not emulated: they depend on an extraction engine
 rather than on stored events.
+
+## Evaluations
+
+Evaluators and online evaluation configurations are stored with AWS's shapes. No judge model runs
+and no live traffic is sampled.
+
+- `ListEvaluators` returns the AWS built-in evaluators first (`Builtin.Helpfulness`,
+  `Builtin.GoalSuccessRate`, `Builtin.ToolSelectionAccuracy` and the rest of the 18 the developer
+  guide documents), with `evaluatorType` `Builtin`, `provider` `AWS` and a regionless ARN such as
+  `arn:aws:bedrock-agentcore:::evaluator/Builtin.Helpfulness`. Their `evaluatorConfig` is empty
+  because AWS does not expose a built-in's model or prompt. They cannot be updated or deleted.
+- `ThirdParty.<Provider>.<Metric>` ids are accepted wherever an evaluator id is expected, and
+  `GetEvaluator` answers for them, but `ListEvaluators` does not list them.
+- A custom evaluator's `evaluatorType` follows its configuration: `Custom` for `llmAsAJudge`,
+  `CustomCode` for `codeBased`, `CustomDerived` for `derived`. A derived evaluator takes its
+  `level` and `provider` from a built-in base.
+- An evaluator used by an online evaluation configuration whose `executionStatus` is `ENABLED`
+  reports `lockedForModification: true`. Updating or deleting it is a `ConflictException` until the
+  configuration is disabled or deleted.
+- Evaluator names and online evaluation configuration names are unique per account and region.
+  Unknown evaluator ids in an online evaluation configuration are a `ValidationException`.
+- Evaluators and online evaluation configurations take tags through `TagResource`,
+  `UntagResource` and `ListTagsForResource`.
+
+The data-plane operations are canned, in the same spirit as `InvokeAgentRuntime`:
+
+- `Evaluate` reads `session.id` from the spans' attributes and returns one result per entity at the
+  evaluator's level: one for a session-level evaluator, one per trace for a trace-level evaluator
+  (or per `evaluationTarget.traceIds`), and one per `execute_tool` span (or per
+  `evaluationTarget.spanIds`) for a tool-level evaluator. Every result carries the configured
+  score (default `1.0`) and the label `Canned`. Spans with no `session.id` are a
+  `ValidationException`, and an unknown evaluator is a `ResourceNotFoundException`.
+- `StartBatchEvaluation` answers `IN_PROGRESS`. The job has completed by the first
+  `GetBatchEvaluation`, `ListBatchEvaluations` or `DeleteBatchEvaluation` that reads it, with
+  `COMPLETED` status and each evaluator's `averageScore` set to the configured score. The session
+  count is the number of session ids the request names (`filterConfig.sessionIds` and
+  `evaluationMetadata`), or 1 when it names none. Insights produce no clustering results.
+- `StopBatchEvaluation` before that first read moves the job to `STOPPED`. Stopping a completed
+  job is a `ConflictException`, as is deleting one that has not reached a terminal status.
+- No CloudWatch Logs are read and no results or metrics are written to CloudWatch.
 
 ## Data plane — `InvokeAgentRuntime`
 
@@ -149,14 +206,16 @@ block is ever produced even when a request supplies `tools`.
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_VALIDATE_RUNTIME_EXISTS` | `false` | When `true`, `InvokeAgentRuntime` returns `ResourceNotFoundException` for an unknown runtime ARN instead of the canned response |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_HARNESS_ECHO_PREFIX` | `You said: ` | Prefix on the reply `InvokeHarness` streams back |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_HARNESS_EMPTY_REPLY` | `No user message was supplied.` | Reply used when a request carries no user message |
+| `FLOCI_SERVICES_BEDROCK_AGENT_CORE_EVALUATION_SCORE` | `1.0` | Score on every `Evaluate` result and every evaluator's average in a completed batch evaluation |
 
 > **Note on YAML config keys.** The status endpoint reports these services as
 > `bedrock-agentcore-control` and `bedrock-agentcore`, but the YAML property paths
 > use hyphenated words: `floci.services.bedrock-agent-core-control.enabled` and
 > `floci.services.bedrock-agent-core.enabled` (and `…bedrock-agent-core.invoke-response`,
 > `…bedrock-agent-core.validate-runtime-exists`, `…bedrock-agent-core.harness-echo-prefix`,
-> `…bedrock-agent-core.harness-empty-reply`). The `FLOCI_*` environment variables
-> above map to these paths directly and are the recommended way to configure the service.
+> `…bedrock-agent-core.harness-empty-reply`, `…bedrock-agent-core.evaluation-score`). The
+> `FLOCI_*` environment variables above map to these paths directly and are the recommended way
+> to configure the service.
 
 ## Behavior notes
 

@@ -13,7 +13,7 @@ import java.util.Map;
  * Tagging for AgentCore resources, dispatched from the shared {@code /tags/{resourceArn}}
  * route. All AgentCore resources share the ARN service segment {@code bedrock-agentcore},
  * so this handler further dispatches by the resource type in the ARN. AWS supports tagging
- * for runtimes, gateways, and memories.
+ * for runtimes, gateways, memories, evaluators and online evaluation configurations.
  */
 @ApplicationScoped
 public class BedrockAgentCoreTagHandler implements TagHandler {
@@ -21,16 +21,19 @@ public class BedrockAgentCoreTagHandler implements TagHandler {
     private final BedrockAgentCoreControlService runtimeService;
     private final BedrockAgentCoreGatewayService gatewayService;
     private final BedrockAgentCoreMemoryService memoryService;
+    private final BedrockAgentCoreEvaluationService evaluationService;
     private final EmulatorConfig config;
 
     @Inject
     public BedrockAgentCoreTagHandler(BedrockAgentCoreControlService runtimeService,
                                       BedrockAgentCoreGatewayService gatewayService,
                                       BedrockAgentCoreMemoryService memoryService,
+                                      BedrockAgentCoreEvaluationService evaluationService,
                                       EmulatorConfig config) {
         this.runtimeService = runtimeService;
         this.gatewayService = gatewayService;
         this.memoryService = memoryService;
+        this.evaluationService = evaluationService;
         this.config = config;
     }
 
@@ -45,6 +48,7 @@ public class BedrockAgentCoreTagHandler implements TagHandler {
             case GATEWAY -> gatewayService.getTagsByArn(region, arn);
             case MEMORY -> memoryService.getTagsByArn(region, arn);
             case RUNTIME -> runtimeService.getTagsByArn(region, arn);
+            case EVALUATION -> evaluationService.getTagsByArn(region, arn);
         };
     }
 
@@ -54,6 +58,7 @@ public class BedrockAgentCoreTagHandler implements TagHandler {
             case GATEWAY -> gatewayService.tagByArn(region, arn, tags);
             case MEMORY -> memoryService.tagByArn(region, arn, tags);
             case RUNTIME -> runtimeService.tagByArn(region, arn, tags);
+            case EVALUATION -> evaluationService.tagByArn(region, arn, tags);
         }
     }
 
@@ -63,10 +68,11 @@ public class BedrockAgentCoreTagHandler implements TagHandler {
             case GATEWAY -> gatewayService.untagByArn(region, arn, tagKeys);
             case MEMORY -> memoryService.untagByArn(region, arn, tagKeys);
             case RUNTIME -> runtimeService.untagByArn(region, arn, tagKeys);
+            case EVALUATION -> evaluationService.untagByArn(region, arn, tagKeys);
         }
     }
 
-    private enum ResourceKind { RUNTIME, GATEWAY, MEMORY }
+    private enum ResourceKind { RUNTIME, GATEWAY, MEMORY, EVALUATION }
 
     private ResourceKind kind(String region, String arn) {
         String[] parts = arn == null ? new String[0] : arn.split(":");
@@ -84,13 +90,16 @@ public class BedrockAgentCoreTagHandler implements TagHandler {
         if (parts[5].startsWith("memory/")) {
             return ResourceKind.MEMORY;
         }
-        // Not a runtime, gateway, or memory → not a taggable AgentCore resource.
+        if (parts[5].startsWith("evaluator/") || parts[5].startsWith("online-evaluation-config/")) {
+            return ResourceKind.EVALUATION;
+        }
+        // Not one of the kinds above, so not a taggable AgentCore resource.
         throw new AwsException("ValidationException",
                 "Tagging is not supported for this AgentCore resource: " + arn, 400);
     }
 
     /**
-     * All three services resolve a resource from the ARN's id suffix alone, so without this a
+     * Every service here resolves a resource from the ARN's id suffix alone, so without this a
      * caller could reach a local runtime, gateway, or memory through an ARN naming another
      * account or region and read or change its tags. Reported as not found rather than a
      * validation error, so the response does not confirm what exists behind the foreign identity.

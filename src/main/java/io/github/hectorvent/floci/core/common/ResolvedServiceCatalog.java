@@ -12,11 +12,14 @@ import io.github.hectorvent.floci.services.backup.BackupController;
 import io.github.hectorvent.floci.services.batch.BatchController;
 import io.github.hectorvent.floci.services.bedrock.BedrockController;
 import io.github.hectorvent.floci.services.bedrockagentcore.BedrockAgentCoreController;
+import io.github.hectorvent.floci.services.bedrockagentcore.BedrockAgentCoreEvaluationController;
 import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreControlController;
+import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreEvaluatorController;
 import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreGatewayController;
 import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreGatewayRuleController;
 import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreIdentityController;
 import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreMemoryController;
+import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreOnlineEvaluationController;
 import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreResourcePolicyController;
 import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreToolsController;
 import io.github.hectorvent.floci.services.bedrockruntime.BedrockRuntimeController;
@@ -427,13 +430,14 @@ public class ResolvedServiceCatalog {
                         Set.of(BedrockAgentCoreControlController.class, BedrockAgentCoreIdentityController.class,
                                 BedrockAgentCoreGatewayController.class, BedrockAgentCoreMemoryController.class,
                                 BedrockAgentCoreToolsController.class, BedrockAgentCoreGatewayRuleController.class,
-                                BedrockAgentCoreResourcePolicyController.class)),
+                                BedrockAgentCoreResourcePolicyController.class, BedrockAgentCoreEvaluatorController.class,
+                                BedrockAgentCoreOnlineEvaluationController.class)),
                 descriptor("bedrock-agentcore", "bedrock-agentcore",
                         config.services().bedrockAgentCore().enabled(), true,
                         null, null, 5000L, null, ServiceProtocol.REST_JSON,
                         protocols(ServiceProtocol.REST_JSON),
                         Set.of(), Set.of(), Set.of(),
-                        Set.of(BedrockAgentCoreController.class)),
+                        Set.of(BedrockAgentCoreController.class, BedrockAgentCoreEvaluationController.class)),
                 descriptor("elasticloadbalancing", "elbv2", config.services().elbv2().enabled(), true,
                         "elbv2", config.storage().mode(), 5000L, AwsNamespaces.ELB_V2, ServiceProtocol.QUERY,
                         protocols(ServiceProtocol.QUERY),
