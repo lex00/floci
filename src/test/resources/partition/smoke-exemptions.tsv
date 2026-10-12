@@ -3,6 +3,7 @@
 # and on a row whose package no longer mints or is now covered. Shrink this file, never grow it
 # without a reason.
 appintegrations	no non-commercial partition publishes the service, so a case would be skipped in every partition
+apprunner	no non-commercial partition publishes the service, so a case would be skipped in every partition
 cloudformation	covered by PartitionArnMintingIntegrationTest (all partitions)
 cloudhsmv2	the only ARN on the wire is the automatic backup's, and a backup is never removed (DeleteBackup only marks it), so a case would leak state into the shared emulator
 cloudtrail	covered by CloudTrailSelfDeliveryTest (one partition)
@@ -13,10 +14,13 @@ detective	the graph exists only once an organization admin is designated, and no
 docdb	CreateDBCluster starts a container under the test config and the package has no lighter resource; its parameter and subnet groups are RDS's, covered there
 globalaccelerator	no non-commercial partition publishes the service, so a case would be skipped in every partition
 iam	covered by IamPartitionArnIntegrationTest (all partitions)
+ivs	no non-commercial partition publishes the service, so a case would be skipped in every partition
+ivschat	no non-commercial partition publishes the service, so a case would be skipped in every partition
 kms	covered by PartitionArnMintingIntegrationTest (all partitions)
 lightsail	no non-commercial partition publishes the service, so a case would be skipped in every partition
 macie2	no non-commercial partition publishes the service, so a case would be skipped in every partition
 marketplace	the ARN-minting calls are pinned to us-east-1 except ResolveCustomer, whose record nothing removes, so a case would leak state into the shared emulator
+mediapackagev2	no non-commercial partition publishes the service, so a case would be skipped in every partition
 neptune	CreateDBCluster starts a graph container whenever Docker is reachable, and the package has no container-free resource
 redshiftdata	the only ARN it mints is internal and never returned, and every action needs a running cluster container
 rum	no RUM response carries the app monitor ARN: it is minted only for Resource Explorer listings

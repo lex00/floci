@@ -1,5 +1,6 @@
 package io.github.hectorvent.floci.services.mediapackage;
 
+import io.github.hectorvent.floci.core.common.AwsRegions;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -155,7 +156,7 @@ public class MediaPackageService implements TagHandler {
             ObjectNode endpoint = endpoints.addObject();
             endpoint.put("id", endpointId);
             endpoint.put("url", "https://" + randomId() + ".mediapackage." + region
-                    + ".amazonaws.com/in/v2/" + endpointId + "/" + endpointId + "/channel");
+                    + "." + AwsRegions.dnsSuffixFor(region) + "/in/v2/" + endpointId + "/" + endpointId + "/channel");
             endpoint.put("username", randomId());
             endpoint.put("password", randomId());
         }
