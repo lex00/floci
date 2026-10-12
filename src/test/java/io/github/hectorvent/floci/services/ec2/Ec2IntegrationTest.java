@@ -5138,6 +5138,77 @@ class Ec2IntegrationTest {
         assertEquals(0, acl.getInt(naclEntryPath(120, false) + ".cidrBlock.size()"));
     }
 
+    // lex00/floci#111: the default ACL's IPv6 rule must read back as IPv6, and no entry that is
+    // not ICMP may carry an icmpTypeCode.
+    @Test
+    @Order(314)
+    void defaultNetworkAclIpv6RuleReadsBackWithoutIcmpTypeCode() {
+        String vpc = newVpc("10.42.0.0/16");
+        String aclId = given()
+            .formParam("Action", "DescribeNetworkAcls")
+            .formParam("Filter.1.Name", "vpc-id")
+            .formParam("Filter.1.Value.1", vpc)
+            .formParam("Filter.2.Name", "default")
+            .formParam("Filter.2.Value.1", "true")
+            .header("Authorization", AUTH_HEADER)
+        .when().post("/")
+        .then().statusCode(200)
+            .extract().path("DescribeNetworkAclsResponse.networkAclSet.item.networkAclId");
+        for (boolean egress : new boolean[] {false, true}) {
+            given()
+                .formParam("Action", "CreateNetworkAclEntry")
+                .formParam("NetworkAclId", aclId)
+                .formParam("RuleNumber", "101")
+                .formParam("Protocol", "-1")
+                .formParam("RuleAction", "allow")
+                .formParam("Egress", String.valueOf(egress))
+                .formParam("Ipv6CidrBlock", "::/0")
+                .formParam("PortRange.From", "0")
+                .formParam("PortRange.To", "0")
+                .header("Authorization", AUTH_HEADER)
+            .when().post("/")
+            .then().statusCode(200);
+        }
+
+        XmlPath acl = describeNetworkAcl(aclId);
+
+        for (boolean egress : new boolean[] {false, true}) {
+            assertEquals("0.0.0.0/0", acl.getString(naclEntryPath(100, egress) + ".cidrBlock"));
+            assertEquals(0, acl.getInt(naclEntryPath(100, egress) + ".ipv6CidrBlock.size()"));
+            assertEquals("::/0", acl.getString(naclEntryPath(101, egress) + ".ipv6CidrBlock"));
+            assertEquals(0, acl.getInt(naclEntryPath(101, egress) + ".cidrBlock.size()"));
+        }
+        assertEquals(0, acl.getInt(
+                "DescribeNetworkAclsResponse.networkAclSet.item.entrySet.item.icmpTypeCode.size()"));
+    }
+
+    @Test
+    @Order(314)
+    void networkAclEntryKeepsIcmpTypeCodeOnlyForIcmp() {
+        String aclId = newNetworkAcl(newVpc("10.43.0.0/16"));
+        for (String[] rule : new String[][] {{"110", "1"}, {"120", "6"}}) {
+            given()
+                .formParam("Action", "CreateNetworkAclEntry")
+                .formParam("NetworkAclId", aclId)
+                .formParam("RuleNumber", rule[0])
+                .formParam("Protocol", rule[1])
+                .formParam("RuleAction", "allow")
+                .formParam("Egress", "false")
+                .formParam("CidrBlock", "0.0.0.0/0")
+                .formParam("Icmp.Type", "8")
+                .formParam("Icmp.Code", "-1")
+                .header("Authorization", AUTH_HEADER)
+            .when().post("/")
+            .then().statusCode(200);
+        }
+
+        XmlPath acl = describeNetworkAcl(aclId);
+
+        assertEquals("8", acl.getString(naclEntryPath(110, false) + ".icmpTypeCode.type"));
+        assertEquals("-1", acl.getString(naclEntryPath(110, false) + ".icmpTypeCode.code"));
+        assertEquals(0, acl.getInt(naclEntryPath(120, false) + ".icmpTypeCode.size()"));
+    }
+
     @Test
     @Order(315)
     void describePrefixListsReturnsManagedS3() {
