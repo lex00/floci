@@ -247,8 +247,16 @@ public class EcsContainerManager {
         // Both resolved before any environment is built: whether the task gets role credentials
         // decides whether its containers may also carry Floci's baseline static credentials,
         // which would otherwise win over the role in the SDK credential chain.
-        PreparedNetwork protectedNetwork = prepareNetwork(task, taskDef, region, taskId);
-        TaskRoleCredentialEndpoint taskRoleEndpoint = prepareTaskRoleCredentials(task, taskDef, protectedNetwork);
+        TaskRoleCredentialEndpoint taskRoleEndpoint = prepareTaskRoleCredentials(task, taskDef);
+        PreparedNetwork protectedNetwork;
+        try {
+            protectedNetwork = prepareNetwork(task, taskDef, region, taskId, taskRoleEndpoint);
+        } catch (RuntimeException e) {
+            // prepareNetwork removes its own helper on failure, so the address it held is free.
+            revokeTaskRoleCredentials(task.getTaskArn());
+            releaseTaskLinkLocalAddresses(task.getTaskArn());
+            throw e;
+        }
         Map<ContainerDefinition, List<String>> envVarsByContainer = new LinkedHashMap<>();
         // Resolved before any container is created, so a registry-startup failure can't leak one already started.
         Map<ContainerDefinition, String> imagesByContainer = new LinkedHashMap<>();
@@ -345,8 +353,9 @@ public class EcsContainerManager {
                 }
                 // Its own address in the credential endpoint's range, so this container has a
                 // connected route to 169.254.170.2 at all. One per container, not per task: each
-                // has its own network namespace and so its own routing table.
-                if (taskRoleEndpoint.vending()) {
+                // has its own network namespace and so its own routing table. A protected
+                // container shares the helper's namespace, which prepareNetwork addressed already.
+                if (taskRoleEndpoint.vending() && protectedNetwork == null) {
                     specBuilder.withLinkLocalIp(
                             linkLocalAddresses.allocate(taskRoleEndpoint.network(), task.getTaskArn()));
                 }
@@ -1179,7 +1188,8 @@ public class EcsContainerManager {
         }
     }
 
-    private PreparedNetwork prepareNetwork(EcsTask task, TaskDefinition definition, String region, String taskId) {
+    private PreparedNetwork prepareNetwork(EcsTask task, TaskDefinition definition, String region, String taskId,
+                                           TaskRoleCredentialEndpoint taskRoleEndpoint) {
         if (definition.getNetworkMode() != NetworkMode.awsvpc
                 || firewallManager == null || !firewallManager.enabled()) {
             return null;
@@ -1203,8 +1213,13 @@ public class EcsContainerManager {
                     definition,
                     containerDetector.isRunningInContainer(),
                     config.services().ecs().publishAwsvpcPortsToHost());
+            // One address for the whole task: its containers all share the helper's namespace.
+            String linkLocalIp = taskRoleEndpoint.vending()
+                    ? linkLocalAddresses.allocate(taskRoleEndpoint.network(), task.getTaskArn())
+                    : null;
             namespace = firewallManager.createNamespace("ecs", taskId, regionResolver.getAccountId(),
-                    region, config.services().ecs().dockerNetwork(), bindings, Map.of(RUN_LABEL, runId));
+                    region, config.services().ecs().dockerNetwork(), bindings, Map.of(RUN_LABEL, runId),
+                    linkLocalIp);
             List<String> groupIds = eni.getGroups().stream().map(g -> g.getGroupId()).toList();
             List<SecurityGroup> groups = ec2Service.describeSecurityGroups(region, groupIds, List.of(), Map.of());
             if (groups.size() != groupIds.size()) {
@@ -1694,15 +1709,14 @@ public class EcsContainerManager {
      * Issues the task's role credentials and makes sure the endpoint that serves them is up,
      * before any of its containers start.
      *
-     * <p>Empty when the task asks for no role, when the feature is off, when the role cannot be
-     * resolved, or when the task is security-group protected: those containers join an isolated
-     * helper namespace rather than the shared network the proxy holds its address on, so a proxy
-     * there would not be reachable and this refuses rather than handing out an endpoint the task
-     * cannot use. A proxy that cannot be established at all throws, since credentials whose
-     * endpoint is unreachable would fail later and further from the cause.
+     * <p>Empty when the task asks for no role, when the feature is off, or when the role cannot be
+     * resolved. A security-group protected task is served too: its helper joins the same network
+     * as the proxy and takes the task's link-local address, and the helper's nftables table always
+     * lets 169.254.170.2:80 through, as AWS security groups never filter that endpoint. A proxy
+     * that cannot be established at all throws, since credentials whose endpoint is unreachable
+     * would fail later and further from the cause.
      */
-    private TaskRoleCredentialEndpoint prepareTaskRoleCredentials(EcsTask task, TaskDefinition taskDef,
-                                                                  PreparedNetwork protectedNetwork) {
+    private TaskRoleCredentialEndpoint prepareTaskRoleCredentials(EcsTask task, TaskDefinition taskDef) {
         String taskRoleArn = taskDef.getTaskRoleArn();
         if (taskRoleArn == null || taskRoleArn.isBlank()) {
             return TaskRoleCredentialEndpoint.none();
@@ -1710,12 +1724,6 @@ public class EcsContainerManager {
         if (taskRoleCredentials == null || credentialsProxy == null
                 || !config.services().ecs().taskRoleCredentials().enabled()) {
             LOG.debugv("Task {0} asks for role {1}, but ECS task-role credentials are disabled",
-                    task.getTaskArn(), taskRoleArn);
-            return TaskRoleCredentialEndpoint.none();
-        }
-        if (protectedNetwork != null) {
-            LOG.warnv("Task {0} asks for role {1}, but its containers run in a security-group protected "
-                    + "namespace, which the task-role credential endpoint does not reach yet",
                     task.getTaskArn(), taskRoleArn);
             return TaskRoleCredentialEndpoint.none();
         }

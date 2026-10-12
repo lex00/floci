@@ -101,6 +101,19 @@ public class SecurityGroupFirewallManager {
     public Namespace createNamespace(String service, String resourceId, String accountId, String region,
                                      Optional<String> dockerNetwork, Map<Integer, Integer> portBindings,
                                      Map<String, String> extraLabels) {
+        return createNamespace(service, resourceId, accountId, region, dockerNetwork, portBindings, extraLabels,
+                null);
+    }
+
+    /**
+     * {@link #createNamespace} with a link-local address on the helper's Docker network endpoint,
+     * or none when {@code linkLocalIp} is null. Every workload shares the helper's namespace, so
+     * this one address gives all of them a connected route into 169.254.0.0/16, which is what an
+     * ECS task needs to reach its credential endpoint at 169.254.170.2.
+     */
+    public Namespace createNamespace(String service, String resourceId, String accountId, String region,
+                                     Optional<String> dockerNetwork, Map<Integer, Integer> portBindings,
+                                     Map<String, String> extraLabels, String linkLocalIp) {
         if (!enabled()) {
             throw new IllegalStateException("Security-group enforcement is disabled");
         }
@@ -126,7 +139,8 @@ public class SecurityGroupFirewallManager {
                 .withLabels(ContainerStorageHelper.resourceIdentityLabels(service, resourceId, accountId, region))
                 .withLabels(Map.of(ContainerStorageHelper.SECURITY_GROUP_HELPER_LABEL, "true",
                         ContainerStorageHelper.OWNER_LABEL, ContainerStorageHelper.ownerIdentity(config)))
-                .withLabels(extraLabels);
+                .withLabels(extraLabels)
+                .withLinkLocalIp(linkLocalIp);
         if (portBindings != null) {
             portBindings.forEach(builder::withPortBinding);
         }
