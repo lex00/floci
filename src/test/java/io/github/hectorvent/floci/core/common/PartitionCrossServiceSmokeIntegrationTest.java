@@ -1457,7 +1457,7 @@ class PartitionCrossServiceSmokeIntegrationTest {
      * the same reading strict partition mode applies: silence there is not absence.
      */
     @ParameterizedTest
-    @MethodSource("nonCommercialCases")
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
     void mediaLiveMultiplexArn(PartitionCase partitionCase) {
         String region = offered(partitionCase, "medialive");
         Response created = signed(region, "medialive")
@@ -1473,7 +1473,7 @@ class PartitionCrossServiceSmokeIntegrationTest {
     }
 
     @ParameterizedTest
-    @MethodSource("nonCommercialCases")
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
     void mediaPackageChannelArnAndIngestHost(PartitionCase partitionCase) {
         String region = offered(partitionCase, "mediapackage");
         String id = unique("smoke-channel", partitionCase);
@@ -1488,7 +1488,7 @@ class PartitionCrossServiceSmokeIntegrationTest {
     }
 
     @ParameterizedTest
-    @MethodSource("nonCommercialCases")
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
     void route53HostedZoneArnInTheTagIndex(PartitionCase partitionCase) {
         String region = offered(partitionCase, "route53");
         offered(partitionCase, "tagging");
