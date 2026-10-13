@@ -24,4 +24,11 @@ public record PodIdentityAssociation(
         Boolean disableSessionTags,
         String externalId,
         String policy
-) {}
+) {
+
+    public PodIdentityAssociation withTags(Map<String, String> newTags) {
+        return new PodIdentityAssociation(clusterName, namespace, serviceAccount, roleArn, associationArn,
+                associationId, newTags, createdAt, modifiedAt, ownerArn, targetRoleArn, disableSessionTags,
+                externalId, policy);
+    }
+}

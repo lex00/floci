@@ -29,12 +29,14 @@ import org.jboss.logging.Logger;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 @ApplicationScoped
@@ -448,6 +450,26 @@ public class EksAddonService {
 
     private static String resolveAddonNamespace(String addonName) {
         return "kube-system";
+    }
+
+    /**
+     * Applies {@code change} to a copy of the tags of the add-on whose ARN is {@code arn}, stores the
+     * result and returns it, for the EKS tagging operations. Empty when this cluster has no such add-on.
+     */
+    public synchronized Optional<Map<String, String>> updateTags(Cluster cluster, String arn,
+                                                                Consumer<Map<String, String>> change) {
+        String p = prefix(cluster);
+        for (StoredAddon stored : storage.scan(key -> key.startsWith(p))) {
+            Addon addon = stored.addon();
+            if (arn.equals(addon.addonArn())) {
+                Map<String, String> tags = addon.tags() == null ? new HashMap<>() : new HashMap<>(addon.tags());
+                change.accept(tags);
+                storage.put(p + addon.addonName().toLowerCase(Locale.ROOT),
+                        new StoredAddon(addon.withTags(tags), stored.clientRequestToken()));
+                return Optional.of(tags);
+            }
+        }
+        return Optional.empty();
     }
 
     private static String prefix(Cluster cluster) {

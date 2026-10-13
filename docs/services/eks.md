@@ -37,9 +37,9 @@ EKS uses a standard REST API with JSON bodies: not the JSON 1.1 (`X-Amz-Target`)
 | `DescribeFargateProfile` | Describe a Fargate profile by cluster and name |
 | `ListFargateProfiles` | List Fargate profile names for a cluster |
 | `DeleteFargateProfile` | Delete a Fargate profile |
-| `TagResource` | Add tags to a cluster |
-| `UntagResource` | Remove tags from a cluster |
-| `ListTagsForResource` | List tags on a cluster |
+| `TagResource` | Add tags to a cluster, managed node group, Fargate profile, add-on, pod identity association or access entry, by ARN |
+| `UntagResource` | Remove tags from any resource `TagResource` accepts |
+| `ListTagsForResource` | List tags on any resource `TagResource` accepts |
 
 ## Access-entry management
 
@@ -66,7 +66,7 @@ rejects instance credentials. Obtain fresh IMDS credentials after upgrading so t
 includes the stable role ID.
 
 !!! note "Authentication scope"
-    Non-worker IAM users and ordinary STS sessions retain the existing cluster-admin compatibility behavior unless `principal-identity` is on (see below). Access policies, aws-auth ConfigMap, the cluster-creator bootstrap flag and automatic managed-node entries are not enforced by this change. Updating authentication mode, UpdateAccessEntry, access-policy association, and entry tag updates remain unimplemented. Native AL2023 images, bootstrap RBAC/CSR approval, CNI and worker networking are separate requirements for registration and Ready.
+    Non-worker IAM users and ordinary STS sessions retain the existing cluster-admin compatibility behavior unless `principal-identity` is on (see below). Access policies, aws-auth ConfigMap, the cluster-creator bootstrap flag and automatic managed-node entries are not enforced by this change. Updating authentication mode, UpdateAccessEntry and access-policy association remain unimplemented. Native AL2023 images, bootstrap RBAC/CSR approval, CNI and worker networking are separate requirements for registration and Ready.
 
 ```bash
 aws --endpoint-url http://localhost:4566 eks create-cluster \

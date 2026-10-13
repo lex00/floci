@@ -23,11 +23,13 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * Manages EKS Pod Identity association metadata.
@@ -297,6 +299,27 @@ public class EksPodIdentityAssociationService {
                 .map(StoredAssociation::association)
                 .filter(a -> a.namespace().equals(namespace) && a.serviceAccount().equals(serviceAccount))
                 .findFirst();
+    }
+
+    /**
+     * Applies {@code change} to a copy of the tags of the pod identity association whose ARN is {@code arn}, stores the
+     * result and returns it, for the EKS tagging operations. Empty when this cluster has no such association.
+     */
+    public synchronized Optional<Map<String, String>> updateTags(Cluster cluster, String arn,
+                                                                Consumer<Map<String, String>> change) {
+        String prefix = prefix(cluster);
+        for (StoredAssociation stored : associations.scan(key -> key.startsWith(prefix))) {
+            PodIdentityAssociation association = stored.association();
+            if (arn.equals(association.associationArn())) {
+                Map<String, String> tags = association.tags() == null
+                        ? new HashMap<>() : new HashMap<>(association.tags());
+                change.accept(tags);
+                associations.put(prefix + association.associationId(),
+                        new StoredAssociation(association.withTags(tags), stored.clientRequestToken()));
+                return Optional.of(tags);
+            }
+        }
+        return Optional.empty();
     }
 
     private static String prefix(Cluster cluster) {

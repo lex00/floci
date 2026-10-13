@@ -1212,39 +1212,21 @@ public class EksService implements TagHandler, ResourceProvider, Ec2InstanceLaun
     @Override
     public void tagResource(String region, String resourceArn, Map<String, String> tags) {
         ReservedTags.rejectReservedTagsOnUpdate(tags);
-        String clusterName = extractClusterName(resourceArn);
-        Cluster cluster = storage.get(clusterName)
-                .orElseThrow(() -> new AwsException("ResourceNotFoundException",
-                        "Resource not found: " + resourceArn, 404));
-
-        if (cluster.getTags() == null) {
-            cluster.setTags(new HashMap<>());
-        }
-        cluster.getTags().putAll(tags);
-        storage.put(clusterName, cluster);
+        updateTags(resourceArn, current -> current.putAll(tags));
     }
 
     @Override
     public void untagResource(String region, String resourceArn, List<String> tagKeys) {
-        String clusterName = extractClusterName(resourceArn);
-        Cluster cluster = storage.get(clusterName)
-                .orElseThrow(() -> new AwsException("ResourceNotFoundException",
-                        "Resource not found: " + resourceArn, 404));
-
-        if (cluster.getTags() != null && tagKeys != null) {
-            tagKeys.forEach(cluster.getTags()::remove);
-        }
-        storage.put(clusterName, cluster);
+        updateTags(resourceArn, current -> {
+            if (tagKeys != null) {
+                tagKeys.forEach(current::remove);
+            }
+        });
     }
 
     @Override
     public Map<String, String> listTags(String region, String resourceArn) {
-        String clusterName = extractClusterName(resourceArn);
-        Cluster cluster = storage.get(clusterName)
-                .orElseThrow(() -> new AwsException("ResourceNotFoundException",
-                        "Resource not found: " + resourceArn, 404));
-
-        return cluster.getTags() != null ? cluster.getTags() : Map.of();
+        return updateTags(resourceArn, current -> { });
     }
 
     public void tagResource(String resourceArn, Map<String, String> tags) {
@@ -1259,14 +1241,69 @@ public class EksService implements TagHandler, ResourceProvider, Ec2InstanceLaun
         return listTags(null, resourceArn);
     }
 
-    private String extractClusterName(String resourceArn) {
-        // arn:aws:eks:us-east-1:000000000000:cluster/my-cluster
-        int idx = resourceArn.lastIndexOf('/');
-        if (idx < 0 || idx == resourceArn.length() - 1) {
-            throw new AwsException("InvalidParameterException",
-                    "Invalid resource ARN: " + resourceArn, 400);
+    /**
+     * Applies {@code change} to the tags of the resource {@code resourceArn} names and returns the
+     * result. EKS tags a cluster, a managed node group, a Fargate profile, an add-on, a pod identity
+     * association or an access entry by ARN. Every one but the cluster carries the cluster's name as
+     * its second path segment, and is matched on its whole ARN so a recreated resource with the same
+     * name does not answer for the old one.
+     */
+    private Map<String, String> updateTags(String resourceArn, Consumer<Map<String, String>> change) {
+        String[] path = resourceArnPath(resourceArn);
+        Cluster cluster = storage.get(path[1]).orElseThrow(() -> resourceNotFound(resourceArn));
+        Optional<Map<String, String>> tags = switch (path[0]) {
+            case "cluster" -> path.length == 2 ? Optional.of(changeTags(cluster.getTags(), change, updated -> {
+                cluster.setTags(updated);
+                storage.put(cluster.getName(), cluster);
+            })) : Optional.empty();
+            case "nodegroup" -> path.length == 4
+                    ? nodeGroupStorage.get(nodeGroupKey(path[1], path[2]))
+                            .filter(group -> resourceArn.equals(group.getNodegroupArn()))
+                            .map(group -> changeTags(group.getTags(), change, updated -> {
+                                group.setTags(updated);
+                                nodeGroupStorage.put(nodeGroupKey(path[1], path[2]), group);
+                            }))
+                    : Optional.empty();
+            case "fargateprofile" -> path.length == 4
+                    ? fargateProfileStorage.get(fargateProfileKey(path[1], path[2]))
+                            .filter(profile -> resourceArn.equals(profile.getFargateProfileArn()))
+                            .map(profile -> changeTags(profile.getTags(), change, updated -> {
+                                profile.setTags(updated);
+                                fargateProfileStorage.put(fargateProfileKey(path[1], path[2]), profile);
+                            }))
+                    : Optional.empty();
+            case "addon" -> addons.updateTags(cluster, resourceArn, change);
+            case "podidentityassociation" -> podIdentityAssociations.updateTags(cluster, resourceArn, change);
+            case "access-entry" -> accessEntries.updateTags(cluster, resourceArn, change);
+            default -> Optional.empty();
+        };
+        return tags.orElseThrow(() -> resourceNotFound(resourceArn));
+    }
+
+    private static Map<String, String> changeTags(Map<String, String> current, Consumer<Map<String, String>> change,
+                                                  Consumer<Map<String, String>> store) {
+        Map<String, String> updated = current == null ? new HashMap<>() : new HashMap<>(current);
+        change.accept(updated);
+        store.accept(updated);
+        return updated;
+    }
+
+    /** The resource path of an EKS ARN split on {@code /}: the resource type, then the cluster name, then the rest. */
+    private static String[] resourceArnPath(String resourceArn) {
+        String[] path;
+        try {
+            path = AwsArnUtils.parse(resourceArn).resource().split("/", -1);
+        } catch (IllegalArgumentException e) {
+            throw new AwsException("InvalidParameterException", "Invalid resource ARN: " + resourceArn, 400);
         }
-        return resourceArn.substring(idx + 1);
+        if (path.length < 2 || path[1].isEmpty()) {
+            throw new AwsException("InvalidParameterException", "Invalid resource ARN: " + resourceArn, 400);
+        }
+        return path;
+    }
+
+    private static AwsException resourceNotFound(String resourceArn) {
+        return new AwsException("ResourceNotFoundException", "Resource not found: " + resourceArn, 404);
     }
 
     /**
