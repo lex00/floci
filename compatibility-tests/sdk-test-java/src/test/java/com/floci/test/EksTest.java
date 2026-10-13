@@ -218,6 +218,43 @@ class EksTest {
     }
 
     @Test
+    @Order(15)
+    void tagNodegroupAndFargateProfileByArn() {
+        String nodegroupArn = eks.createNodegroup(CreateNodegroupRequest.builder()
+                .clusterName(clusterName)
+                .nodegroupName("sdk-tag-ng")
+                .subnets("subnet-abc")
+                .nodeRole(TestFixtures.globalArn("iam", "000000000000", "role/eks-node-role"))
+                .build()).nodegroup().nodegroupArn();
+        String profileArn = eks.createFargateProfile(CreateFargateProfileRequest.builder()
+                .clusterName(clusterName)
+                .fargateProfileName("sdk-tag-fp")
+                .podExecutionRoleArn(TestFixtures.globalArn("iam", "000000000000", "role/eks-fargate-role"))
+                .selectors(FargateProfileSelector.builder().namespace("default").build())
+                .build()).fargateProfile().fargateProfileArn();
+        try {
+            for (String arn : List.of(nodegroupArn, profileArn)) {
+                eks.tagResource(TagResourceRequest.builder()
+                        .resourceArn(arn).tags(Map.of("team", "platform", "tier", "web")).build());
+                eks.untagResource(UntagResourceRequest.builder().resourceArn(arn).tagKeys("tier").build());
+                assertThat(eks.listTagsForResource(ListTagsForResourceRequest.builder().resourceArn(arn).build())
+                        .tags()).containsExactly(Map.entry("team", "platform"));
+            }
+            assertThat(eks.describeNodegroup(DescribeNodegroupRequest.builder()
+                    .clusterName(clusterName).nodegroupName("sdk-tag-ng").build()).nodegroup().tags())
+                    .containsEntry("team", "platform");
+            assertThat(eks.describeFargateProfile(DescribeFargateProfileRequest.builder()
+                    .clusterName(clusterName).fargateProfileName("sdk-tag-fp").build()).fargateProfile().tags())
+                    .containsEntry("team", "platform");
+        } finally {
+            eks.deleteNodegroup(DeleteNodegroupRequest.builder()
+                    .clusterName(clusterName).nodegroupName("sdk-tag-ng").build());
+            eks.deleteFargateProfile(DeleteFargateProfileRequest.builder()
+                    .clusterName(clusterName).fargateProfileName("sdk-tag-fp").build());
+        }
+    }
+
+    @Test
     @Order(8)
     void nodegroupLifecycle() {
         nodegroupName = "sdk-test-nodegroup-" + (System.currentTimeMillis() % 100000);

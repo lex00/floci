@@ -8,4 +8,10 @@ import java.util.Map;
 @RegisterForReflection
 public record AccessEntry(String accessEntryArn, String clusterName, String principalArn, String type,
                           String username, List<String> kubernetesGroups, Map<String, String> tags,
-                          double createdAt, double modifiedAt) {}
+                          double createdAt, double modifiedAt) {
+
+    public AccessEntry withTags(Map<String, String> newTags) {
+        return new AccessEntry(accessEntryArn, clusterName, principalArn, type, username, kubernetesGroups, newTags,
+                createdAt, modifiedAt);
+    }
+}

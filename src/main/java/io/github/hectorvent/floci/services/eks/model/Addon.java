@@ -25,4 +25,10 @@ public record Addon(
         List<String> podIdentityAssociations,
         String owner,
         String publisher
-) {}
+) {
+
+    public Addon withTags(Map<String, String> newTags) {
+        return new Addon(addonArn, addonName, addonVersion, clusterName, status, health, createdAt, modifiedAt,
+                serviceAccountRoleArn, configurationValues, newTags, podIdentityAssociations, owner, publisher);
+    }
+}

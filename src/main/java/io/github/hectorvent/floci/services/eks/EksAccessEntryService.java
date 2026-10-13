@@ -21,11 +21,13 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /** Access-entry management metadata; Kubernetes authorization is handled separately. */
 @ApplicationScoped
@@ -205,6 +207,26 @@ public class EksAccessEntryService {
         for (StoredEntry stored : entries.scan(key -> key.startsWith(prefix))) {
             entries.delete(prefix + stored.entry().principalArn());
         }
+    }
+
+    /**
+     * Applies {@code change} to a copy of the tags of the access entry whose ARN is {@code arn}, stores the
+     * result and returns it, for the EKS tagging operations. Empty when this cluster has no such entry.
+     */
+    public synchronized Optional<Map<String, String>> updateTags(Cluster cluster, String arn,
+                                                                Consumer<Map<String, String>> change) {
+        String prefix = prefix(cluster);
+        for (StoredEntry stored : entries.scan(key -> key.startsWith(prefix))) {
+            AccessEntry entry = stored.entry();
+            if (arn.equals(entry.accessEntryArn())) {
+                Map<String, String> tags = entry.tags() == null ? new HashMap<>() : new HashMap<>(entry.tags());
+                change.accept(tags);
+                entries.put(prefix + entry.principalArn(),
+                        new StoredEntry(entry.withTags(tags), stored.principalId(), stored.clientRequestToken()));
+                return Optional.of(tags);
+            }
+        }
+        return Optional.empty();
     }
 
     private static String prefix(Cluster cluster) {
