@@ -66,7 +66,7 @@ rejects instance credentials. Obtain fresh IMDS credentials after upgrading so t
 includes the stable role ID.
 
 !!! note "Authentication scope"
-    Non-worker IAM users and ordinary STS sessions retain the existing cluster-admin compatibility behavior. STANDARD entries, access policies, aws-auth ConfigMap, the cluster-creator bootstrap flag and automatic managed-node entries are not enforced by this change. Updating authentication mode, UpdateAccessEntry, access-policy association, and entry tag updates remain unimplemented. Native AL2023 images, bootstrap RBAC/CSR approval, CNI and worker networking are separate requirements for registration and Ready.
+    Non-worker IAM users and ordinary STS sessions retain the existing cluster-admin compatibility behavior unless `principal-identity` is on (see below). Access policies, aws-auth ConfigMap, the cluster-creator bootstrap flag and automatic managed-node entries are not enforced by this change. Updating authentication mode, UpdateAccessEntry, access-policy association, and entry tag updates remain unimplemented. Native AL2023 images, bootstrap RBAC/CSR approval, CNI and worker networking are separate requirements for registration and Ready.
 
 ```bash
 aws --endpoint-url http://localhost:4566 eks create-cluster \
@@ -78,6 +78,17 @@ aws --endpoint-url http://localhost:4566 eks create-access-entry \
   --cluster-name local-nodes --principal-arn arn:aws:iam::000000000000:role/worker \
   --type EC2_LINUX
 ```
+
+### Assumed-role identity
+
+By default every non-worker credential authenticates as `system:masters`. Set
+`floci.services.eks.principal-identity=true` (`FLOCI_SERVICES_EKS_PRINCIPAL_IDENTITY=true`) to map an
+assumed-role session to its role's `STANDARD` access entry instead. The token then authenticates with
+the entry's `username` and `kubernetesGroups`, and is rejected when the role has no such entry, as on
+AWS. Floci does not record the session name. Both `{{SessionName}}` and `{{SessionNameRaw}}` in the
+username become `floci-session`. An entry belongs to the role id it was created for, so a role
+recreated under the same ARN does not inherit it. Static keys keep cluster-admin, and worker
+authentication is unchanged.
 
 ## Pod Identity Associations
 

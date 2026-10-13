@@ -5,7 +5,6 @@ import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.services.ec2.Ec2Service;
 import io.github.hectorvent.floci.services.ec2.model.Instance;
-import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.services.eks.model.AccessEntry;
 import io.github.hectorvent.floci.services.eks.model.Cluster;
 import io.github.hectorvent.floci.services.iam.IamService;
@@ -119,7 +118,7 @@ class EksWorkerAuthentication {
         }
         Optional<Cluster> cluster = eks.findAuthenticationCluster(account, name)
                 .filter(value -> value.getArn() != null && value.getArn().equals(
-                        "arn:aws:eks:" + region + ":" + account + ":cluster/" + name))
+                        AwsArnUtils.Arn.of("eks", region, account, "cluster/" + name).toString()))
                 .filter(value -> createdAt.equals(String.valueOf(value.getCreatedAt())));
         if (cluster.isEmpty()) {
             return Optional.empty();

@@ -357,6 +357,7 @@ floci:
       imds: false
       irsa-signing-key: true
       embedded-dns: true
+      principal-identity: false
     mwaa:
       enabled: true
       mock: true
