@@ -16,6 +16,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Covers three ways {@code computeChangeSetChanges} previously misreported a change set's diff:
@@ -865,5 +866,75 @@ class CloudFormationChangeSetDiffIntegrationTest {
         boolean unchangedQueueIncluded = changes.stream()
                 .anyMatch(m -> "UnchangedQueue".equals(m.get("LogicalResourceId")));
         assertFalse(unchangedQueueIncluded);
+    }
+
+    @Test
+    void modifyListsChangedPropertiesAndAddedCreateOnlyPropertyReplaces() {
+        String stackName = "cs-diff-details-stack";
+        stacksToDelete.add(stackName);
+
+        String template1 = """
+            {
+              "Resources": {
+                "Shown": {"Type": "AWS::SNS::Topic", "Properties": {"DisplayName": "one"}},
+                "Named": {"Type": "AWS::SNS::Topic"}
+              }
+            }
+            """;
+        String template2 = """
+            {
+              "Resources": {
+                "Shown": {"Type": "AWS::SNS::Topic", "Properties": {"DisplayName": "two"}},
+                "Named": {"Type": "AWS::SNS::Topic", "Properties": {"TopicName": "cs-diff-named"}}
+              }
+            }
+            """;
+
+        given()
+            .contentType("application/x-www-form-urlencoded")
+            .formParam("Action", "CreateStack")
+            .formParam("StackName", stackName)
+            .formParam("TemplateBody", template1)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        given()
+            .contentType("application/x-www-form-urlencoded")
+            .formParam("Action", "CreateChangeSet")
+            .formParam("StackName", stackName)
+            .formParam("ChangeSetName", "details-cs")
+            .formParam("ChangeSetType", "UPDATE")
+            .formParam("TemplateBody", template2)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        String desc = given()
+            .contentType("application/x-www-form-urlencoded")
+            .formParam("Action", "DescribeChangeSet")
+            .formParam("StackName", stackName)
+            .formParam("ChangeSetName", "details-cs")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().body().asString();
+
+        String shown = desc.substring(desc.indexOf("<LogicalResourceId>Shown</LogicalResourceId>"));
+        shown = shown.substring(0, shown.indexOf("</ResourceChange>"));
+        assertTrue(shown.contains("<Replacement>False</Replacement>"), shown);
+        assertTrue(shown.contains("<Scope><member>Properties</member></Scope>"), shown);
+        assertTrue(shown.contains("<Target><Attribute>Properties</Attribute><Name>DisplayName</Name>"
+                + "<RequiresRecreation>Never</RequiresRecreation></Target>"
+                + "<Evaluation>Static</Evaluation><ChangeSource>DirectModification</ChangeSource>"), shown);
+
+        String named = desc.substring(desc.indexOf("<LogicalResourceId>Named</LogicalResourceId>"));
+        named = named.substring(0, named.indexOf("</ResourceChange>"));
+        assertTrue(named.contains("<Replacement>True</Replacement>"), named);
+        assertTrue(named.contains("<Name>TopicName</Name><RequiresRecreation>Always</RequiresRecreation>"),
+                named);
     }
 }

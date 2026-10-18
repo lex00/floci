@@ -305,9 +305,28 @@ public class CloudFormationQueryHandler {
                    .elem("LogicalResourceId", change.logicalResourceId())
                    .elem("PhysicalResourceId", change.physicalResourceId())
                    .elem("ResourceType", change.resourceType())
-                   .elem("Replacement", change.replacement())
-                   .raw("<Scope/><Details/>")
-                   .end("ResourceChange")
+                   .elem("Replacement", change.replacement());
+                if (change.details().isEmpty()) {
+                    xml.raw("<Scope/><Details/>");
+                } else {
+                    xml.start("Scope").elem("member", "Properties").end("Scope").start("Details");
+                }
+                for (CloudFormationService.ChangeDetail detail : change.details()) {
+                    xml.start("member")
+                       .start("Target")
+                       .elem("Attribute", "Properties")
+                       .elem("Name", detail.name())
+                       .elem("RequiresRecreation", detail.requiresRecreation())
+                       .end("Target")
+                       .elem("Evaluation", detail.evaluation())
+                       .elem("ChangeSource", detail.changeSource())
+                       .elem("CausingEntity", detail.causingEntity())
+                       .end("member");
+                }
+                if (!change.details().isEmpty()) {
+                    xml.end("Details");
+                }
+                xml.end("ResourceChange")
                    .end("member");
             }
             xml.end("Changes")

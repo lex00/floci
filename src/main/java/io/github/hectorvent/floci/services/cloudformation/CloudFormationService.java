@@ -953,9 +953,15 @@ public class CloudFormationService implements ResourceProvider {
                     if (replacement) {
                         replacedResourceIds.add(logicalId);
                     }
+                    JsonNode oldProps = compared[0] != null
+                            ? compared[0].path(logicalId).path("Properties") : oldDef.path("Properties");
+                    JsonNode newProps = compared[0] != null
+                            ? compared[1].path(logicalId).path("Properties") : newDef.path("Properties");
                     changes.add(new ResourceChange("Modify", logicalId,
                             resourcePhysicalId(stack, logicalId), resourceType,
-                            replacement ? "True" : "False"));
+                            replacement ? "True" : "False",
+                            directChangeDetails(resourceType, oldProps, newProps, newDef.path("Properties"),
+                                    changedParams)));
                 }
             });
             oldResources.fields().forEachRemaining(e -> {
@@ -1044,7 +1050,9 @@ public class CloudFormationService implements ResourceProvider {
                                 alreadyChangedIds.add(logicalId);
                                 changes.add(new ResourceChange("Modify", logicalId,
                                         resourcePhysicalId(stack, logicalId), resourceType,
-                                        replacement ? "True" : "False"));
+                                        replacement ? "True" : "False",
+                                        referenceChangeDetails(resourceType, props, allResourceIds,
+                                                replacedResourceIds, inPlaceChangedAttributes, newConditions)));
                                 anyNewChange = true;
                                 Set<String> attrs = expectedChangedAttributes(resourceType, oldDef, newDef);
                                 if (!attrs.isEmpty()) {
@@ -1097,15 +1105,22 @@ public class CloudFormationService implements ResourceProvider {
 
     private boolean requiresReplacement(String resourceType, JsonNode oldProps, JsonNode newProps,
                                         Set<String> changedParams, Set<String> changedConditions) {
-        if (oldProps == null || newProps == null || oldProps.isMissingNode() || newProps.isMissingNode()) {
-            return false;
+        // A resource written without Properties has none to keep, so one gaining or losing a
+        // create-only property compares against an empty set.
+        if (oldProps == null || oldProps.isMissingNode()) {
+            oldProps = objectMapper.createObjectNode();
+        }
+        if (newProps == null || newProps.isMissingNode()) {
+            newProps = objectMapper.createObjectNode();
         }
         for (Iterator<String> it = newProps.fieldNames(); it.hasNext(); ) {
             String field = it.next();
             if (CfnCreateOnlyProperties.isCreateOnly(resourceType, field)) {
                 JsonNode oldVal = oldProps.get(field);
                 JsonNode newVal = newProps.get(field);
-                if (oldVal != null && !oldVal.equals(newVal)) {
+                // Setting a create-only property the resource did not have changes it as much as
+                // rewriting one, so either replaces the resource.
+                if (!newVal.equals(oldVal)) {
                     return true;
                 }
                 if (newVal != null && (referencesAnyParameter(newVal, changedParams) || referencesAnyCondition(newVal, changedConditions))) {
@@ -1123,7 +1138,82 @@ public class CloudFormationService implements ResourceProvider {
     }
 
     public record ResourceChange(String action, String logicalResourceId, String physicalResourceId,
-                                 String resourceType, String replacement) {}
+                                 String resourceType, String replacement, List<ChangeDetail> details) {
+        public ResourceChange(String action, String logicalResourceId, String physicalResourceId,
+                              String resourceType, String replacement) {
+            this(action, logicalResourceId, physicalResourceId, resourceType, replacement, List.of());
+        }
+    }
+
+    /**
+     * One entry of a ResourceChange's Details: a top-level property the change touches, whether
+     * changing it recreates the resource, and what changed it.
+     */
+    public record ChangeDetail(String name, String requiresRecreation, String evaluation,
+                               String changeSource, String causingEntity) {}
+
+    /**
+     * The properties a Modify sets differently, from the compared forms when they resolved, and those
+     * that read a changed parameter, which the definitions as written do not show as different.
+     */
+    private List<ChangeDetail> directChangeDetails(String resourceType, JsonNode oldProps, JsonNode newProps,
+                                                   JsonNode writtenProps, Set<String> changedParams) {
+        Map<String, ChangeDetail> details = new LinkedHashMap<>();
+        Set<String> names = new LinkedHashSet<>();
+        newProps.fieldNames().forEachRemaining(names::add);
+        oldProps.fieldNames().forEachRemaining(names::add);
+        for (String name : names) {
+            if (!Objects.equals(oldProps.get(name), newProps.get(name))) {
+                details.put(name, new ChangeDetail(name, recreation(resourceType, name), "Static",
+                        "DirectModification", null));
+            }
+        }
+        if (writtenProps.isObject()) {
+            writtenProps.fields().forEachRemaining(e -> {
+                for (String param : changedParams) {
+                    if (!details.containsKey(e.getKey())
+                            && referencesAnyParameter(e.getValue(), Set.of(param))) {
+                        details.put(e.getKey(), new ChangeDetail(e.getKey(),
+                                recreation(resourceType, e.getKey()), "Static", "ParameterReference", param));
+                    }
+                }
+            });
+        }
+        return List.copyOf(details.values());
+    }
+
+    /** The properties of a resource that change because a resource they reference was replaced or updated. */
+    private List<ChangeDetail> referenceChangeDetails(String resourceType, JsonNode props, Set<String> allIds,
+                                                      Set<String> replacedIds,
+                                                      Map<String, Set<String>> changedAttributes,
+                                                      Map<String, Boolean> conditions) {
+        List<ChangeDetail> details = new ArrayList<>();
+        if (props == null || !props.isObject()) {
+            return details;
+        }
+        props.fields().forEachRemaining(e -> {
+            Set<String> deps = new LinkedHashSet<>();
+            collectDependencies(e.getValue(), allIds, deps, conditions);
+            String replaced = deps.stream().filter(replacedIds::contains).findFirst().orElse(null);
+            if (replaced != null) {
+                details.add(new ChangeDetail(e.getKey(), recreation(resourceType, e.getKey()), "Dynamic",
+                        "ResourceReference", replaced));
+                return;
+            }
+            for (Map.Entry<String, Set<String>> changed : changedAttributes.entrySet()) {
+                if (referencesAnyAttribute(e.getValue(), changed.getKey(), changed.getValue(), conditions)) {
+                    details.add(new ChangeDetail(e.getKey(), recreation(resourceType, e.getKey()), "Dynamic",
+                            "ResourceAttribute", changed.getKey()));
+                    return;
+                }
+            }
+        });
+        return details;
+    }
+
+    private static String recreation(String resourceType, String property) {
+        return CfnCreateOnlyProperties.isCreateOnly(resourceType, property) ? "Always" : "Never";
+    }
 
     private String resourcePhysicalId(Stack stack, String logicalId) {
         StackResource resource = stack.getResources().get(logicalId);
