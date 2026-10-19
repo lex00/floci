@@ -114,7 +114,7 @@ class IamQueryHandlerTest {
     void listRolesPagesInNameOrderWhateverOrderTheServiceReturns() throws Exception {
         IamService service = mock(IamService.class);
         when(service.listRoles(null)).thenReturn(List.of(role("c"), role("a"), role("b")));
-        IamQueryHandler handler = new IamQueryHandler(service, null, null, null, null, null, null, null);
+        IamQueryHandler handler = new IamQueryHandler(service, null, null, null, null, null, null, null, null);
 
         MultivaluedMap<String, String> params = new MultivaluedHashMap<>();
         params.putSingle("MaxItems", "2");
@@ -138,7 +138,7 @@ class IamQueryHandlerTest {
         IamPolicy managed = policy("arn:aws:iam::aws:policy/ReadOnlyAccess");
         IamService service = mock(IamService.class);
         when(service.listPolicies(null, null)).thenReturn(List.of(managed, local));
-        IamQueryHandler handler = new IamQueryHandler(service, null, null, null, null, null, null, null);
+        IamQueryHandler handler = new IamQueryHandler(service, null, null, null, null, null, null, null, null);
 
         MultivaluedMap<String, String> params = new MultivaluedHashMap<>();
         params.putSingle("MaxItems", "1");

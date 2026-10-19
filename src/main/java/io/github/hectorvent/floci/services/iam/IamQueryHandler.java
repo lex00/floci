@@ -2587,7 +2587,7 @@ public class IamQueryHandler {
 
     private Response handleListDelegationRequests(MultivaluedMap<String, String> params) {
         Page<DelegationRequest> page = paginate(delegationRequestService.list(
-                regionResolver.getAccountId(), getParam(params, "OwnerId")), params);
+                regionResolver.getAccountId(), getParam(params, "OwnerId")), DelegationRequest::getDelegationRequestId, params);
         XmlBuilder xml = new XmlBuilder().start("DelegationRequests");
         for (DelegationRequest request : page.items()) {
             xml.start("member").raw(delegationRequestXml(request)).end("member");
