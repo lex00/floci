@@ -114,11 +114,16 @@ changing the API. Leading/trailing whitespace and non-ASCII lookalikes are not a
 | **Models** | CreateModel, GetModel, GetModels, UpdateModel, DeleteModel |
 | **Domain Names** | CreateDomainName, GetDomainName, GetDomainNames, UpdateDomainName, DeleteDomainName |
 | **Base Path Mappings** | CreateBasePathMapping, GetBasePathMapping, GetBasePathMappings, UpdateBasePathMapping, DeleteBasePathMapping |
+| **Client Certificates** | GenerateClientCertificate, GetClientCertificate, GetClientCertificates, UpdateClientCertificate, DeleteClientCertificate |
 | **Account** | GetAccount, UpdateAccount |
 | **Tags** | TagResource, UntagResource, GetTags (ListTagsForResource) |
 
-`TagResource`, `UntagResource` and `GetTags` also accept API key and usage plan ARNs,
-`arn:aws:apigateway:<region>::/apikeys/<id>` and `arn:aws:apigateway:<region>::/usageplans/<id>`.
+`TagResource`, `UntagResource` and `GetTags` also accept API key, usage plan and client certificate
+ARNs, `arn:aws:apigateway:<region>::/apikeys/<id>`, `arn:aws:apigateway:<region>::/usageplans/<id>`
+and `arn:aws:apigateway:<region>::/clientcertificates/<id>`.
+
+`GenerateClientCertificate` returns a new self-signed PEM certificate valid for 365 days. Floci
+does not present it to HTTP integration backends.
 An ARN nested under `/restapis/<id>/` other than a stage, such as a deployment or resource, is rejected with `BadRequestException`.
 An ARN with an account segment is rejected with `BadRequestException` and an ARN from another region with `NotFoundException`, as on AWS.
 Tagged REST APIs, stages, API keys, usage plans and custom domain names are discoverable through the

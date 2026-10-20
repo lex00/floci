@@ -16,8 +16,9 @@ import java.util.regex.Pattern;
  *
  * <p>ARN formats: {@code arn:aws:apigateway:<region>::/restapis/<apiId>} for a REST API,
  * {@code arn:aws:apigateway:<region>::/domainnames/<domainName>} for a custom domain,
- * {@code arn:aws:apigateway:<region>::/apikeys/<apiKeyId>} for an API key and
- * {@code arn:aws:apigateway:<region>::/usageplans/<usagePlanId>} for a usage plan. The
+ * {@code arn:aws:apigateway:<region>::/apikeys/<apiKeyId>} for an API key,
+ * {@code arn:aws:apigateway:<region>::/usageplans/<usagePlanId>} for a usage plan and
+ * {@code arn:aws:apigateway:<region>::/clientcertificates/<id>} for a client certificate. The
  * {@code apiId}, domain name, key id or plan id is the canonical identifier the underlying
  * {@link ApiGatewayService} uses for its tag store.
  */
@@ -25,16 +26,19 @@ import java.util.regex.Pattern;
 public class ApiGatewayTagHandler implements TagHandler {
 
     private static final String API_KEYS = "/apikeys/";
+    private static final String CLIENT_CERTIFICATES = "/clientcertificates/";
     private static final String DOMAIN_NAMES = "/domainnames/";
     private static final String REST_APIS = "/restapis/";
     private static final String USAGE_PLANS = "/usageplans/";
     private static final Pattern STAGE_RESOURCE = Pattern.compile("/restapis/[^/]+/stages/([^/]+)");
 
     private final ApiGatewayService service;
+    private final ApiGatewayClientCertificateService clientCertificates;
 
     @Inject
-    public ApiGatewayTagHandler(ApiGatewayService service) {
+    public ApiGatewayTagHandler(ApiGatewayService service, ApiGatewayClientCertificateService clientCertificates) {
         this.service = service;
+        this.clientCertificates = clientCertificates;
     }
 
     @Override
@@ -62,6 +66,10 @@ public class ApiGatewayTagHandler implements TagHandler {
         if (usagePlanId != null) {
             return service.getUsagePlan(region, usagePlanId).getTags();
         }
+        String clientCertificateId = topLevelIdFromArn(arn, CLIENT_CERTIFICATES);
+        if (clientCertificateId != null) {
+            return clientCertificates.get(region, clientCertificateId).getTags();
+        }
         String stageName = stageNameFromArn(arn);
         return stageName != null
                 ? service.getStageTags(region, apiIdFromArn(arn), stageName)
@@ -74,8 +82,11 @@ public class ApiGatewayTagHandler implements TagHandler {
         String domainName = topLevelIdFromArn(arn, DOMAIN_NAMES);
         String apiKeyId = topLevelIdFromArn(arn, API_KEYS);
         String usagePlanId = topLevelIdFromArn(arn, USAGE_PLANS);
+        String clientCertificateId = topLevelIdFromArn(arn, CLIENT_CERTIFICATES);
         String stageName = stageNameFromArn(arn);
-        if (domainName != null) {
+        if (clientCertificateId != null) {
+            clientCertificates.tag(region, clientCertificateId, tags);
+        } else if (domainName != null) {
             service.tagDomainName(region, domainName, tags);
         } else if (apiKeyId != null) {
             service.tagApiKey(region, apiKeyId, tags);
@@ -94,8 +105,11 @@ public class ApiGatewayTagHandler implements TagHandler {
         String domainName = topLevelIdFromArn(arn, DOMAIN_NAMES);
         String apiKeyId = topLevelIdFromArn(arn, API_KEYS);
         String usagePlanId = topLevelIdFromArn(arn, USAGE_PLANS);
+        String clientCertificateId = topLevelIdFromArn(arn, CLIENT_CERTIFICATES);
         String stageName = stageNameFromArn(arn);
-        if (domainName != null) {
+        if (clientCertificateId != null) {
+            clientCertificates.untag(region, clientCertificateId, tagKeys);
+        } else if (domainName != null) {
             service.untagDomainName(region, domainName, tagKeys);
         } else if (apiKeyId != null) {
             service.untagApiKey(region, apiKeyId, tagKeys);
