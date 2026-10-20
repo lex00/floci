@@ -10,8 +10,8 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
- * Floci serves Audit Manager frameworks and controls only. A request signed for the
- * {@code auditmanager} credential scope on any other path has to come back as the clean
+ * Floci serves Audit Manager frameworks, controls, assessments and their evidence. A request
+ * signed for the {@code auditmanager} credential scope on any other path has to come back as the clean
  * {@code UnknownOperationException} a rest-json SDK can deserialize, never as an S3 XML error
  * from the path-style wildcard routes those paths would otherwise match.
  */
@@ -29,13 +29,13 @@ class AuditManagerScopeIntegrationTest {
     }
 
     @Test
-    void createAssessmentIsRejectedAsUnknownOperation() {
+    void startFrameworkShareIsRejectedAsUnknownOperation() {
         given()
             .header("Authorization", authorization())
             .contentType("application/json")
-            .body("{\"name\":\"probe\"}")
+            .body("{\"destinationAccount\":\"111111111111\",\"destinationRegion\":\"us-east-1\"}")
         .when()
-            .post("/assessments")
+            .post("/assessmentFrameworks/11111111-1111-1111-1111-111111111111/shareRequests")
         .then()
             .statusCode(404)
             .contentType(containsString("application/json"))
@@ -44,11 +44,11 @@ class AuditManagerScopeIntegrationTest {
     }
 
     @Test
-    void getAssessmentIsRejectedAsUnknownOperation() {
+    void getInsightsIsRejectedAsUnknownOperation() {
         given()
             .header("Authorization", authorization())
         .when()
-            .get("/assessments/11111111-1111-1111-1111-111111111111")
+            .get("/insights")
         .then()
             .statusCode(404)
             .contentType(containsString("application/json"))

@@ -23,6 +23,34 @@ isolated by account and region and use the configured Floci storage mode.
 | `UpdateControl` | Replaces a control's fields and mapping sources (`PUT /controls/{controlId}`) |
 | `DeleteControl` | Deletes a custom control (`DELETE /controls/{controlId}`) |
 | `ListControls` | Lists control metadata by `controlType`, with pagination (`GET /controls`) |
+| `CreateAssessment` | Create an assessment from a custom framework; `ACTIVE` immediately |
+| `GetAssessment` | Get an assessment with its control sets and controls |
+| `UpdateAssessment` | Change an assessment's name, description, scope, roles or report destination |
+| `DeleteAssessment` | Delete an assessment with its evidence and reports |
+| `ListAssessments` | List assessments, filtered by status |
+| `UpdateAssessmentStatus` | Set an assessment `ACTIVE` or `INACTIVE` |
+| `UpdateAssessmentControlSetStatus` | Set a control set's review status |
+| `UpdateAssessmentControl` | Set a control's status or add a comment |
+| `BatchImportEvidenceToAssessmentControl` | Import manual evidence into today's evidence folder |
+| `GetEvidenceFoldersByAssessment` | List an assessment's evidence folders |
+| `GetEvidenceFoldersByAssessmentControl` | List one control's evidence folders |
+| `GetEvidenceFolder` | Get an evidence folder |
+| `GetEvidenceByEvidenceFolder` | List the evidence in a folder |
+| `GetEvidence` | Get one piece of evidence |
+| `AssociateAssessmentReportEvidenceFolder` | Include a folder's evidence in assessment reports |
+| `DisassociateAssessmentReportEvidenceFolder` | Leave a folder's evidence out of assessment reports |
+| `BatchAssociateAssessmentReportEvidence` | Include evidence in assessment reports |
+| `BatchDisassociateAssessmentReportEvidence` | Leave evidence out of assessment reports |
+| `BatchCreateDelegationByAssessment` | Delegate control sets to roles |
+| `BatchDeleteDelegationByAssessment` | Remove delegations |
+| `GetDelegations` | List delegations across assessments |
+| `CreateAssessmentReport` | Create an assessment report; `COMPLETE` immediately |
+| `DeleteAssessmentReport` | Delete an assessment report |
+| `GetAssessmentReportUrl` | Return the report's location in the report destination bucket |
+| `ListAssessmentReports` | List assessment reports |
+| `RegisterAccount` | Turn Audit Manager on for the account |
+| `DeregisterAccount` | Turn Audit Manager off for the account |
+| `GetAccountStatus` | Report whether the account is registered |
 | `ListTagsForResource` | Lists the tags of a framework or control (`GET /tags/{resourceArn}`) |
 | `TagResource` | Adds tags to a framework or control (`POST /tags/{resourceArn}`) |
 | `UntagResource` | Removes tag keys from a framework or control (`DELETE /tags/{resourceArn}`) |
@@ -33,7 +61,16 @@ returns an empty list. A framework control set may name a control id that Floci 
 keeps that id and returns the control with only its `id`; a control Floci holds is returned in
 full.
 
-Assessments and evidence collection are not implemented.
+An assessment copies its framework's control sets, using each control set's name as its id, and
+starts every control `UNDER_REVIEW`. Floci collects no evidence automatically:
+`BatchImportEvidenceToAssessmentControl` files manual evidence into one folder per control per
+day, and the folder and control counts follow it. Tags work on assessment ARNs as well.
+
+## Not emulated
+
+- Automated evidence collection, insights and change logs
+- Framework share requests, notifications and settings
+- Organization admin accounts
 
 ## Configuration
 

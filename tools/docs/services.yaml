@@ -110,6 +110,7 @@ services:
     doc: docs/services/auditmanager.md
     sources:
       - { path: src/main/java/io/github/hectorvent/floci/services/auditmanager/AuditManagerController.java, mode: rest }
+      - { path: src/main/java/io/github/hectorvent/floci/services/auditmanager/AuditManagerAssessmentController.java, mode: rest }
       - { path: src/main/java/io/github/hectorvent/floci/core/common/SharedTagsController.java, mode: rest }
     rename_actions:
       ListTags: ListTagsForResource

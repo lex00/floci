@@ -14,6 +14,7 @@ import io.github.hectorvent.floci.services.auditmanager.model.Control;
 import io.github.hectorvent.floci.services.auditmanager.model.Framework;
 import io.github.hectorvent.floci.services.auditmanager.model.FrameworkControlSet;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
@@ -51,9 +52,17 @@ public class AuditManagerService implements TagHandler {
     private final StorageBackend<String, Framework> frameworks;
     private final StorageBackend<String, Control> controls;
     private final RegionResolver regionResolver;
+    private final Instance<AuditManagerAssessmentService> assessments;
 
+    AuditManagerService(StorageFactory storageFactory, RegionResolver regionResolver) {
+        this(storageFactory, regionResolver, null);
+    }
+
+    /** Assessments resolve lazily, since {@link AuditManagerAssessmentService} depends on this service. */
     @Inject
-    public AuditManagerService(StorageFactory storageFactory, RegionResolver regionResolver) {
+    public AuditManagerService(StorageFactory storageFactory, RegionResolver regionResolver,
+                               Instance<AuditManagerAssessmentService> assessments) {
+        this.assessments = assessments;
         this.frameworks = storageFactory.create(SERVICE, "auditmanager-frameworks.json",
                 new TypeReference<Map<String, Framework>>() {});
         this.controls = storageFactory.create(SERVICE, "auditmanager-controls.json",
@@ -202,11 +211,20 @@ public class AuditManagerService implements TagHandler {
 
     @Override
     public Map<String, String> listTags(String region, String arn) {
+        AuditManagerAssessmentService owner = assessmentOwner(arn, region);
+        if (owner != null) {
+            return owner.listTags(arn, AwsArnUtils.regionOrDefault(arn, region));
+        }
         return resolveTagged(arn, region).tags();
     }
 
     @Override
     public void tagResource(String region, String arn, Map<String, String> tags) {
+        AuditManagerAssessmentService owner = assessmentOwner(arn, region);
+        if (owner != null) {
+            owner.setTags(arn, tags, null, AwsArnUtils.regionOrDefault(arn, region));
+            return;
+        }
         Tagged tagged = resolveTagged(arn, region);
         tagged.tags().putAll(tags);
         tagged.save().run();
@@ -214,11 +232,24 @@ public class AuditManagerService implements TagHandler {
 
     @Override
     public void untagResource(String region, String arn, List<String> tagKeys) {
+        AuditManagerAssessmentService owner = assessmentOwner(arn, region);
+        if (owner != null) {
+            owner.setTags(arn, null, tagKeys, AwsArnUtils.regionOrDefault(arn, region));
+            return;
+        }
         Tagged tagged = resolveTagged(arn, region);
         if (tagKeys != null) {
             tagKeys.forEach(tagged.tags()::remove);
         }
         tagged.save().run();
+    }
+
+    private AuditManagerAssessmentService assessmentOwner(String arn, String region) {
+        if (assessments == null || assessments.isUnsatisfied()) {
+            return null;
+        }
+        AuditManagerAssessmentService service = assessments.get();
+        return service.ownsAssessment(arn, AwsArnUtils.regionOrDefault(arn, region)) ? service : null;
     }
 
     private record Tagged(Map<String, String> tags, Runnable save) {}
