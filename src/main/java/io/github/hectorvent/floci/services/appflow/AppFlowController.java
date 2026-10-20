@@ -163,6 +163,120 @@ public class AppFlowController {
         return Response.ok(response).build();
     }
 
+    @POST
+    @Path("/describe-flow-execution-records")
+    public Response describeFlowExecutionRecords(@Context HttpHeaders headers, String body) {
+        JsonNode request = parse(body);
+        List<JsonNode> records = service.describeFlowExecutionRecords(text(request, "flowName"),
+                regionResolver.resolveRegion(headers));
+        Page<JsonNode> page = page(records, request);
+        ObjectNode response = objectMapper.createObjectNode();
+        response.putArray("flowExecutions").addAll(page.items());
+        if (page.nextToken() != null) {
+            response.put("nextToken", page.nextToken());
+        }
+        return Response.ok(response).build();
+    }
+
+    @POST
+    @Path("/cancel-flow-executions")
+    public Response cancelFlowExecutions(@Context HttpHeaders headers, String body) {
+        JsonNode request = parse(body);
+        List<String> invalid = service.cancelFlowExecutions(text(request, "flowName"), request.get("executionIds"),
+                regionResolver.resolveRegion(headers));
+        ObjectNode response = objectMapper.createObjectNode();
+        ArrayNode list = response.putArray("invalidExecutions");
+        invalid.forEach(list::add);
+        return Response.ok(response).build();
+    }
+
+    @POST
+    @Path("/register-connector")
+    public Response registerConnector(@Context HttpHeaders headers, String body) {
+        ObjectNode response = objectMapper.createObjectNode();
+        response.put("connectorArn", service.registerConnector(parse(body), regionResolver.resolveRegion(headers)));
+        return Response.ok(response).build();
+    }
+
+    @POST
+    @Path("/update-connector-registration")
+    public Response updateConnectorRegistration(@Context HttpHeaders headers, String body) {
+        ObjectNode response = objectMapper.createObjectNode();
+        response.put("connectorArn", service.updateConnectorRegistration(parse(body),
+                regionResolver.resolveRegion(headers)));
+        return Response.ok(response).build();
+    }
+
+    @POST
+    @Path("/unregister-connector")
+    public Response unregisterConnector(@Context HttpHeaders headers, String body) {
+        JsonNode request = parse(body);
+        service.unregisterConnector(text(request, "connectorLabel"), request.path("forceDelete").asBoolean(false),
+                regionResolver.resolveRegion(headers));
+        return Response.ok(objectMapper.createObjectNode()).build();
+    }
+
+    @POST
+    @Path("/describe-connector")
+    public Response describeConnector(@Context HttpHeaders headers, String body) {
+        JsonNode request = parse(body);
+        ObjectNode response = objectMapper.createObjectNode();
+        response.set("connectorConfiguration", service.describeConnector(text(request, "connectorType"),
+                text(request, "connectorLabel"), regionResolver.resolveRegion(headers)));
+        return Response.ok(response).build();
+    }
+
+    @POST
+    @Path("/describe-connectors")
+    public Response describeConnectors(@Context HttpHeaders headers, String body) {
+        JsonNode request = parse(body);
+        String region = regionResolver.resolveRegion(headers);
+        ObjectNode response = objectMapper.createObjectNode();
+        ObjectNode configurations = response.putObject("connectorConfigurations");
+        service.describeConnectors(request.get("connectorTypes")).forEach(configurations::set);
+        response.putArray("connectors").addAll(service.listConnectors(region));
+        return Response.ok(response).build();
+    }
+
+    @POST
+    @Path("/list-connectors")
+    public Response listConnectors(@Context HttpHeaders headers, String body) {
+        JsonNode request = parse(body);
+        Page<ObjectNode> page = page(service.listConnectors(regionResolver.resolveRegion(headers)), request);
+        ObjectNode response = objectMapper.createObjectNode();
+        response.putArray("connectors").addAll(page.items());
+        if (page.nextToken() != null) {
+            response.put("nextToken", page.nextToken());
+        }
+        return Response.ok(response).build();
+    }
+
+    /** No SaaS application is reached, so a connector lists no entities. */
+    @POST
+    @Path("/list-connector-entities")
+    public Response listConnectorEntities(@Context HttpHeaders headers, String body) {
+        service.resetConnectorMetadataCache(parse(body), regionResolver.resolveRegion(headers));
+        ObjectNode response = objectMapper.createObjectNode();
+        response.putObject("connectorEntityMap");
+        return Response.ok(response).build();
+    }
+
+    @POST
+    @Path("/describe-connector-entity")
+    public Response describeConnectorEntity(@Context HttpHeaders headers, String body) {
+        JsonNode request = parse(body);
+        service.resetConnectorMetadataCache(request, regionResolver.resolveRegion(headers));
+        throw new AwsException("ResourceNotFoundException",
+                "Entity " + text(request, "connectorEntityName") + " does not exist.", 404);
+    }
+
+    @POST
+    @Path("/reset-connector-metadata-cache")
+    public Response resetConnectorMetadataCache(@Context HttpHeaders headers, String body) {
+        service.resetConnectorMetadataCache(parse(body), regionResolver.resolveRegion(headers));
+        return Response.ok(objectMapper.createObjectNode()).build();
+    }
+
     private ObjectNode profileNode(ConnectorProfile profile) {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("connectorProfileArn", profile.getConnectorProfileArn());

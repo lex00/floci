@@ -191,6 +191,64 @@ class AppFlowIntegrationTest {
                 .body("__type", equalTo("ValidationException"));
     }
 
+    @Test
+    void executionRecordsAndCustomConnectors() {
+        appflow()
+                .body("""
+                        {"flowName":"it-runs","triggerConfig":{"triggerType":"OnDemand"},
+                         "sourceFlowConfig":{"connectorType":"S3",
+                           "sourceConnectorProperties":{"S3":{"bucketName":"in"}}},
+                         "destinationFlowConfigList":[{"connectorType":"S3",
+                           "destinationConnectorProperties":{"S3":{"bucketName":"out"}}}],
+                         "tasks":[{"taskType":"Map_all","sourceFields":[]}]}""")
+        .when().post("/create-flow")
+        .then().statusCode(200);
+        String executionId = appflow().body("{\"flowName\":\"it-runs\"}")
+        .when().post("/start-flow")
+        .then().statusCode(200).extract().path("executionId");
+        appflow().body("{\"flowName\":\"it-runs\"}")
+        .when().post("/describe-flow-execution-records")
+        .then().statusCode(200)
+                .body("flowExecutions", hasSize(1))
+                .body("flowExecutions[0].executionId", equalTo(executionId))
+                .body("flowExecutions[0].executionStatus", equalTo("Successful"));
+        appflow().body("{\"flowName\":\"it-runs\",\"executionIds\":[\"" + executionId + "\"]}")
+        .when().post("/cancel-flow-executions")
+        .then().statusCode(200).body("invalidExecutions[0]", equalTo(executionId));
+
+        appflow()
+                .body("""
+                        {"connectorLabel":"it-crm","connectorProvisioningType":"LAMBDA",
+                         "connectorProvisioningConfig":{"lambda":{"lambdaArn":
+                           "arn:aws:lambda:us-east-1:000000000000:function:crm"}}}""")
+        .when().post("/register-connector")
+        .then().statusCode(200)
+                .body("connectorArn", equalTo("arn:aws:appflow:us-east-1:" + ACCOUNT_ID + ":connector/it-crm"));
+        appflow().body("{}")
+        .when().post("/list-connectors")
+        .then().statusCode(200).body("connectors.connectorLabel", hasItem("it-crm"));
+        appflow().body("{\"connectorType\":\"CustomConnector\",\"connectorLabel\":\"it-crm\"}")
+        .when().post("/describe-connector")
+        .then().statusCode(200)
+                .body("connectorConfiguration.connectorProvisioningConfig.lambda.lambdaArn",
+                        equalTo("arn:aws:lambda:us-east-1:000000000000:function:crm"));
+        appflow().body("{\"connectorTypes\":[\"S3\"]}")
+        .when().post("/describe-connectors")
+        .then().statusCode(200).body("connectorConfigurations.S3.canUseAsSource", equalTo(true));
+        appflow().body("{\"connectorType\":\"S3\"}")
+        .when().post("/list-connector-entities")
+        .then().statusCode(200).body("connectorEntityMap.size()", equalTo(0));
+        appflow().body("{\"connectorEntityName\":\"Account\"}")
+        .when().post("/describe-connector-entity")
+        .then().statusCode(404).body("__type", equalTo("ResourceNotFoundException"));
+        appflow().body("{\"connectorLabel\":\"it-crm\"}")
+        .when().post("/unregister-connector")
+        .then().statusCode(200);
+        appflow().body("{\"connectorType\":\"CustomConnector\",\"connectorLabel\":\"it-crm\"}")
+        .when().post("/describe-connector")
+        .then().statusCode(404);
+    }
+
     private static RequestSpecification appflow() {
         return given()
                 .contentType("application/json")

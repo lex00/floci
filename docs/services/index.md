@@ -63,7 +63,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [Amazon WorkSpaces](workspaces.md) | `POST /` + `X-Amz-Target: WorkspacesService.*` | JSON 1.1 | 41 |
 | [Amazon WorkSpaces Secure Browser](workspaces-web.md) | `/portals/*`, `/identityProviders/*`, `/browserSettings/*`, `/userSettings/*` and the other settings collections, `/tags/*` | REST JSON | 72 |
 | [Amazon AppIntegrations](appintegrations.md) | `/eventIntegrations/*`, `/dataIntegrations/*`, `/tags/*` | REST JSON | 14 |
-| [Amazon AppFlow](appflow.md) | `/create-connector-profile`, `/describe-flow`, `/list-flows`, `/tags/{resourceArn}` | REST JSON | 14 |
+| [Amazon AppFlow](appflow.md) | `/create-connector-profile`, `/describe-flow`, `/list-flows`, `/tags/{resourceArn}` | REST JSON | 25 |
 | [Amazon Data Lifecycle Manager](dlm.md) | `/policies`, `/policies/{policyId}`, `/tags/{resourceArn}` | REST JSON | 8 |
 | [ElastiCache](elasticache.md) | `POST /` with `Action=` param + TCP proxy | Query + RESP | 30 |
 | [MemoryDB](memorydb.md) | `POST /` + `X-Amz-Target: AmazonMemoryDB.*` + TCP proxy | JSON 1.1 + RESP | 13 |

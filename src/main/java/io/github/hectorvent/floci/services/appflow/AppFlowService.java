@@ -2,6 +2,9 @@ package io.github.hectorvent.floci.services.appflow;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.AwsRegions;
@@ -16,6 +19,7 @@ import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -28,9 +32,9 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Pattern;
 
 /**
- * Amazon AppFlow connector profiles and flows. Profiles keep their properties and drop their
- * credentials, which AppFlow never returns. Flows are stored and report run status, but no
- * data moves between connectors.
+ * Amazon AppFlow connector profiles, flows and custom connectors. Profiles keep their properties
+ * and drop their credentials, which AppFlow never returns. Flows are stored and record their
+ * runs, but no data moves between connectors.
  */
 @ApplicationScoped
 public class AppFlowService implements Resettable, TagHandler {
@@ -49,21 +53,37 @@ public class AppFlowService implements Resettable, TagHandler {
             "SAPOData", "CustomConnector", "Pardot");
     private static final String ALPHANUMERIC = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
+    private static final Pattern CONNECTOR_LABEL = Pattern.compile("[a-zA-Z0-9][\\w!@#.-]{0,255}");
+    private static final Set<String> DESTINATION_TYPES = Set.of("Salesforce", "Redshift", "S3", "Zendesk",
+            "Snowflake", "EventBridge", "LookoutMetrics", "Upsolver", "Honeycode", "CustomerProfiles", "SAPOData",
+            "Marketo");
+    private static final Set<String> EVENT_SOURCES = Set.of("Salesforce", "Pardot");
+    private static final JsonNodeFactory JSON = JsonNodeFactory.instance;
+
     private final AccountAwareStorageBackend<ConnectorProfile> profiles;
     private final AccountAwareStorageBackend<Flow> flows;
+    private final AccountAwareStorageBackend<ObjectNode> connectors;
+    private final AccountAwareStorageBackend<ObjectNode> executions;
 
     @Inject
     public AppFlowService(StorageFactory storageFactory) {
         this(storageFactory.create(SERVICE, "appflow-connector-profiles.json",
                         new TypeReference<Map<String, ConnectorProfile>>() {}),
                 storageFactory.create(SERVICE, "appflow-flows.json",
-                        new TypeReference<Map<String, Flow>>() {}));
+                        new TypeReference<Map<String, Flow>>() {}),
+                storageFactory.create(SERVICE, "appflow-connectors.json",
+                        new TypeReference<Map<String, ObjectNode>>() {}),
+                storageFactory.create(SERVICE, "appflow-flow-executions.json",
+                        new TypeReference<Map<String, ObjectNode>>() {}));
     }
 
     AppFlowService(AccountAwareStorageBackend<ConnectorProfile> profiles,
-                   AccountAwareStorageBackend<Flow> flows) {
+                   AccountAwareStorageBackend<Flow> flows, AccountAwareStorageBackend<ObjectNode> connectors,
+                   AccountAwareStorageBackend<ObjectNode> executions) {
         this.profiles = profiles;
         this.flows = flows;
+        this.connectors = connectors;
+        this.executions = executions;
     }
 
     // ── Connector profiles ───────────────────────────────────────────────────
@@ -234,6 +254,7 @@ public class AppFlowService implements Resettable, TagHandler {
     public void deleteFlow(String name, String region) {
         describeFlow(name, region);
         flows.delete(key(region, name));
+        executions.delete(key(region, name));
         LOG.infov("Deleted AppFlow flow: {0}", name);
     }
 
@@ -243,8 +264,10 @@ public class AppFlowService implements Resettable, TagHandler {
         String executionId = null;
         if (isOnDemand(flow.getTriggerConfig())) {
             executionId = UUID.randomUUID().toString();
+            long now = Instant.now().toEpochMilli();
             flow.setLastRunStatus("Successful");
-            flow.setLastRunAt(Instant.now().toEpochMilli());
+            flow.setLastRunAt(now);
+            recordExecution(region, name, executionId, now);
         }
         flow.setFlowStatus("Active");
         flows.put(key(region, name), flow);
@@ -268,6 +291,218 @@ public class AppFlowService implements Resettable, TagHandler {
 
     public record FlowRun(Flow flow, String executionId) {}
 
+    // ── Flow executions ──────────────────────────────────────────────────────
+
+    /** Execution records of a flow, newest first. */
+    public List<JsonNode> describeFlowExecutionRecords(String name, String region) {
+        describeFlow(name, region);
+        List<JsonNode> records = new ArrayList<>();
+        executions.get(key(region, name)).ifPresent(stored -> stored.path("records").forEach(records::add));
+        records.sort(Comparator.comparingDouble((JsonNode r) -> r.path("startedAt").asDouble()).reversed());
+        return records;
+    }
+
+    /** Every recorded execution has already finished, so each one named comes back as invalid. */
+    public List<String> cancelFlowExecutions(String name, JsonNode executionIds, String region) {
+        describeFlow(name, region);
+        List<String> invalid = new ArrayList<>();
+        if (executionIds != null) {
+            executionIds.forEach(id -> invalid.add(id.asText()));
+        }
+        return invalid;
+    }
+
+    private void recordExecution(String region, String name, String executionId, long now) {
+        ObjectNode stored = executions.get(key(region, name)).orElseGet(JSON::objectNode);
+        ArrayNode records = stored.get("records") instanceof ArrayNode existing ? existing : stored.putArray("records");
+        double seconds = now / 1000.0;
+        ObjectNode record = records.addObject();
+        record.put("executionId", executionId);
+        record.put("executionStatus", "Successful");
+        record.putObject("executionResult")
+                .put("bytesProcessed", 0)
+                .put("bytesWritten", 0)
+                .put("recordsProcessed", 0)
+                .put("numParallelProcesses", 1)
+                .put("maxPageSize", 0);
+        record.put("startedAt", seconds);
+        record.put("lastUpdatedAt", seconds);
+        record.put("dataPullStartTime", seconds);
+        record.put("dataPullEndTime", seconds);
+        executions.put(key(region, name), stored);
+    }
+
+    // ── Connectors ───────────────────────────────────────────────────────────
+
+    public String registerConnector(JsonNode request, String region) {
+        String label = requiredText(request, "connectorLabel");
+        if (!CONNECTOR_LABEL.matcher(label).matches()) {
+            throw validation("connectorLabel must be 1 to 256 letters, digits, hyphens or underscores.");
+        }
+        String provisioningType = optionalText(request, "connectorProvisioningType");
+        if (provisioningType == null) {
+            provisioningType = "LAMBDA";
+        }
+        validateEnum("connectorProvisioningType", provisioningType, Set.of("LAMBDA"));
+        String lambdaArn = request.path("connectorProvisioningConfig").path("lambda").path("lambdaArn").asText("");
+        if (lambdaArn.isBlank()) {
+            throw validation("connectorProvisioningConfig.lambda.lambdaArn is required.");
+        }
+        if (connectors.get(key(region, label)).isPresent()) {
+            throw new AwsException("ConflictException", "Connector with label " + label + " already exists.", 409);
+        }
+        double now = Instant.now().toEpochMilli() / 1000.0;
+        String account = connectors.accountId();
+        ObjectNode connector = JSON.objectNode();
+        connector.put("connectorArn", AwsArnUtils.Arn.of(SERVICE, region, account, "connector/" + label).toString());
+        connector.put("connectorLabel", label);
+        connector.put("connectorType", "CustomConnector");
+        connector.put("connectorName", label);
+        connector.put("connectorOwner", account);
+        connector.put("connectorVersion", "1.0");
+        connector.put("applicationType", "Custom");
+        if (request.hasNonNull("description")) {
+            connector.put("connectorDescription", request.get("description").asText());
+        }
+        connector.put("connectorProvisioningType", provisioningType);
+        connector.set("connectorProvisioningConfig", request.get("connectorProvisioningConfig").deepCopy());
+        connector.put("registeredAt", now);
+        connector.put("registeredBy", account);
+        connector.putArray("connectorModes").add("SOURCE").add("DESTINATION");
+        connector.putArray("supportedDataTransferTypes").add("RECORD");
+        connector.putObject("tags");
+        connectors.put(key(region, label), connector);
+        return connector.path("connectorArn").asText();
+    }
+
+    public String updateConnectorRegistration(JsonNode request, String region) {
+        String label = requiredText(request, "connectorLabel");
+        ObjectNode connector = requireConnector(label, region);
+        if (request.hasNonNull("description")) {
+            connector.put("connectorDescription", request.get("description").asText());
+        }
+        if (request.get("connectorProvisioningConfig") instanceof ObjectNode config) {
+            if (config.path("lambda").path("lambdaArn").asText("").isBlank()) {
+                throw validation("connectorProvisioningConfig.lambda.lambdaArn is required.");
+            }
+            connector.set("connectorProvisioningConfig", config.deepCopy());
+        }
+        connectors.put(key(region, label), connector);
+        return connector.path("connectorArn").asText();
+    }
+
+    public void unregisterConnector(String label, boolean forceDelete, String region) {
+        requireConnector(label, region);
+        boolean inUse = profiles.scan(k -> k.startsWith(region + "::")).stream()
+                .anyMatch(p -> label.equals(p.getConnectorLabel()));
+        if (inUse && !forceDelete) {
+            throw new AwsException("ConflictException",
+                    "Connector " + label + " is used by a connector profile.", 409);
+        }
+        connectors.delete(key(region, label));
+    }
+
+    /** The configuration of a built-in connector type, or of a registered custom connector. */
+    public ObjectNode describeConnector(String connectorType, String label, String region) {
+        validateEnum("connectorType", connectorType, CONNECTOR_TYPES);
+        if ("CustomConnector".equals(connectorType)) {
+            if (label == null) {
+                throw validation("connectorLabel is required for a CustomConnector.");
+            }
+            return customConfiguration(requireConnector(label, region));
+        }
+        return builtInConfiguration(connectorType);
+    }
+
+    public List<ObjectNode> listConnectors(String region) {
+        List<ObjectNode> result = new ArrayList<>();
+        for (ObjectNode connector : connectors.scan(k -> k.startsWith(region + "::"))) {
+            ObjectNode detail = connector.deepCopy();
+            detail.remove(List.of("connectorArn", "connectorProvisioningConfig", "tags"));
+            result.add(detail);
+        }
+        result.sort(Comparator.comparing(c -> c.path("connectorLabel").asText()));
+        return result;
+    }
+
+    /** Built-in configurations keyed by connector type, for the requested types or all of them. */
+    public Map<String, ObjectNode> describeConnectors(JsonNode connectorTypes) {
+        Map<String, ObjectNode> result = new LinkedHashMap<>();
+        List<String> types = new ArrayList<>();
+        if (connectorTypes != null && connectorTypes.isArray() && !connectorTypes.isEmpty()) {
+            connectorTypes.forEach(t -> types.add(t.asText()));
+        } else {
+            types.addAll(CONNECTOR_TYPES.stream().sorted().toList());
+        }
+        for (String type : types) {
+            validateEnum("connectorTypes", type, CONNECTOR_TYPES);
+            if (!"CustomConnector".equals(type)) {
+                result.put(type, builtInConfiguration(type));
+            }
+        }
+        return result;
+    }
+
+    /** Checks the named profile; Floci keeps no connector metadata to reset. */
+    public void resetConnectorMetadataCache(JsonNode request, String region) {
+        String profileName = optionalText(request, "connectorProfileName");
+        if (profileName != null) {
+            requireProfileExists(region, profileName);
+        }
+    }
+
+    private ObjectNode requireConnector(String label, String region) {
+        return connectors.get(key(region, label)).orElseThrow(() -> new AwsException("ResourceNotFoundException",
+                "Connector with label " + label + " does not exist.", 404));
+    }
+
+    private static ObjectNode builtInConfiguration(String connectorType) {
+        boolean destination = DESTINATION_TYPES.contains(connectorType);
+        boolean source = !Set.of("EventBridge", "LookoutMetrics", "Upsolver", "Honeycode", "CustomerProfiles",
+                "Redshift", "Snowflake").contains(connectorType);
+        ObjectNode configuration = JSON.objectNode();
+        configuration.put("canUseAsSource", source);
+        configuration.put("canUseAsDestination", destination);
+        ArrayNode destinations = configuration.putArray("supportedDestinationConnectors");
+        if (source) {
+            DESTINATION_TYPES.stream().sorted().forEach(destinations::add);
+        }
+        configuration.putArray("supportedSchedulingFrequencies").add("BYMINUTE").add("HOURLY").add("DAILY")
+                .add("WEEKLY").add("MONTHLY").add("ONCE");
+        configuration.put("isPrivateLinkEnabled", false);
+        configuration.put("isPrivateLinkEndpointUrlRequired", false);
+        ArrayNode triggers = configuration.putArray("supportedTriggerTypes").add("OnDemand").add("Scheduled");
+        if (EVENT_SOURCES.contains(connectorType)) {
+            triggers.add("Event");
+        }
+        configuration.putObject("connectorMetadata");
+        configuration.put("connectorType", connectorType);
+        configuration.put("connectorOwner", "AWS");
+        configuration.put("connectorName", connectorType);
+        configuration.putArray("supportedDataTransferTypes").add("RECORD");
+        return configuration;
+    }
+
+    private static ObjectNode customConfiguration(ObjectNode connector) {
+        ObjectNode configuration = JSON.objectNode();
+        configuration.put("canUseAsSource", true);
+        configuration.put("canUseAsDestination", true);
+        configuration.putArray("supportedDestinationConnectors");
+        configuration.putArray("supportedSchedulingFrequencies").add("BYMINUTE").add("HOURLY").add("DAILY");
+        configuration.put("isPrivateLinkEnabled", false);
+        configuration.put("isPrivateLinkEndpointUrlRequired", false);
+        configuration.putArray("supportedTriggerTypes").add("OnDemand").add("Scheduled");
+        configuration.putObject("connectorMetadata");
+        for (String member : List.of("connectorType", "connectorLabel", "connectorDescription", "connectorOwner",
+                "connectorName", "connectorVersion", "connectorArn", "connectorModes", "connectorProvisioningType",
+                "connectorProvisioningConfig", "registeredAt", "registeredBy", "supportedDataTransferTypes")) {
+            if (connector.has(member)) {
+                configuration.set(member, connector.get(member).deepCopy());
+            }
+        }
+        return configuration;
+    }
+
     // ── Tagging ──────────────────────────────────────────────────────────────
 
     @Override
@@ -287,11 +522,27 @@ public class AppFlowService implements Resettable, TagHandler {
 
     @Override
     public Map<String, String> listTags(String region, String arn) {
+        ObjectNode connector = connectorForArn(region, arn);
+        if (connector != null) {
+            Map<String, String> tags = new LinkedHashMap<>();
+            connector.path("tags").properties().forEach(e -> tags.put(e.getKey(), e.getValue().asText()));
+            return tags;
+        }
         return Map.copyOf(flowForArn(region, arn).getTags());
     }
 
     @Override
     public void tagResource(String region, String arn, Map<String, String> tags) {
+        ObjectNode connector = connectorForArn(region, arn);
+        if (connector != null) {
+            ObjectNode current = (ObjectNode) connector.get("tags");
+            readTagMap(tags).forEach(current::put);
+            if (current.size() > 50) {
+                throw validation("A connector can have at most 50 tags.");
+            }
+            connectors.put(key(region, connector.path("connectorLabel").asText()), connector);
+            return;
+        }
         Flow flow = flowForArn(region, arn);
         Map<String, String> validated = readTagMap(tags);
         Map<String, String> updated = new LinkedHashMap<>(flow.getTags());
@@ -305,6 +556,14 @@ public class AppFlowService implements Resettable, TagHandler {
 
     @Override
     public void untagResource(String region, String arn, List<String> tagKeys) {
+        ObjectNode connector = connectorForArn(region, arn);
+        if (connector != null) {
+            if (tagKeys != null) {
+                tagKeys.forEach(((ObjectNode) connector.get("tags"))::remove);
+            }
+            connectors.put(key(region, connector.path("connectorLabel").asText()), connector);
+            return;
+        }
         Flow flow = flowForArn(region, arn);
         Map<String, String> updated = new LinkedHashMap<>(flow.getTags());
         if (tagKeys != null) {
@@ -318,9 +577,18 @@ public class AppFlowService implements Resettable, TagHandler {
     public void clear() {
         profiles.clear();
         flows.clear();
+        connectors.clear();
+        executions.clear();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private ObjectNode connectorForArn(String region, String arn) {
+        return connectors.scan(k -> k.startsWith(region + "::")).stream()
+                .filter(connector -> connector.path("connectorArn").asText().equals(arn))
+                .findFirst()
+                .orElse(null);
+    }
 
     private Flow flowForArn(String region, String arn) {
         return flows.scan(k -> k.startsWith(region + "::")).stream()

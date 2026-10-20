@@ -31,7 +31,8 @@ class AppFlowServiceTest {
     void setUp() {
         AccountAwareStorageBackend<ConnectorProfile> profiles = AccountAwareStorageBackend.inMemory("000000000000");
         AccountAwareStorageBackend<Flow> flows = AccountAwareStorageBackend.inMemory("000000000000");
-        service = new AppFlowService(profiles, flows);
+        service = new AppFlowService(profiles, flows, AccountAwareStorageBackend.inMemory("000000000000"),
+                AccountAwareStorageBackend.inMemory("000000000000"));
     }
 
     @Test
@@ -167,5 +168,32 @@ class AppFlowServiceTest {
                    "destinationConnectorProperties":{"S3":{"bucketName":"out"}}}],
                  "tasks":[{"taskType":"Map","sourceFields":["Id"],"destinationField":"Id"}],
                  "tags":{"env":"test"}}""".formatted(name, triggerType, profile));
+    }
+
+    @Test
+    void customConnectorRegistersAndBlocksUnregisterWhileUsed() throws Exception {
+        String arn = service.registerConnector(mapper.readTree("""
+                {"connectorLabel": "crm", "connectorProvisioningType": "LAMBDA",
+                 "connectorProvisioningConfig": {"lambda": {"lambdaArn": "arn:aws:lambda:us-east-1:000000000000:function:crm"}}}
+                """), REGION);
+        assertEquals("arn:aws:appflow:us-east-1:000000000000:connector/crm", arn);
+        assertEquals("crm", service.describeConnector("CustomConnector", "crm", REGION)
+                .path("connectorLabel").asText());
+        assertEquals(1, service.listConnectors(REGION).size());
+
+        service.createConnectorProfile(mapper.readTree("""
+                {"connectorProfileName": "crm-profile", "connectorType": "CustomConnector", "connectorLabel": "crm",
+                 "connectionMode": "Public", "connectorProfileConfig": {"connectorProfileProperties": {}}}
+                """), REGION);
+        AwsException conflict = assertThrows(AwsException.class, () -> service.unregisterConnector("crm", false, REGION));
+        assertEquals("ConflictException", conflict.getErrorCode());
+        service.unregisterConnector("crm", true, REGION);
+        assertTrue(service.listConnectors(REGION).isEmpty());
+    }
+
+    @Test
+    void builtInConnectorConfigurationReportsDirections() {
+        assertTrue(service.describeConnector("S3", null, REGION).path("canUseAsDestination").asBoolean());
+        assertTrue(service.describeConnectors(null).containsKey("Salesforce"));
     }
 }
