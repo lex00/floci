@@ -8,6 +8,7 @@ import io.github.hectorvent.floci.core.storage.StorageBackedMap;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
 import io.github.hectorvent.floci.services.codebuild.model.Build;
 import io.github.hectorvent.floci.services.codebuild.model.BuildPhase;
+import io.github.hectorvent.floci.services.codebuild.model.Fleet;
 import io.github.hectorvent.floci.services.codebuild.model.Project;
 import io.github.hectorvent.floci.services.codebuild.model.ProjectArtifacts;
 import io.github.hectorvent.floci.services.codebuild.model.ProjectEnvironment;
@@ -20,6 +21,8 @@ import jakarta.inject.Inject;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -35,6 +38,8 @@ public class CodeBuildService {
     private Map<String, Map<String, Project>> projects = new ConcurrentHashMap<>();
     // key: region -> arn -> report group
     private Map<String, Map<String, ReportGroup>> reportGroups = new ConcurrentHashMap<>();
+    // key: region -> arn -> fleet
+    private Map<String, Map<String, Fleet>> fleets = new ConcurrentHashMap<>();
     // key: region -> arn -> source credential (token is stored but never returned)
     private Map<String, Map<String, SourceCredential>> sourceCredentials = new ConcurrentHashMap<>();
     // key: account:region -> buildId -> build (transient: builds are runtime state)
@@ -66,6 +71,8 @@ public class CodeBuildService {
                 new TypeReference<Map<String, Map<String, Project>>>() {});
         this.reportGroups = storageBacked("codebuild-report-groups.json",
                 new TypeReference<Map<String, Map<String, ReportGroup>>>() {});
+        this.fleets = storageBacked("codebuild-fleets.json",
+                new TypeReference<Map<String, Map<String, Fleet>>>() {});
         this.sourceCredentials = storageBacked("codebuild-source-credentials.json",
                 new TypeReference<Map<String, Map<String, SourceCredential>>>() {});
         this.persistedBuildCounters = storageBacked("codebuild-build-counters.json",
@@ -73,6 +80,7 @@ public class CodeBuildService {
         normalizeRegionMaps(projects);
         normalizeRegionMaps(reportGroups);
         normalizeRegionMaps(sourceCredentials);
+        normalizeRegionMaps(fleets);
     }
 
     private <V> Map<String, V> storageBacked(String fileName, TypeReference<Map<String, V>> typeReference) {
@@ -317,6 +325,135 @@ public class CodeBuildService {
 
     public List<String> listReportGroups(String region) {
         return new ArrayList<>(reportGroupsFor(region).keySet());
+    }
+
+    // ---- Fleets ----
+
+    private Map<String, Fleet> fleetsFor(String region) {
+        return fleets.computeIfAbsent(region, r -> new ConcurrentHashMap<>());
+    }
+
+    public Fleet createFleet(String region, String account, Fleet request) {
+        String name = request.getName();
+        if (name == null || name.isBlank()) {
+            throw new AwsException("InvalidInputException", "name is required", 400);
+        }
+        if (request.getBaseCapacity() == null || request.getEnvironmentType() == null
+                || request.getComputeType() == null) {
+            throw new AwsException("InvalidInputException",
+                    "baseCapacity, environmentType and computeType are required", 400);
+        }
+        Map<String, Fleet> store = fleetsFor(region);
+        if (findFleet(store, name) != null) {
+            throw new AwsException("ResourceAlreadyExistsException", "Fleet already exists: " + name, 400);
+        }
+        String id = name + ":" + UUID.randomUUID();
+        double now = Instant.now().toEpochMilli() / 1000.0;
+        request.setId(id);
+        request.setArn(AwsArnUtils.Arn.of("codebuild", region, account, "fleet/" + id).toString());
+        request.setCreated(now);
+        request.setLastModified(now);
+        request.setStatus(activeStatus());
+        request.setScalingConfiguration(scalingOutput(request.getScalingConfiguration(), request.getBaseCapacity()));
+        if (request.getOverflowBehavior() == null) {
+            request.setOverflowBehavior("QUEUE");
+        }
+        if (request.getTags() == null) {
+            request.setTags(new ArrayList<>());
+        }
+        store.put(request.getArn(), request);
+        persistRegion(fleets, region);
+        return request;
+    }
+
+    public Fleet updateFleet(String region, String arn, Fleet changes) {
+        Map<String, Fleet> store = fleetsFor(region);
+        Fleet fleet = findFleet(store, arn);
+        if (fleet == null) {
+            throw new AwsException("ResourceNotFoundException", "Fleet not found: " + arn, 400);
+        }
+        if (changes.getBaseCapacity() != null) { fleet.setBaseCapacity(changes.getBaseCapacity()); }
+        if (changes.getEnvironmentType() != null) { fleet.setEnvironmentType(changes.getEnvironmentType()); }
+        if (changes.getComputeType() != null) { fleet.setComputeType(changes.getComputeType()); }
+        if (changes.getComputeConfiguration() != null) {
+            fleet.setComputeConfiguration(changes.getComputeConfiguration());
+        }
+        if (changes.getScalingConfiguration() != null) {
+            fleet.setScalingConfiguration(scalingOutput(changes.getScalingConfiguration(), fleet.getBaseCapacity()));
+        }
+        if (changes.getOverflowBehavior() != null) { fleet.setOverflowBehavior(changes.getOverflowBehavior()); }
+        if (changes.getVpcConfig() != null) { fleet.setVpcConfig(changes.getVpcConfig()); }
+        if (changes.getProxyConfiguration() != null) {
+            fleet.setProxyConfiguration(changes.getProxyConfiguration());
+        }
+        if (changes.getImageId() != null) { fleet.setImageId(changes.getImageId()); }
+        if (changes.getFleetServiceRole() != null) { fleet.setFleetServiceRole(changes.getFleetServiceRole()); }
+        if (changes.getTags() != null) { fleet.setTags(changes.getTags()); }
+        fleet.setLastModified(Instant.now().toEpochMilli() / 1000.0);
+        fleet.setStatus(activeStatus());
+        persistRegion(fleets, region);
+        return fleet;
+    }
+
+    /** DeleteFleet succeeds for an unknown ARN; the model lists no not-found error for it. */
+    public void deleteFleet(String region, String arn) {
+        Map<String, Fleet> store = fleetsFor(region);
+        Fleet fleet = findFleet(store, arn);
+        if (fleet != null) {
+            store.remove(fleet.getArn());
+            persistRegion(fleets, region);
+        }
+    }
+
+    /** Looks each entry up by fleet name or ARN; unknown entries are left out. */
+    public List<Fleet> batchGetFleets(String region, List<String> namesOrArns) {
+        Map<String, Fleet> store = fleetsFor(region);
+        return namesOrArns.stream()
+                .map(key -> findFleet(store, key))
+                .filter(fleet -> fleet != null)
+                .collect(Collectors.toList());
+    }
+
+    public List<String> listFleets(String region, String sortBy, String sortOrder) {
+        Comparator<Fleet> order = switch (sortBy == null ? "NAME" : sortBy) {
+            case "CREATED_TIME" -> Comparator.comparing(Fleet::getCreated);
+            case "LAST_MODIFIED_TIME" -> Comparator.comparing(Fleet::getLastModified);
+            default -> Comparator.comparing(Fleet::getName);
+        };
+        if ("DESCENDING".equals(sortOrder)) {
+            order = order.reversed();
+        }
+        return fleetsFor(region).values().stream().sorted(order).map(Fleet::getArn).toList();
+    }
+
+    private static Fleet findFleet(Map<String, Fleet> store, String nameOrArn) {
+        if (nameOrArn == null) {
+            return null;
+        }
+        Fleet byArn = store.get(nameOrArn);
+        if (byArn != null) {
+            return byArn;
+        }
+        return store.values().stream()
+                .filter(fleet -> nameOrArn.equals(fleet.getName()) || nameOrArn.equals(fleet.getId()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static Map<String, Object> activeStatus() {
+        Map<String, Object> status = new LinkedHashMap<>();
+        status.put("statusCode", "ACTIVE");
+        return status;
+    }
+
+    /** ScalingConfigurationOutput adds the desired capacity, which starts at the base capacity. */
+    private static Map<String, Object> scalingOutput(Map<String, Object> input, Integer baseCapacity) {
+        if (input == null) {
+            return null;
+        }
+        Map<String, Object> output = new LinkedHashMap<>(input);
+        output.putIfAbsent("desiredCapacity", baseCapacity);
+        return output;
     }
 
     // ---- Source Credentials ----

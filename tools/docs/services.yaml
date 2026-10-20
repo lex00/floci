@@ -26,10 +26,22 @@ services:
     doc: docs/services/applicationautoscaling.md
     sources:
       - { path: src/main/java/io/github/hectorvent/floci/services/applicationautoscaling/ApplicationAutoScalingJsonHandler.java, mode: switch }
+  - service: appstream
+    doc: docs/services/appstream.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/appstream/AppStreamJsonHandler.java, mode: switch }
   - service: apprunner
     doc: docs/services/apprunner.md
     sources:
       - { path: src/main/java/io/github/hectorvent/floci/services/apprunner/AppRunnerJsonHandler.java, mode: switch }
+  - service: opensearchserverless
+    doc: docs/services/opensearch-serverless.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/opensearchserverless/OpenSearchServerlessJsonHandler.java, mode: switch }
+  - service: arcregionswitch
+    doc: docs/services/arc-region-switch.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/arcregionswitch/ArcRegionSwitchJsonHandler.java, mode: switch }
   - service: athena
     doc: docs/services/athena.md
     sources:
@@ -212,6 +224,35 @@ services:
     doc: docs/services/connect.md
     sources:
       - { path: src/main/java/io/github/hectorvent/floci/services/connect/ConnectController.java, mode: rest }
+      - { path: src/main/java/io/github/hectorvent/floci/services/connect/ConnectDirectoryController.java, mode: rest }
+      - { path: src/main/java/io/github/hectorvent/floci/core/common/SharedTagsController.java, mode: rest }
+    rename_actions:
+      ListTags: ListTagsForResource
+      TagResourcePost: TagResource
+    exclude_actions:
+      - ListTagsByQuery
+      - TagResourceByBody
+      - TagResourcePut
+      - UntagResourceByQuery
+  - service: kendra
+    doc: docs/services/kendra.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/kendra/KendraJsonHandler.java, mode: switch }
+  - service: qbusiness
+    doc: docs/services/qbusiness.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/qbusiness/QBusinessController.java, mode: rest }
+      - { path: src/main/java/io/github/hectorvent/floci/core/common/V1TagsController.java, mode: rest }
+    rename_actions:
+      ListTags: ListTagsForResource
+      TagResourcePost: TagResource
+    exclude_actions:
+      - ListTagsForResourceByQuery
+      - TagResourcePut
+  - service: location
+    doc: docs/services/location.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/location/LocationController.java, mode: rest }
       - { path: src/main/java/io/github/hectorvent/floci/core/common/SharedTagsController.java, mode: rest }
     rename_actions:
       ListTags: ListTagsForResource
@@ -233,6 +274,14 @@ services:
     doc: docs/services/detective.md
     sources:
       - { path: src/main/java/io/github/hectorvent/floci/services/detective/DetectiveController.java, mode: rest }
+  - service: codecommit
+    doc: docs/services/codecommit.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/codecommit/CodeCommitJsonHandler.java, mode: switch }
+  - service: codeconnections
+    doc: docs/services/codeconnections.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/codeconnections/CodeConnectionsJsonHandler.java, mode: switch }
   - service: dms
     doc: docs/services/dms.md
     sources:
@@ -241,6 +290,10 @@ services:
     doc: docs/services/docdb.md
     sources:
       - { path: src/main/java/io/github/hectorvent/floci/services/docdb/DocDbQueryHandler.java, mode: switch }
+  - service: ecrpublic
+    doc: docs/services/ecr-public.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/ecrpublic/EcrPublicJsonHandler.java, mode: switch }
   - service: efs
     doc: docs/services/efs.md
     sources:
@@ -464,6 +517,14 @@ services:
     doc: docs/services/wafv2.md
     sources:
       - { path: src/main/java/io/github/hectorvent/floci/services/wafv2/WafV2Handler.java, mode: switch }
+  - service: workspaces
+    doc: docs/services/workspaces.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/workspaces/WorkSpacesJsonHandler.java, mode: switch }
+  - service: workspacesweb
+    doc: docs/services/workspaces-web.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/workspacesweb/WorkSpacesWebController.java, mode: switch }
 
 # Switch handlers that exist but are intentionally not yet covered (see reasons).
 # A NEW switch handler not listed here and not registered above fails `--strict`.

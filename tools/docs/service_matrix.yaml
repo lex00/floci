@@ -41,6 +41,7 @@ aliases:
   states: step-functions                # Step Functions' SigV4 signing name
   email: ses                            # SES's SigV4 signing name
   es: opensearch                        # OpenSearch's SigV4 signing name (legacy Elasticsearch)
+  aoss: opensearch-serverless           # OpenSearch Serverless's SigV4 signing name
   appconfigdata: appconfig              # data-plane facet, at appconfig.md#data-plane
   tagging: resource-groups-tagging      # Resource Groups Tagging API's SigV4 signing name
   elasticloadbalancing: elb             # ELB v2's SigV4 signing name

@@ -5,6 +5,7 @@ import io.github.hectorvent.floci.testing.PartitionMatrix;
 import io.github.hectorvent.floci.testing.PartitionMatrix.PartitionCase;
 import io.github.hectorvent.floci.testing.RestAssuredJsonUtils;
 import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.path.json.JsonPath;
 import io.restassured.path.json.config.JsonPathConfig;
 import io.restassured.response.Response;
 import io.restassured.specification.RequestSpecification;
@@ -39,17 +40,18 @@ class PartitionCrossServiceSmokeIntegrationTest {
 
     static final Set<String> COVERED_PACKAGES = Set.of(
             "accessanalyzer", "acm", "amazonmq", "apigateway", "apigatewayv2", "appflow", "applicationautoscaling",
-            "appsync",
-            "aps", "autoscaling", "backup", "batch", "bcmdataexports", "bedrock", "bedrockagentcore", "bedrockagentcorecontrol", "ce",
-            "cloudfront", "cloudmap", "cloudwatch", "codebuild", "codedeploy", "codepipeline", "cognito",
-            "configservice", "connect", "controlcatalog", "controltower", "datasync", "datazone", "dlm", "dms", "dynamodb", "ec2",
-            "ecr", "ecs", "efs", "eks", "elasticache", "elasticbeanstalk", "elbv2", "emr", "emrserverless",
-            "eventbridge", "firehose", "fis", "glue", "guardduty", "iot", "kinesis", "kinesisanalytics", "lambda",
-            "lambdamicrovms", "lambdaweb", "medialive", "mediapackage", "memorydb", "msk", "mwaa", "networkfirewall",
-            "oam", "opensearch", "organizations", "pipes", "ram", "rds", "redshift", "redshiftserverless",
-            "resourceexplorer2", "route53", "route53resolver",
-            "s3tables", "s3vectors", "sagemaker", "scheduler", "secretsmanager", "servicequotas", "ses", "sns", "sqs",
-            "stepfunctions", "timestreaminfluxdb", "transfer", "verifiedpermissions", "wafv2");
+            "appstream", "appsync", "aps", "autoscaling", "backup", "batch", "bcmdataexports", "bedrock",
+            "bedrockagentcore", "bedrockagentcorecontrol", "ce", "cloudfront", "cloudmap", "cloudwatch",
+            "codebuild", "codecommit", "codeconnections", "codedeploy", "codepipeline", "cognito", "comprehend",
+            "configservice", "connect", "controlcatalog", "controltower", "datasync", "datazone", "dlm", "dms",
+            "dynamodb", "ec2", "ecr", "ecs", "efs", "eks", "elasticache", "elasticbeanstalk", "elbv2", "emr",
+            "emrserverless", "eventbridge", "firehose", "fis", "glue", "guardduty", "iot", "kendra", "kinesis",
+            "kinesisanalytics", "lambda", "lambdamicrovms", "lambdaweb", "location", "medialive", "mediapackage",
+            "memorydb", "msk", "mwaa", "networkfirewall", "oam", "opensearch", "opensearchserverless",
+            "organizations", "pipes", "qbusiness", "ram", "rds", "redshift", "redshiftserverless", "rekognition",
+            "resourceexplorer2", "route53", "route53resolver", "s3tables", "s3vectors", "sagemaker", "scheduler",
+            "secretsmanager", "servicequotas", "ses", "sns", "sqs", "stepfunctions", "timestreaminfluxdb",
+            "transfer", "verifiedpermissions", "wafv2", "workspaces");
 
     private static final String JSON_1_0 = "application/x-amz-json-1.0";
     private static final String JSON_1_1 = "application/x-amz-json-1.1";
@@ -616,6 +618,81 @@ class PartitionCrossServiceSmokeIntegrationTest {
 
     @ParameterizedTest
     @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void comprehendDocumentClassifierArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "comprehend");
+        String name = unique("smoke-classifier", partitionCase);
+        String arn = json11(region, "comprehend", "Comprehend_20171127.CreateDocumentClassifier", """
+                {"DocumentClassifierName": "%s", "LanguageCode": "en",
+                 "DataAccessRoleArn": "arn:%s:iam::000000000000:role/comprehend",
+                 "InputDataConfig": {"S3Uri": "s3://smoke/train.csv"}}
+                """.formatted(name, partitionCase.partition()))
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath().getString("DocumentClassifierArn");
+        cleanup.register(() -> json11(region, "comprehend", "Comprehend_20171127.DeleteDocumentClassifier",
+                "{\"DocumentClassifierArn\":\"" + arn + "\"}").when().post("/"));
+        PartitionMatrix.assertArnIn(partitionCase, arn);
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void rekognitionCollectionArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "rekognition");
+        String name = unique("smoke-faces", partitionCase);
+        String arn = json11(region, "rekognition", "RekognitionService.CreateCollection",
+                "{\"CollectionId\":\"" + name + "\"}")
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath().getString("CollectionArn");
+        cleanup.register(() -> json11(region, "rekognition", "RekognitionService.DeleteCollection",
+                "{\"CollectionId\":\"" + name + "\"}").when().post("/"));
+        PartitionMatrix.assertArnIn(partitionCase, arn);
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void kendraIndexArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "kendra");
+        String id = json11(region, "kendra", "AWSKendraFrontendService.CreateIndex", """
+                {"Name": "%s", "RoleArn": "arn:%s:iam::000000000000:role/kendra"}
+                """.formatted(unique("smoke-index", partitionCase), partitionCase.partition()))
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath().getString("Id");
+        cleanup.register(() -> json11(region, "kendra", "AWSKendraFrontendService.DeleteIndex",
+                "{\"Id\":\"" + id + "\"}").when().post("/"));
+        String arn = "arn:" + partitionCase.partition() + ":kendra:" + region + ":000000000000:index/" + id;
+        json11(region, "kendra", "AWSKendraFrontendService.ListTagsForResource",
+                "{\"ResourceARN\":\"" + arn + "\"}")
+        .when().post("/").then().statusCode(200);
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void qbusinessApplicationArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "qbusiness");
+        Response created = signed(region, "qbusiness")
+            .contentType(JSON)
+            .body("{\"displayName\":\"" + unique("smoke-app", partitionCase) + "\"}")
+        .when().post("/applications").then().statusCode(200).extract().response();
+        String applicationId = created.jsonPath().getString("applicationId");
+        cleanup.register(() -> signed(region, "qbusiness").when().delete("/applications/" + applicationId));
+        PartitionMatrix.assertArnIn(partitionCase, created.jsonPath().getString("applicationArn"));
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void locationGeofenceCollectionArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "geo");
+        String name = unique("smoke-fences", partitionCase);
+        String arn = signed(region, "geo")
+            .contentType(JSON)
+            .body("{\"CollectionName\":\"" + name + "\"}")
+        .when().post("/geofencing/v0/collections").then().statusCode(200)
+            .extract().jsonPath().getString("CollectionArn");
+        cleanup.register(() -> signed(region, "geo").when().delete("/geofencing/v0/collections/" + name));
+        PartitionMatrix.assertArnIn(partitionCase, arn);
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
     void memoryDbAclArn(PartitionCase partitionCase) {
         String region = offered(partitionCase, "memorydb");
         String name = unique("smoke-acl", partitionCase);
@@ -1002,6 +1079,38 @@ class PartitionCrossServiceSmokeIntegrationTest {
 
     @ParameterizedTest
     @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void appStreamStackArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "appstream");
+        String name = unique("smoke-stack", partitionCase);
+        String arn = json11(region, "appstream", "PhotonAdminProxyService.CreateStack", "{\"Name\":\"" + name + "\"}")
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath().getString("Stack.Arn");
+        cleanup.register(() -> json11(region, "appstream", "PhotonAdminProxyService.DeleteStack",
+                "{\"Name\":\"" + name + "\"}").when().post("/"));
+        PartitionMatrix.assertArnIn(partitionCase, arn);
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void workSpacesPoolArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "workspaces");
+        String name = unique("smokepool", partitionCase).replace("-", "");
+        String poolId = json11(region, "workspaces", "WorkspacesService.CreateWorkspacesPool",
+                "{\"PoolName\":\"" + name + "\",\"Description\":\"smoke\",\"BundleId\":\"wsb-1\","
+                        + "\"DirectoryId\":\"wsd-1\",\"Capacity\":{\"DesiredUserSessions\":1}}")
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath().getString("WorkspacesPool.PoolId");
+        cleanup.register(() -> json11(region, "workspaces", "WorkspacesService.TerminateWorkspacesPool",
+                "{\"PoolId\":\"" + poolId + "\"}").when().post("/"));
+        String arn = json11(region, "workspaces", "WorkspacesService.DescribeWorkspacesPools",
+                "{\"PoolIds\":[\"" + poolId + "\"]}")
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath().getString("WorkspacesPools[0].PoolArn");
+        PartitionMatrix.assertArnIn(partitionCase, arn);
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
     void cloudMapNamespaceArn(PartitionCase partitionCase) {
         String region = offered(partitionCase, "servicediscovery");
         String target = "Route53AutoNaming_v20170314.";
@@ -1286,6 +1395,36 @@ class PartitionCrossServiceSmokeIntegrationTest {
 
     @ParameterizedTest
     @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void codeCommitRepositoryArnAndCloneUrl(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "codecommit");
+        String name = unique("smoke-cc", partitionCase);
+        JsonPath metadata = json11(region, "codecommit",
+                "CodeCommit_20150413.CreateRepository", "{\"repositoryName\":\"" + name + "\"}")
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath();
+        cleanup.register(() -> json11(region, "codecommit", "CodeCommit_20150413.DeleteRepository",
+                "{\"repositoryName\":\"" + name + "\"}").when().post("/"));
+        PartitionMatrix.assertArnIn(partitionCase, metadata.getString("repositoryMetadata.Arn"));
+        assertTrue(metadata.getString("repositoryMetadata.cloneUrlHttp")
+                .contains("." + region + "." + partitionCase.dnsSuffix() + "/"));
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void codeConnectionsConnectionArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "codeconnections");
+        String target = "com.amazonaws.codeconnections.CodeConnections_20231201.";
+        String arn = json10(region, "codeconnections", target + "CreateConnection",
+                "{\"ConnectionName\":\"smoke\",\"ProviderType\":\"GitHub\"}")
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath().getString("ConnectionArn");
+        cleanup.register(() -> json10(region, "codeconnections", target + "DeleteConnection",
+                "{\"ConnectionArn\":\"" + arn + "\"}").when().post("/"));
+        PartitionMatrix.assertArnIn(partitionCase, arn);
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
     void ecrRepositoryArn(PartitionCase partitionCase) {
         String region = offered(partitionCase, "ecr");
         String name = unique("smoke-repo", partitionCase);
@@ -1397,6 +1536,30 @@ class PartitionCrossServiceSmokeIntegrationTest {
                 "{\"SecretId\":\"READONLY-InfluxDB-auth-parameters-" + id
                         + "\",\"ForceDeleteWithoutRecovery\":true}").when().post("/"));
         PartitionMatrix.assertArnIn(partitionCase, created.jsonPath().getString("arn"));
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void openSearchServerlessCollectionArnAndEndpointHost(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "aoss");
+        String target = "OpenSearchServerless.";
+        String name = unique("smk", partitionCase);
+        json10(region, "aoss", target + "CreateSecurityPolicy",
+                "{\"name\":\"" + name + "\",\"type\":\"encryption\",\"policy\":"
+                        + "\"{\\\"Rules\\\":[{\\\"ResourceType\\\":\\\"collection\\\",\\\"Resource\\\":"
+                        + "[\\\"collection/" + name + "\\\"]}],\\\"AWSOwnedKey\\\":true}\"}")
+        .when().post("/").then().statusCode(200);
+        cleanup.register(() -> json10(region, "aoss", target + "DeleteSecurityPolicy",
+                "{\"name\":\"" + name + "\",\"type\":\"encryption\"}").when().post("/"));
+        String id = json10(region, "aoss", target + "CreateCollection", "{\"name\":\"" + name + "\"}")
+        .when().post("/").then().statusCode(200).extract().jsonPath().getString("createCollectionDetail.id");
+        cleanup.register(() -> json10(region, "aoss", target + "DeleteCollection",
+                "{\"id\":\"" + id + "\"}").when().post("/"));
+        Response read = json10(region, "aoss", target + "BatchGetCollection", "{\"ids\":[\"" + id + "\"]}")
+        .when().post("/").then().statusCode(200).extract().response();
+        PartitionMatrix.assertArnIn(partitionCase, read.jsonPath().getString("collectionDetails[0].arn"));
+        assertRegionalHostIn(partitionCase,
+                URI.create(read.jsonPath().getString("collectionDetails[0].collectionEndpoint")).getHost());
     }
 
     @ParameterizedTest

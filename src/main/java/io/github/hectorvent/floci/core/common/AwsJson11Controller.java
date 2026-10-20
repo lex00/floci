@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectReader;
 import io.github.hectorvent.floci.services.acm.AcmJsonHandler;
 import io.github.hectorvent.floci.services.apigatewayv2.ApiGatewayV2JsonHandler;
 import io.github.hectorvent.floci.services.applicationautoscaling.ApplicationAutoScalingJsonHandler;
+import io.github.hectorvent.floci.services.appstream.AppStreamJsonHandler;
 import io.github.hectorvent.floci.services.athena.AthenaJsonHandler;
 import io.github.hectorvent.floci.services.bcmdataexports.BcmDataExportsJsonHandler;
 import io.github.hectorvent.floci.services.budgets.BudgetsJsonHandler;
@@ -18,6 +19,7 @@ import io.github.hectorvent.floci.services.cloudmap.CloudMapHandler;
 import io.github.hectorvent.floci.services.cloudtrail.CloudTrailJsonHandler;
 import io.github.hectorvent.floci.services.cloudwatch.logs.CloudWatchLogsHandler;
 import io.github.hectorvent.floci.services.codebuild.CodeBuildJsonHandler;
+import io.github.hectorvent.floci.services.codecommit.CodeCommitJsonHandler;
 import io.github.hectorvent.floci.services.codedeploy.CodeDeployJsonHandler;
 import io.github.hectorvent.floci.services.codepipeline.CodePipelineJsonHandler;
 import io.github.hectorvent.floci.services.cognito.CognitoJsonHandler;
@@ -28,6 +30,7 @@ import io.github.hectorvent.floci.services.cur.CurJsonHandler;
 import io.github.hectorvent.floci.services.datasync.DataSyncJsonHandler;
 import io.github.hectorvent.floci.services.dms.DmsJsonHandler;
 import io.github.hectorvent.floci.services.ecr.EcrJsonHandler;
+import io.github.hectorvent.floci.services.ecrpublic.EcrPublicJsonHandler;
 import io.github.hectorvent.floci.services.ecs.EcsJsonHandler;
 import io.github.hectorvent.floci.services.emr.EmrHandler;
 import io.github.hectorvent.floci.services.eventbridge.EventBridgeHandler;
@@ -35,6 +38,7 @@ import io.github.hectorvent.floci.services.firehose.FirehoseJsonHandler;
 import io.github.hectorvent.floci.services.globalaccelerator.GlobalAcceleratorJsonHandler;
 import io.github.hectorvent.floci.services.glue.GlueJsonHandler;
 import io.github.hectorvent.floci.services.identitystore.IdentityStoreJsonHandler;
+import io.github.hectorvent.floci.services.kendra.KendraJsonHandler;
 import io.github.hectorvent.floci.services.kinesis.KinesisJsonHandler;
 import io.github.hectorvent.floci.services.kinesisanalytics.KinesisAnalyticsV2JsonHandler;
 import io.github.hectorvent.floci.services.kms.KmsJsonHandler;
@@ -62,6 +66,7 @@ import io.github.hectorvent.floci.services.transcribe.TranscribeJsonHandler;
 import io.github.hectorvent.floci.services.transfer.TransferHandler;
 import io.github.hectorvent.floci.services.translate.TranslateJsonHandler;
 import io.github.hectorvent.floci.services.wafv2.WafV2Handler;
+import io.github.hectorvent.floci.services.workspaces.WorkSpacesJsonHandler;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.Context;
@@ -118,6 +123,7 @@ public class AwsJson11Controller {
     private final TransferHandler transferHandler;
     private final TextractJsonHandler textractJsonHandler;
     private final ComprehendJsonHandler comprehendJsonHandler;
+    private final KendraJsonHandler kendraJsonHandler;
     private final RekognitionJsonHandler rekognitionJsonHandler;
     private final PricingJsonHandler pricingJsonHandler;
     private final TranscribeJsonHandler transcribeJsonHandler;
@@ -133,6 +139,8 @@ public class AwsJson11Controller {
     private final GlobalAcceleratorJsonHandler globalAcceleratorJsonHandler;
     private final DataSyncJsonHandler dataSyncJsonHandler;
     private final NetworkFirewallJsonHandler networkFirewallJsonHandler;
+    private final AppStreamJsonHandler appStreamJsonHandler;
+    private final WorkSpacesJsonHandler workSpacesJsonHandler;
     private final ServiceCatalogJsonHandler serviceCatalogJsonHandler;
     private final CloudControlJsonHandler cloudControlJsonHandler;
     private final ApplicationAutoScalingJsonHandler applicationAutoScalingJsonHandler;
@@ -146,6 +154,8 @@ public class AwsJson11Controller {
     private final MarketplaceMeteringController marketplaceMeteringController;
     private final SageMakerJsonHandler sageMakerJsonHandler;
     private final DmsJsonHandler dmsJsonHandler;
+    private final CodeCommitJsonHandler codeCommitJsonHandler;
+    private final EcrPublicJsonHandler ecrPublicJsonHandler;
 
     @Inject
     public AwsJson11Controller(ObjectMapper objectMapper, ResolvedServiceCatalog catalog,
@@ -175,6 +185,7 @@ public class AwsJson11Controller {
                                TransferHandler transferHandler,
                                TextractJsonHandler textractJsonHandler,
                                ComprehendJsonHandler comprehendJsonHandler,
+                               KendraJsonHandler kendraJsonHandler,
                                RekognitionJsonHandler rekognitionJsonHandler,
                                PricingJsonHandler pricingJsonHandler,
                                TranscribeJsonHandler transcribeJsonHandler,
@@ -190,6 +201,8 @@ public class AwsJson11Controller {
                                GlobalAcceleratorJsonHandler globalAcceleratorJsonHandler,
                                DataSyncJsonHandler dataSyncJsonHandler,
                                NetworkFirewallJsonHandler networkFirewallJsonHandler,
+                               AppStreamJsonHandler appStreamJsonHandler,
+                               WorkSpacesJsonHandler workSpacesJsonHandler,
                                ServiceCatalogJsonHandler serviceCatalogJsonHandler,
                                CloudControlJsonHandler cloudControlJsonHandler,
                                ApplicationAutoScalingJsonHandler applicationAutoScalingJsonHandler,
@@ -202,7 +215,9 @@ public class AwsJson11Controller {
                                MarketplaceEntitlementController marketplaceEntitlementController,
                                MarketplaceMeteringController marketplaceMeteringController,
                                SageMakerJsonHandler sageMakerJsonHandler,
-                               DmsJsonHandler dmsJsonHandler) {
+                               DmsJsonHandler dmsJsonHandler,
+                               CodeCommitJsonHandler codeCommitJsonHandler,
+                               EcrPublicJsonHandler ecrPublicJsonHandler) {
         this.objectMapper = objectMapper;
         this.strictBodyReader = objectMapper.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         this.catalog = catalog;
@@ -236,6 +251,7 @@ public class AwsJson11Controller {
         this.transferHandler = transferHandler;
         this.textractJsonHandler = textractJsonHandler;
         this.comprehendJsonHandler = comprehendJsonHandler;
+        this.kendraJsonHandler = kendraJsonHandler;
         this.rekognitionJsonHandler = rekognitionJsonHandler;
         this.pricingJsonHandler = pricingJsonHandler;
         this.transcribeJsonHandler = transcribeJsonHandler;
@@ -251,6 +267,8 @@ public class AwsJson11Controller {
         this.globalAcceleratorJsonHandler = globalAcceleratorJsonHandler;
         this.dataSyncJsonHandler = dataSyncJsonHandler;
         this.networkFirewallJsonHandler = networkFirewallJsonHandler;
+        this.appStreamJsonHandler = appStreamJsonHandler;
+        this.workSpacesJsonHandler = workSpacesJsonHandler;
         this.serviceCatalogJsonHandler = serviceCatalogJsonHandler;
         this.cloudControlJsonHandler = cloudControlJsonHandler;
         this.applicationAutoScalingJsonHandler = applicationAutoScalingJsonHandler;
@@ -264,6 +282,8 @@ public class AwsJson11Controller {
         this.marketplaceMeteringController = marketplaceMeteringController;
         this.sageMakerJsonHandler = sageMakerJsonHandler;
         this.dmsJsonHandler = dmsJsonHandler;
+        this.codeCommitJsonHandler = codeCommitJsonHandler;
+        this.ecrPublicJsonHandler = ecrPublicJsonHandler;
     }
 
     @POST
@@ -343,6 +363,7 @@ public class AwsJson11Controller {
                 case "transfer" -> transferHandler.handle(action, request, region);
                 case "textract" -> textractJsonHandler.handle(action, request, region);
                 case "comprehend" -> comprehendJsonHandler.handle(action, request, region);
+                case "kendra" -> kendraJsonHandler.handle(action, request, region);
                 case "rekognition" -> rekognitionJsonHandler.handle(action, request, region);
                 case "pricing" -> pricingJsonHandler.handle(action, request, region);
                 case "transcribe" -> transcribeJsonHandler.handle(action, request);
@@ -363,6 +384,8 @@ public class AwsJson11Controller {
                 case "datasync" -> dataSyncJsonHandler.handle(action, request, region);
                 case "network-firewall" -> networkFirewallJsonHandler.handle(
                         action, request, region, regionResolver.getAccountId());
+                case "appstream" -> appStreamJsonHandler.handle(action, request, region);
+                case "workspaces" -> workSpacesJsonHandler.handle(action, request, region);
                 case "servicecatalog" -> serviceCatalogJsonHandler.handle(
                         action, request, region, regionResolver.getAccountId());
                 case "cloudcontrol" -> cloudControlJsonHandler.handle(
@@ -385,6 +408,10 @@ public class AwsJson11Controller {
                 }
                 case "sagemaker" -> sageMakerJsonHandler.handle(action, request, region);
                 case "dms" -> dmsJsonHandler.handle(action, request, region);
+                case "codecommit" -> codeCommitJsonHandler.handle(
+                        action, request, region, regionResolver.getAccountId());
+                case "ecr-public" -> ecrPublicJsonHandler.handle(
+                        action, request, region, regionResolver.getAccountId());
                 default -> null;
             };
             // catalog.matchTarget is protocol-agnostic: a JSON 1.0 target

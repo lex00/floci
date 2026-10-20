@@ -134,7 +134,10 @@ quarkus:
       - --initialize-at-run-time=io.github.hectorvent.floci.core.common.Totp
       - --initialize-at-run-time=io.github.hectorvent.floci.services.route53.Route53Service
       - --initialize-at-run-time=io.github.hectorvent.floci.services.kms.KmsService
+      - --initialize-at-run-time=io.github.hectorvent.floci.services.workspaces.WorkSpacesService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.bedrockagentcore.BedrockAgentCoreEventService
+      - --initialize-at-run-time=io.github.hectorvent.floci.services.opensearchserverless.OpenSearchServerlessService
+      - --initialize-at-run-time=io.github.hectorvent.floci.services.arcregionswitch.ArcRegionSwitchService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.cloudfront.CloudFrontService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.emr.EmrService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.elasticbeanstalk.ElasticBeanstalkService
@@ -764,6 +767,8 @@ floci:
       #   - MY_CONSOLE_FLAG=true       # internal-port and endpoint above instead
     bedrock:
       enabled: true
+      # foundation-models: anthropic.claude-3-haiku-20240307-v1:0,amazon.nova-lite-v1:0
+      # extra-foundation-models: qwen.qwen3-32b-v1:0
     bedrock-runtime:
       enabled: true
       backend: stub
@@ -865,6 +870,12 @@ floci:
       enabled: true
     rekognition:
       enabled: true
+    kendra:
+      enabled: true
+    qbusiness:
+      enabled: true
+    location:
+      enabled: true
     translate:
       enabled: true
     pricing:
@@ -879,6 +890,10 @@ floci:
       emit-mode: synchronous
       staging-bucket: floci-cur-staging
     bcm-pricing-calculator:
+      enabled: true
+    opensearchserverless:
+      enabled: true
+    arcregionswitch:
       enabled: true
     timestream-influxdb:
       enabled: true
@@ -952,6 +967,12 @@ floci:
     rum:
       enabled: true
     networkfirewall:
+      enabled: true
+    appstream:
+      enabled: true
+    workspaces:
+      enabled: true
+    workspacesweb:
       enabled: true
     servicecatalog:
       enabled: true
@@ -1063,4 +1084,10 @@ floci:
     datazone:
       enabled: true
     dms:
+      enabled: true
+    codecommit:
+      enabled: true
+    codeconnections:
+      enabled: true
+    ecr-public:
       enabled: true

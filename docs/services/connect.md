@@ -20,6 +20,12 @@
 | `UpdateInstanceStorageConfig` | Replace a storage config |
 | `DisassociateInstanceStorageConfig` | Remove a storage config |
 | `ListInstanceStorageConfigs` | List storage configs for one resource type |
+| `SearchAvailablePhoneNumbers` | Generated numbers for a country and type, skipping claimed ones |
+| `ClaimPhoneNumber` | Claim a number for an instance or traffic distribution group |
+| `DescribePhoneNumber` | Describe a claimed number |
+| `ReleasePhoneNumber` | Release a claimed number |
+| `UpdateUserHierarchyStructure` | Replace the instance hierarchy levels |
+| `DescribeUserHierarchyStructure` | Read the instance hierarchy levels |
 | `ListTagsForResource` | List instance tags (`GET /tags/{resourceArn}`) |
 | `TagResource` | Tag an instance (`POST /tags/{resourceArn}`) |
 | `UntagResource` | Remove instance tags (`DELETE /tags/{resourceArn}?tagKeys=`) |

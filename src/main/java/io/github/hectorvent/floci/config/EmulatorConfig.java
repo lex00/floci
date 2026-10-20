@@ -821,6 +821,9 @@ public interface EmulatorConfig {
         TransferServiceConfig transfer();
         TextractServiceConfig textract();
         ComprehendServiceConfig comprehend();
+        KendraServiceConfig kendra();
+        QBusinessServiceConfig qbusiness();
+        LocationServiceConfig location();
         RekognitionServiceConfig rekognition();
         PricingServiceConfig pricing();
         DuckConfig duck();
@@ -834,6 +837,8 @@ public interface EmulatorConfig {
         MediaPackageServiceConfig mediapackage();
         MediaPackageV2ServiceConfig mediapackagev2();
         BcmPricingCalculatorServiceConfig bcmPricingCalculator();
+        OpenSearchServerlessServiceConfig opensearchserverless();
+        ArcRegionSwitchServiceConfig arcregionswitch();
         TimestreamInfluxDbServiceConfig timestreamInfluxdb();
         ConfigServiceConfig configservice();
         CloudTrailServiceConfig cloudtrail();
@@ -856,6 +861,9 @@ public interface EmulatorConfig {
         EmrServerlessServiceConfig emrserverless();
         Route53ResolverServiceConfig route53resolver();
         NetworkFirewallServiceConfig networkfirewall();
+        AppStreamServiceConfig appstream();
+        WorkSpacesServiceConfig workspaces();
+        WorkSpacesWebServiceConfig workspacesweb();
         ServiceCatalogServiceConfig servicecatalog();
         SsoAdminServiceConfig ssoadmin();
         SsoOidcServiceConfig ssooidc();
@@ -893,9 +901,27 @@ public interface EmulatorConfig {
         CodeArtifactServiceConfig codeartifact();
         MarketplaceServiceConfig marketplace();
         DmsServiceConfig dms();
+        CodeCommitServiceConfig codecommit();
+        CodeConnectionsServiceConfig codeconnections();
+        EcrPublicServiceConfig ecrPublic();
     }
 
     interface DmsServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface CodeCommitServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface CodeConnectionsServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface EcrPublicServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }
@@ -1135,6 +1161,21 @@ public interface EmulatorConfig {
     }
 
     interface NetworkFirewallServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface AppStreamServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface WorkSpacesServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface WorkSpacesWebServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }
@@ -2420,6 +2461,15 @@ public interface EmulatorConfig {
     interface BedrockServiceConfig {
         @WithDefault("true")
         boolean enabled();
+
+        /**
+         * Comma-separated model ids that replace the built-in foundation model catalog. An id
+         * the catalog does not know is listed as a text model.
+         */
+        Optional<String> foundationModels();
+
+        /** Comma-separated model ids appended to the foundation model catalog. */
+        Optional<String> extraFoundationModels();
     }
 
     interface BedrockRuntimeServiceConfig {
@@ -2488,6 +2538,21 @@ public interface EmulatorConfig {
     }
 
     interface TextractServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface KendraServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface QBusinessServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface LocationServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }
@@ -2712,6 +2777,16 @@ public interface EmulatorConfig {
     }
 
     interface BcmPricingCalculatorServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface OpenSearchServerlessServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface ArcRegionSwitchServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }

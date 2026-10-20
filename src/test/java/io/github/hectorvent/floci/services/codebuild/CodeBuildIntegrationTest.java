@@ -312,4 +312,75 @@ class CodeBuildIntegrationTest {
             .statusCode(400)
             .body("__type", containsString("ResourceNotFoundException"));
     }
+
+    @Test
+    @Order(100)
+    void fleetCreateReadUpdateDelete() {
+        String arn = given()
+            .header("X-Amz-Target", "CodeBuild_20161006.CreateFleet")
+            .contentType(CONTENT_TYPE)
+            .body("""
+                {"name":"it-fleet","baseCapacity":1,"environmentType":"LINUX_CONTAINER",
+                 "computeType":"BUILD_GENERAL1_SMALL","tags":[{"key":"team","value":"ci"}]}
+                """)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("fleet.name", equalTo("it-fleet"))
+            .body("fleet.status.statusCode", equalTo("ACTIVE"))
+            .body("fleet.tags[0].key", equalTo("team"))
+            .body("fleet.created", notNullValue())
+            .extract().path("fleet.arn");
+
+        given()
+            .header("X-Amz-Target", "CodeBuild_20161006.BatchGetFleets")
+            .contentType(CONTENT_TYPE)
+            .body("{\"names\":[\"" + arn + "\",\"missing-fleet\"]}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("fleets[0].baseCapacity", equalTo(1))
+            .body("fleetsNotFound", contains("missing-fleet"));
+
+        given()
+            .header("X-Amz-Target", "CodeBuild_20161006.UpdateFleet")
+            .contentType(CONTENT_TYPE)
+            .body("{\"arn\":\"" + arn + "\",\"baseCapacity\":2}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("fleet.baseCapacity", equalTo(2));
+
+        given()
+            .header("X-Amz-Target", "CodeBuild_20161006.ListFleets")
+            .contentType(CONTENT_TYPE)
+            .body("{}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("fleets", hasItem(arn));
+
+        given()
+            .header("X-Amz-Target", "CodeBuild_20161006.DeleteFleet")
+            .contentType(CONTENT_TYPE)
+            .body("{\"arn\":\"" + arn + "\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        given()
+            .header("X-Amz-Target", "CodeBuild_20161006.ListFleets")
+            .contentType(CONTENT_TYPE)
+            .body("{}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("fleets", not(hasItem(arn)));
+    }
 }

@@ -2,6 +2,8 @@ package io.github.hectorvent.floci.services.connect;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RegionResolver;
@@ -17,6 +19,8 @@ import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -80,6 +84,21 @@ public class ConnectService implements TagHandler {
 
     private final StorageBackend<String, ConnectInstance> instances;
     private final StorageBackend<String, ConnectStorageConfig> storageConfigs;
+    /** Hierarchy level members in order, as {@code HierarchyStructure} names them. */
+    private static final List<String> HIERARCHY_LEVELS =
+            List.of("LevelOne", "LevelTwo", "LevelThree", "LevelFour", "LevelFive");
+
+    /** International calling codes for the countries the canned phone number search serves. */
+    private static final Map<String, String> CALLING_CODES = Map.ofEntries(
+            Map.entry("US", "1"), Map.entry("CA", "1"), Map.entry("GB", "44"), Map.entry("DE", "49"),
+            Map.entry("FR", "33"), Map.entry("AU", "61"), Map.entry("JP", "81"), Map.entry("SG", "65"),
+            Map.entry("NZ", "64"), Map.entry("IE", "353"), Map.entry("IT", "39"), Map.entry("ES", "34"),
+            Map.entry("BR", "55"), Map.entry("MX", "52"), Map.entry("ZA", "27"), Map.entry("KR", "82"));
+
+    private static final int MAX_SEARCH_RESULTS = 10;
+
+    private final StorageBackend<String, ObjectNode> phoneNumbers;
+    private final StorageBackend<String, ObjectNode> hierarchyStructures;
     private final RegionResolver regionResolver;
 
     @Inject
@@ -88,6 +107,10 @@ public class ConnectService implements TagHandler {
                 new TypeReference<Map<String, ConnectInstance>>() {});
         this.storageConfigs = storageFactory.create("connect", "connect-storage-configs.json",
                 new TypeReference<Map<String, ConnectStorageConfig>>() {});
+        this.phoneNumbers = storageFactory.create("connect", "connect-phone-numbers.json",
+                new TypeReference<Map<String, ObjectNode>>() {});
+        this.hierarchyStructures = storageFactory.create("connect", "connect-hierarchy-structures.json",
+                new TypeReference<Map<String, ObjectNode>>() {});
         this.regionResolver = regionResolver;
     }
 
@@ -172,6 +195,7 @@ public class ConnectService implements TagHandler {
             storageConfigs.delete(storageKey(region, instance.getId(), config.getResourceType(),
                     config.getAssociationId()));
         }
+        hierarchyStructures.delete(key(region, instance.getId()));
         instances.delete(key(region, instance.getId()));
         LOG.infov("Deleted Connect instance: {0}", instance.getId());
     }
@@ -283,6 +307,182 @@ public class ConnectService implements TagHandler {
         return storageConfigs.scan(k -> k.startsWith(prefix));
     }
 
+    // ──────────────────────────── Phone numbers ────────────────────────────
+
+    /**
+     * Answers {@code SearchAvailablePhoneNumbers} with generated numbers for the requested country
+     * and type, starting with the requested prefix and skipping numbers already claimed.
+     */
+    public List<ObjectNode> searchAvailablePhoneNumbers(String targetArn, String instanceId, String countryCode,
+                                                        String phoneNumberType, String prefix,
+                                                        Integer maxResults, String region) {
+        requireOneTarget(targetArn, instanceId);
+        if (countryCode == null || countryCode.isBlank()) {
+            throw new AwsException("InvalidParameterException", "PhoneNumberCountryCode is required", 400);
+        }
+        if (phoneNumberType == null || phoneNumberType.isBlank()) {
+            throw new AwsException("InvalidParameterException", "PhoneNumberType is required", 400);
+        }
+        if (instanceId != null) {
+            describeInstance(instanceId, region);
+        }
+        int limit = maxResults == null ? MAX_SEARCH_RESULTS : maxResults;
+        if (limit < 1 || limit > MAX_SEARCH_RESULTS) {
+            throw new AwsException("InvalidParameterException",
+                    "MaxResults must be between 1 and " + MAX_SEARCH_RESULTS, 400);
+        }
+        String callingCode = CALLING_CODES.getOrDefault(countryCode, "1");
+        String start = prefix != null && !prefix.isBlank()
+                ? (prefix.startsWith("+") ? prefix : "+" + prefix)
+                : "+" + callingCode + ("TOLL_FREE".equals(phoneNumberType) ? "800" : "206");
+        int length = "1".equals(callingCode) ? 12 : 1 + callingCode.length() + 9;
+        Set<String> claimed = new HashSet<>();
+        for (ObjectNode number : phoneNumbers.scan(k -> k.startsWith(region + "::"))) {
+            claimed.add(number.path("PhoneNumber").asText());
+        }
+        List<ObjectNode> result = new ArrayList<>();
+        int digits = Math.max(length - start.length(), 1);
+        for (int i = 0; result.size() < limit && i < Math.pow(10, Math.min(digits, 6)); i++) {
+            String suffix = String.format("%0" + digits + "d", 5550100 + i);
+            String candidate = start + suffix.substring(suffix.length() - digits);
+            if (claimed.contains(candidate)) {
+                continue;
+            }
+            ObjectNode summary = JsonNodeFactory.instance.objectNode();
+            summary.put("PhoneNumber", candidate);
+            summary.put("PhoneNumberCountryCode", countryCode);
+            summary.put("PhoneNumberType", phoneNumberType);
+            result.add(summary);
+        }
+        return result;
+    }
+
+    public ObjectNode claimPhoneNumber(String targetArn, String instanceId, String phoneNumber,
+                                       String description, Map<String, String> tags, String region) {
+        requireOneTarget(targetArn, instanceId);
+        if (phoneNumber == null || phoneNumber.isBlank()) {
+            throw new AwsException("InvalidParameterException", "PhoneNumber is required", 400);
+        }
+        String target = targetArn;
+        String resolvedInstanceId = null;
+        if (instanceId != null) {
+            ConnectInstance instance = describeInstance(instanceId, region);
+            target = instance.getArn();
+            resolvedInstanceId = instance.getId();
+        }
+        for (ObjectNode existing : phoneNumbers.scan(k -> k.startsWith(region + "::"))) {
+            if (phoneNumber.equals(existing.path("PhoneNumber").asText())) {
+                throw new AwsException("InvalidParameterException",
+                        "Phone number " + phoneNumber + " is already claimed.", 400);
+            }
+        }
+        String id = UUID.randomUUID().toString();
+        ObjectNode number = JsonNodeFactory.instance.objectNode();
+        number.put("PhoneNumberId", id);
+        number.put("PhoneNumberArn", regionResolver.buildArn("connect", region, "phone-number/" + id));
+        number.put("PhoneNumber", phoneNumber);
+        number.put("PhoneNumberCountryCode", countryFor(phoneNumber));
+        number.put("PhoneNumberType", phoneNumber.matches("\\+18(00|33|44|55|66|77|88)\\d*") ? "TOLL_FREE" : "DID");
+        if (description != null) {
+            number.put("PhoneNumberDescription", description);
+        }
+        number.put("TargetArn", target);
+        if (resolvedInstanceId != null) {
+            number.put("InstanceId", resolvedInstanceId);
+        }
+        ObjectNode tagNode = number.putObject("Tags");
+        if (tags != null) {
+            tags.forEach(tagNode::put);
+        }
+        number.putObject("PhoneNumberStatus").put("Status", "CLAIMED");
+        phoneNumbers.put(phoneKey(region, id), number);
+        return number;
+    }
+
+    public ObjectNode describePhoneNumber(String phoneNumberId, String region) {
+        String id = phoneNumberId != null && phoneNumberId.startsWith("arn:")
+                ? phoneNumberId.substring(phoneNumberId.lastIndexOf('/') + 1) : phoneNumberId;
+        return phoneNumbers.get(phoneKey(region, id))
+                .orElseThrow(() -> new AwsException("ResourceNotFoundException",
+                        "Phone number " + phoneNumberId + " does not exist.", 404));
+    }
+
+    public void releasePhoneNumber(String phoneNumberId, String region) {
+        ObjectNode number = describePhoneNumber(phoneNumberId, region);
+        phoneNumbers.delete(phoneKey(region, number.path("PhoneNumberId").asText()));
+    }
+
+    private static void requireOneTarget(String targetArn, String instanceId) {
+        if ((targetArn == null) == (instanceId == null)) {
+            throw new AwsException("InvalidParameterException",
+                    "Exactly one of TargetArn or InstanceId is required.", 400);
+        }
+    }
+
+    private static String countryFor(String phoneNumber) {
+        String digits = phoneNumber.startsWith("+") ? phoneNumber.substring(1) : phoneNumber;
+        String best = "US";
+        int bestLength = 0;
+        for (Map.Entry<String, String> entry : CALLING_CODES.entrySet()) {
+            String code = entry.getValue();
+            boolean preferred = !"1".equals(code) || "US".equals(entry.getKey());
+            if (preferred && digits.startsWith(code) && code.length() > bestLength) {
+                best = entry.getKey();
+                bestLength = code.length();
+            }
+        }
+        return best;
+    }
+
+    // ──────────────────────── User hierarchy structure ────────────────────────
+
+    /**
+     * Replaces the instance's hierarchy levels. A level keeps its id while it stays at the same
+     * position, and a level left out of the request is removed.
+     */
+    public void updateUserHierarchyStructure(String instanceId, JsonNode structure, String region) {
+        ConnectInstance instance = describeInstance(instanceId, region);
+        if (structure == null || !structure.isObject()) {
+            throw new AwsException("InvalidRequestException", "HierarchyStructure is required", 400);
+        }
+        ObjectNode previous = hierarchyStructures.get(key(region, instance.getId()))
+                .orElse(JsonNodeFactory.instance.objectNode());
+        ObjectNode updated = JsonNodeFactory.instance.objectNode();
+        boolean gap = false;
+        for (String level : HIERARCHY_LEVELS) {
+            JsonNode requested = structure.get(level);
+            if (requested == null || requested.isNull()) {
+                gap = true;
+                continue;
+            }
+            String name = requested.path("Name").asText(null);
+            if (name == null || name.isBlank()) {
+                throw new AwsException("InvalidParameterException", level + ".Name is required", 400);
+            }
+            if (gap) {
+                throw new AwsException("InvalidParameterException",
+                        "Hierarchy levels must be defined in order without gaps.", 400);
+            }
+            JsonNode prior = previous.get(level);
+            ObjectNode node = updated.putObject(level);
+            String id = prior != null ? prior.path("Id").asText() : UUID.randomUUID().toString();
+            node.put("Id", id);
+            node.put("Arn", instance.getArn() + "/agent-group-level/" + id);
+            node.put("Name", name);
+            boolean unchanged = prior != null && name.equals(prior.path("Name").asText());
+            node.put("LastModifiedTime", unchanged
+                    ? prior.path("LastModifiedTime").asLong() : Instant.now().getEpochSecond());
+            node.put("LastModifiedRegion", unchanged ? prior.path("LastModifiedRegion").asText(region) : region);
+        }
+        hierarchyStructures.put(key(region, instance.getId()), updated);
+    }
+
+    public ObjectNode describeUserHierarchyStructure(String instanceId, String region) {
+        ConnectInstance instance = describeInstance(instanceId, region);
+        return hierarchyStructures.get(key(region, instance.getId()))
+                .orElse(JsonNodeFactory.instance.objectNode());
+    }
+
     // ──────────────────────────── Tags ────────────────────────────
 
     @Override
@@ -292,12 +492,25 @@ public class ConnectService implements TagHandler {
 
     @Override
     public Map<String, String> listTags(String region, String arn) {
+        if (isPhoneNumberArn(arn)) {
+            Map<String, String> tags = new LinkedHashMap<>();
+            describePhoneNumberByArn(arn, region).path("Tags").fields()
+                    .forEachRemaining(e -> tags.put(e.getKey(), e.getValue().asText()));
+            return tags;
+        }
         ConnectInstance instance = findByArn(arn, region);
         return instance.getTags() != null ? instance.getTags() : Map.of();
     }
 
     @Override
     public void tagResource(String region, String arn, Map<String, String> tags) {
+        if (isPhoneNumberArn(arn)) {
+            ObjectNode number = describePhoneNumberByArn(arn, region);
+            ObjectNode tagNode = tagsOf(number);
+            tags.forEach(tagNode::put);
+            phoneNumbers.put(phoneKey(region, number.path("PhoneNumberId").asText()), number);
+            return;
+        }
         ConnectInstance instance = findByArn(arn, region);
         if (instance.getTags() == null) {
             instance.setTags(new LinkedHashMap<>());
@@ -308,6 +521,14 @@ public class ConnectService implements TagHandler {
 
     @Override
     public void untagResource(String region, String arn, List<String> tagKeys) {
+        if (isPhoneNumberArn(arn)) {
+            ObjectNode number = describePhoneNumberByArn(arn, region);
+            if (tagKeys != null) {
+                tagsOf(number).remove(tagKeys);
+            }
+            phoneNumbers.put(phoneKey(region, number.path("PhoneNumberId").asText()), number);
+            return;
+        }
         ConnectInstance instance = findByArn(arn, region);
         if (instance.getTags() != null && tagKeys != null) {
             tagKeys.forEach(instance.getTags()::remove);
@@ -316,6 +537,22 @@ public class ConnectService implements TagHandler {
     }
 
     // ──────────────────────────── Helpers ────────────────────────────
+
+    private static ObjectNode tagsOf(ObjectNode number) {
+        return number.get("Tags") instanceof ObjectNode tags ? tags : number.putObject("Tags");
+    }
+
+    private static boolean isPhoneNumberArn(String arn) {
+        return arn != null && arn.contains(":phone-number/");
+    }
+
+    private ObjectNode describePhoneNumberByArn(String arn, String region) {
+        ObjectNode number = describePhoneNumber(arn, region);
+        if (!arn.equals(number.path("PhoneNumberArn").asText())) {
+            throw new AwsException("ResourceNotFoundException", "Resource " + arn + " does not exist.", 404);
+        }
+        return number;
+    }
 
     private ConnectInstance findByArn(String arn, String region) {
         String prefix = region + "::";
@@ -385,6 +622,10 @@ public class ConnectService implements TagHandler {
 
     private String key(String region, String instanceId) {
         return region + "::" + instanceId;
+    }
+
+    private String phoneKey(String region, String phoneNumberId) {
+        return region + "::phone-number::" + phoneNumberId;
     }
 
     private String storageKey(String region, String instanceId, String resourceType, String associationId) {

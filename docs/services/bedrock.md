@@ -1,7 +1,7 @@
 # Amazon Bedrock (control plane)
 
 **Protocol:** REST-JSON
-**Endpoint:** `http://localhost:4566/guardrails` (SigV4 service `bedrock`)
+**Endpoint:** `http://localhost:4566/guardrails`, `/foundation-models`, `/inference-profiles` (SigV4 service `bedrock`)
 
 This page covers the Bedrock control plane. Model invocation is a separate service
 that shares the same signing name: see [Bedrock Runtime](bedrock-runtime.md).
@@ -11,15 +11,21 @@ that shares the same signing name: see [Bedrock Runtime](bedrock-runtime.md).
 <!-- floci:actions:start -->
 | Action | Description |
 | --- | --- |
+| `ListFoundationModels` | List the foundation model catalog, filtered by provider, output modality, inference type and customization type |
+| `GetFoundationModel` | Read one catalog model by model id or foundation-model ARN |
+| `ListInferenceProfiles` | List the region's system-defined and application inference profiles, filtered by `type` |
+| `CreateInferenceProfile` | Create an application profile that copies a foundation model or a system-defined profile |
+| `DeleteInferenceProfile` | Delete an application profile |
+| `GetInferenceProfile` | Read an inference profile by id or ARN |
 | `CreateGuardrail` | Create a guardrail; returns the `DRAFT` version, `READY` immediately |
 | `GetGuardrail` | Read a guardrail by id or ARN, at `DRAFT` or a numbered `guardrailVersion` |
 | `UpdateGuardrail` | Replace the `DRAFT` configuration |
 | `CreateGuardrailVersion` | Snapshot the `DRAFT` under the next numerical version |
 | `DeleteGuardrail` | Delete one numerical version, or the guardrail and all its versions |
 | `ListGuardrails` | List every guardrail's `DRAFT`, or every version of one guardrail |
-| `TagResource` | Tag a guardrail (`POST /tagResource`) |
-| `UntagResource` | Remove tags from a guardrail (`POST /untagResource`) |
-| `ListTagsForResource` | List a guardrail's tags (`POST /listTagsForResource`) |
+| `TagResource` | Tag a guardrail or application inference profile (`POST /tagResource`) |
+| `UntagResource` | Remove tags from a guardrail or application inference profile (`POST /untagResource`) |
+| `ListTagsForResource` | List a guardrail's or application inference profile's tags (`POST /listTagsForResource`) |
 <!-- floci:actions:end -->
 
 Guardrails are versioned. The working copy is `DRAFT`, and `GetGuardrail` without a
@@ -62,17 +68,40 @@ request, so `CreateGuardrail` and `TagResource` both raise `TooManyTagsException
 the resulting total would pass 50. Replacing the value of a tag key the guardrail
 already carries does not add to that total.
 
+## Foundation models and inference profiles
+
+`ListFoundationModels` and `GetFoundationModel` serve a fixed catalog of Anthropic, Amazon,
+Meta, Mistral AI and Cohere model ids in AWS's `FoundationModelSummary` shape. The Bedrock
+Runtime stub answers for any of them, so a model picked from the list can be invoked. With
+the proxy backend, map the ids you use through
+`FLOCI_SERVICES_BEDROCK_RUNTIME_PROXY_MODEL_MAPPING`. Model ARNs carry the request region
+and no account, as in AWS.
+
+`ListInferenceProfiles` and `GetInferenceProfile` serve the system-defined cross-region
+profiles of the request region's geography: `us.` in US regions, `eu.` in EU regions and
+`apac.` in Asia Pacific regions, each listing the model's ARN in that geography's regions.
+Other regions have none.
+
+`CreateInferenceProfile` makes an `APPLICATION` profile from `modelSource.copyFrom`, which
+names a foundation model ARN or a system-defined profile ARN of the region. The profile
+takes that source's model ARNs. Its id is random, its ARN is
+`application-inference-profile/<id>`, and it accepts tags. A second profile with the same
+name fails with `ConflictException`, and a system-defined profile cannot be deleted.
+
+`FLOCI_SERVICES_BEDROCK_FOUNDATION_MODELS` replaces the catalog with a comma-separated list
+of model ids, for a proxy backend that serves a different set. An unknown id becomes a text
+model from the provider its id prefix names.
+`FLOCI_SERVICES_BEDROCK_EXTRA_FOUNDATION_MODELS` appends ids to the catalog instead.
+
 ## Not implemented
 
 The rest of the Bedrock control plane is absent rather than stubbed, because
 emulating it faithfully would require behaviour Floci has no way to model:
 
-- `ListFoundationModels` and `GetFoundationModel`. The AWS service model carries no
-  enumeration of foundation model ids, so any catalogue would be invented data.
 - Custom model, model customization, model import and distillation jobs. These
   depend on real training runs.
 - Model evaluation and evaluation jobs. These depend on real inference.
-- Provisioned throughput, inference profiles and prompt routers. These describe real
+- Provisioned throughput and prompt routers. These describe real
   capacity reservations and routing.
 - Model invocation logging, batch inference and async invoke. These are data-plane
   operations backed by real model execution.
@@ -82,6 +111,8 @@ emulating it faithfully would require behaviour Floci has no way to model:
 | Variable | Default | Description |
 |---|---|---|
 | `FLOCI_SERVICES_BEDROCK_ENABLED` | `true` | Enable or disable the service |
+| `FLOCI_SERVICES_BEDROCK_FOUNDATION_MODELS` | _(built-in catalog)_ | Comma-separated model ids that replace the foundation model catalog |
+| `FLOCI_SERVICES_BEDROCK_EXTRA_FOUNDATION_MODELS` | _(none)_ | Comma-separated model ids appended to the catalog |
 
 ## Examples
 

@@ -31,6 +31,7 @@ import io.github.hectorvent.floci.services.codeartifact.CodeArtifactMavenControl
 import io.github.hectorvent.floci.services.codeartifact.CodeArtifactPypiController;
 import io.github.hectorvent.floci.services.cognito.CognitoOAuthController;
 import io.github.hectorvent.floci.services.cognito.CognitoWellKnownController;
+import io.github.hectorvent.floci.services.connect.ConnectDirectoryController;
 import io.github.hectorvent.floci.services.controlcatalog.ControlCatalogController;
 import io.github.hectorvent.floci.services.controltower.ControlTowerControlController;
 import io.github.hectorvent.floci.services.controltower.ControlTowerController;
@@ -54,6 +55,7 @@ import io.github.hectorvent.floci.services.lambda.durable.DurableExecutionContro
 import io.github.hectorvent.floci.services.lambdamicrovms.LambdaMicrovmsController;
 import io.github.hectorvent.floci.services.lambdamicrovms.LambdaNetworkConnectorsController;
 import io.github.hectorvent.floci.services.lambdaweb.LambdaWebController;
+import io.github.hectorvent.floci.services.location.LocationController;
 import io.github.hectorvent.floci.services.macie2.MacieController;
 import io.github.hectorvent.floci.services.marketplace.MarketplaceCatalogController;
 import io.github.hectorvent.floci.services.marketplace.MarketplaceDeploymentController;
@@ -67,6 +69,7 @@ import io.github.hectorvent.floci.services.oam.OamController;
 import io.github.hectorvent.floci.services.opensearch.ElasticsearchController;
 import io.github.hectorvent.floci.services.opensearch.OpenSearchController;
 import io.github.hectorvent.floci.services.pipes.PipesController;
+import io.github.hectorvent.floci.services.qbusiness.QBusinessController;
 import io.github.hectorvent.floci.services.rdsdata.RdsDataController;
 import io.github.hectorvent.floci.services.resourceexplorer2.ResourceExplorer2Controller;
 import io.github.hectorvent.floci.services.route53.Route53Controller;
@@ -94,6 +97,7 @@ import io.github.hectorvent.floci.services.ses.SesTenantController;
 import io.github.hectorvent.floci.services.ssooidc.SsoOidcController;
 import io.github.hectorvent.floci.services.ssoportal.SsoPortalController;
 import io.github.hectorvent.floci.services.swf.model.SwfConstants;
+import io.github.hectorvent.floci.services.workspacesweb.WorkSpacesWebController;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -379,6 +383,19 @@ public class ResolvedServiceCatalog {
                         null, null, 5000L, null, ServiceProtocol.JSON,
                         protocols(ServiceProtocol.JSON),
                         Set.of("AmazonEC2ContainerRegistry_V20150921."), Set.of("ecr"), Set.of(), Set.of()),
+                descriptor("ecr-public", "ecr-public", config.services().ecrPublic().enabled(), true,
+                        "ecr-public", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
+                        protocols(ServiceProtocol.JSON),
+                        Set.of("SpencerFrontendService."), Set.of("ecr-public"), Set.of(), Set.of()),
+                descriptor("codecommit", "codecommit", config.services().codecommit().enabled(), true,
+                        "codecommit", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
+                        protocols(ServiceProtocol.JSON),
+                        Set.of("CodeCommit_20150413."), Set.of("codecommit"), Set.of(), Set.of()),
+                descriptor("codeconnections", "codeconnections", config.services().codeconnections().enabled(), true,
+                        "codeconnections", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
+                        protocols(ServiceProtocol.JSON),
+                        Set.of("com.amazonaws.codeconnections.CodeConnections_20231201."), Set.of("codeconnections"),
+                        Set.of(), Set.of()),
                 descriptor("tagging", "tagging", config.services().tagging().enabled(), true,
                         "tagging", storageMode(config.storage().services().tagging().mode(), config.storage().mode()),
                         config.storage().services().tagging().flushIntervalMs(), null, ServiceProtocol.JSON,
@@ -599,13 +616,25 @@ public class ResolvedServiceCatalog {
                         protocols(ServiceProtocol.JSON),
                         Set.of("Textract."), Set.of("textract"), Set.of(), Set.of()),
                 descriptor("comprehend", "comprehend", config.services().comprehend().enabled(), true,
-                        null, null, 5000L, null, ServiceProtocol.JSON,
+                        "comprehend", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
                         protocols(ServiceProtocol.JSON),
                         Set.of("Comprehend_20171127."), Set.of("comprehend"), Set.of(), Set.of()),
                 descriptor("rekognition", "rekognition", config.services().rekognition().enabled(), true,
-                        null, null, 5000L, null, ServiceProtocol.JSON,
+                        "rekognition", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
                         protocols(ServiceProtocol.JSON),
                         Set.of("RekognitionService."), Set.of("rekognition"), Set.of(), Set.of()),
+                descriptor("kendra", "kendra", config.services().kendra().enabled(), true,
+                        "kendra", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
+                        protocols(ServiceProtocol.JSON),
+                        Set.of("AWSKendraFrontendService."), Set.of("kendra"), Set.of(), Set.of()),
+                descriptor("qbusiness", "qbusiness", config.services().qbusiness().enabled(), true,
+                        "qbusiness", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
+                        protocols(ServiceProtocol.REST_JSON),
+                        Set.of(), Set.of("qbusiness"), Set.of(), Set.of(QBusinessController.class)),
+                descriptor("location", "location", config.services().location().enabled(), true,
+                        "location", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
+                        protocols(ServiceProtocol.REST_JSON),
+                        Set.of(), Set.of("geo"), Set.of(), Set.of(LocationController.class)),
                 descriptor("pricing", "pricing", config.services().pricing().enabled(), true,
                         null, null, 5000L, null, ServiceProtocol.JSON,
                         protocols(ServiceProtocol.JSON),
@@ -632,6 +661,17 @@ public class ResolvedServiceCatalog {
                         "bcmpricingcalculator", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
                         protocols(ServiceProtocol.JSON),
                         Set.of("AWSBCMPricingCalculator."), Set.of("bcm-pricing-calculator"), Set.of(), Set.of()),
+                descriptor("aoss", "opensearchserverless",
+                        config.services().opensearchserverless().enabled(), true,
+                        "opensearchserverless", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
+                        protocols(ServiceProtocol.JSON),
+                        Set.of("OpenSearchServerless."), Set.of("aoss"), Set.of(), Set.of()),
+                descriptor("arc-region-switch", "arcregionswitch",
+                        config.services().arcregionswitch().enabled(), true,
+                        "arcregionswitch", config.storage().mode(), 5000L, null, ServiceProtocol.CBOR,
+                        protocols(ServiceProtocol.CBOR, ServiceProtocol.JSON),
+                        Set.of("ArcRegionSwitch."), Set.of("arc-region-switch"),
+                        Set.of("ArcRegionSwitch"), Set.of()),
                 descriptor("timestream-influxdb", "timestreaminfluxdb",
                         config.services().timestreamInfluxdb().enabled(), true,
                         "timestreaminfluxdb", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
@@ -719,7 +759,22 @@ public class ResolvedServiceCatalog {
                         "connect", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
                         protocols(ServiceProtocol.REST_JSON),
                         Set.of(), Set.of("connect"), Set.of(),
-                        Set.of(io.github.hectorvent.floci.services.connect.ConnectController.class)),
+                        Set.of(io.github.hectorvent.floci.services.connect.ConnectController.class,
+                                ConnectDirectoryController.class)),
+                // AppStream 2.0's Smithy service shape is PhotonAdminProxyService, so that is the
+                // target prefix the SDK sends; its signing name is appstream.
+                descriptor("appstream", "appstream", config.services().appstream().enabled(), true,
+                        "appstream", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
+                        protocols(ServiceProtocol.JSON),
+                        Set.of("PhotonAdminProxyService."), Set.of("appstream"), Set.of(), Set.of()),
+                descriptor("workspaces", "workspaces", config.services().workspaces().enabled(), true,
+                        "workspaces", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
+                        protocols(ServiceProtocol.JSON),
+                        Set.of("WorkspacesService."), Set.of("workspaces"), Set.of(), Set.of()),
+                descriptor("workspaces-web", "workspacesweb", config.services().workspacesweb().enabled(), true,
+                        "workspacesweb", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
+                        protocols(ServiceProtocol.REST_JSON),
+                        Set.of(), Set.of("workspaces-web"), Set.of(), Set.of(WorkSpacesWebController.class)),
                 descriptor("app-integrations", "appintegrations",
                         config.services().appintegrations().enabled(), true,
                         "appintegrations", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,

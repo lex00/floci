@@ -13,6 +13,13 @@
 | `DetectText` | Detect text in an image |
 | `CompareFaces` | Compare a face in a source image with faces in a target image |
 | `DetectModerationLabels` | Detect unsafe or inappropriate content in an image |
+| `CreateCollection` | Create a face collection |
+| `DescribeCollection` | Read a collection; face and user counts are always 0 |
+| `ListCollections` | List collection ids with their face model versions |
+| `DeleteCollection` | Delete a collection |
+| `TagResource` | Tag a collection |
+| `UntagResource` | Remove tags from a collection |
+| `ListTagsForResource` | List a collection's tags |
 <!-- floci:actions:end -->
 
 ## Emulation Behavior
@@ -62,8 +69,9 @@
 - **Both `Bytes` and `S3Object`:** supplying both is accepted rather than rejected,
   since nothing in the Rekognition API model declares that combination invalid. The
   bytes are what is checked.
-- **Out of scope:** face-collection persistence (`CreateCollection`,
-  `IndexFaces`, `SearchFaces`), custom-model training (`Projects`, `Datasets`,
+- **Face collections:** collections are stored per region with their tags. Floci
+  indexes no faces, so `FaceCount` and `UserCount` stay at 0.
+- **Out of scope:** face indexing and search (`IndexFaces`, `SearchFaces`), custom-model training (`Projects`, `Datasets`,
   `ProjectVersions`), live video (`StreamProcessor`), async video jobs
   (`Start*`/`Get*` Celebrity/Content/Face/Label/Person/Segment/Text detection),
   and Face Liveness sessions are not implemented.

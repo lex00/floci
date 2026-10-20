@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -40,8 +41,9 @@ class BedrockServiceTest {
     @BeforeEach
     void setUp() {
         kmsService = mock(KmsService.class);
-        service = new BedrockService(new InMemoryStorage<>(),
-                new RegionResolver(REGION, ACCOUNT), mapper, kmsService);
+        RegionResolver regionResolver = new RegionResolver(REGION, ACCOUNT);
+        service = new BedrockService(new InMemoryStorage<>(), new InMemoryStorage<>(), regionResolver, mapper, kmsService,
+                new BedrockModelCatalog(regionResolver, Optional.empty(), Optional.empty()));
     }
 
     /** Registers one usable KMS key that answers to every form the AWS model accepts. */

@@ -298,6 +298,21 @@
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>account</artifactId>
         </dependency>
+        <!-- Amazon Kendra client -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>kendra</artifactId>
+        </dependency>
+        <!-- Amazon Q Business client -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>qbusiness</artifactId>
+        </dependency>
+        <!-- Amazon Location Service client -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>location</artifactId>
+        </dependency>
         <!-- AWS Control Catalog client -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
@@ -445,6 +460,19 @@
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>ecr</artifactId>
+        </dependency>
+        <!-- ECR Public, CodeCommit and CodeConnections clients -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>ecrpublic</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>codecommit</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>codeconnections</artifactId>
         </dependency>
         <!-- EventBridge Pipes client -->
         <dependency>

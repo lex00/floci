@@ -11,6 +11,7 @@ import io.github.hectorvent.floci.core.common.Pagination;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
+import io.github.hectorvent.floci.services.bedrock.model.ApplicationInferenceProfile;
 import io.github.hectorvent.floci.services.bedrock.model.Guardrail;
 import io.github.hectorvent.floci.services.kms.KmsService;
 import io.github.hectorvent.floci.services.kms.model.KmsKey;
@@ -84,24 +85,152 @@ public class BedrockService {
             "piiEntitiesConfig", "piiEntities",
             "regexesConfig", "regexes");
 
+    /** {@code InferenceProfileName} from the AWS model. */
+    private static final Pattern PROFILE_NAME_PATTERN = Pattern.compile("([0-9a-zA-Z][ _-]?){1,64}");
+
+    private static final String APPLICATION_PROFILE_RESOURCE = "application-inference-profile/";
+
     private final StorageBackend<String, Guardrail> guardrails;
+    private final StorageBackend<String, ApplicationInferenceProfile> inferenceProfiles;
     private final RegionResolver regionResolver;
     private final ObjectMapper objectMapper;
     private final KmsService kmsService;
+    private final BedrockModelCatalog modelCatalog;
 
     @Inject
     public BedrockService(StorageFactory storageFactory, RegionResolver regionResolver,
-                          ObjectMapper objectMapper, KmsService kmsService) {
+                          ObjectMapper objectMapper, KmsService kmsService, BedrockModelCatalog modelCatalog) {
         this(storageFactory.create("bedrock", "bedrock-guardrails.json",
-                new TypeReference<Map<String, Guardrail>>() {}), regionResolver, objectMapper, kmsService);
+                new TypeReference<Map<String, Guardrail>>() {}),
+                storageFactory.create("bedrock", "bedrock-inference-profiles.json",
+                        new TypeReference<Map<String, ApplicationInferenceProfile>>() {}),
+                regionResolver, objectMapper, kmsService, modelCatalog);
     }
 
-    BedrockService(StorageBackend<String, Guardrail> guardrails, RegionResolver regionResolver,
-                   ObjectMapper objectMapper, KmsService kmsService) {
+    BedrockService(StorageBackend<String, Guardrail> guardrails,
+                   StorageBackend<String, ApplicationInferenceProfile> inferenceProfiles,
+                   RegionResolver regionResolver, ObjectMapper objectMapper, KmsService kmsService,
+                   BedrockModelCatalog modelCatalog) {
         this.guardrails = guardrails;
+        this.inferenceProfiles = inferenceProfiles;
         this.regionResolver = regionResolver;
         this.objectMapper = objectMapper;
         this.kmsService = kmsService;
+        this.modelCatalog = modelCatalog;
+    }
+
+    // Inference profiles
+
+    public PaginatedResult<BedrockModelCatalog.InferenceProfile> listInferenceProfiles(
+            String type, Integer maxResults, String nextToken, String region) {
+        List<BedrockModelCatalog.InferenceProfile> profiles = new ArrayList<>();
+        if (type == null || BedrockModelCatalog.SYSTEM_DEFINED.equals(type)) {
+            profiles.addAll(modelCatalog.systemInferenceProfiles(region));
+        }
+        if (type == null || BedrockModelCatalog.APPLICATION.equals(type)) {
+            String prefix = region + "::";
+            inferenceProfiles.scan(key -> key.startsWith(prefix))
+                    .forEach(profile -> profiles.add(view(profile)));
+        }
+        return Pagination.paginate(profiles, BedrockModelCatalog.InferenceProfile::inferenceProfileId,
+                maxResults, nextToken, MAX_PAGE, "ValidationException");
+    }
+
+    public BedrockModelCatalog.InferenceProfile getInferenceProfile(String identifier, String region) {
+        if (identifier == null || identifier.isBlank()) {
+            throw new AwsException("ValidationException", "inferenceProfileIdentifier is required", 400);
+        }
+        BedrockModelCatalog.InferenceProfile profile = modelCatalog.findSystemInferenceProfile(identifier, region);
+        if (profile != null) {
+            return profile;
+        }
+        return view(applicationProfile(identifier, region));
+    }
+
+    /**
+     * {@code CreateInferenceProfile}: an application profile that copies its models from a
+     * foundation model ARN or a system-defined profile ARN of the region.
+     */
+    public BedrockModelCatalog.InferenceProfile createInferenceProfile(JsonNode request, String region) {
+        String name = textOrNull(request, "inferenceProfileName");
+        if (name == null || !PROFILE_NAME_PATTERN.matcher(name).matches() || name.length() > 64) {
+            throw new AwsException("ValidationException",
+                    "inferenceProfileName must be 1 to 64 letters, digits, spaces, hyphens or underscores.", 400);
+        }
+        String description = textOrNull(request, "description");
+        if (description != null && (description.isEmpty() || description.length() > 200)) {
+            throw new AwsException("ValidationException", "description must be 1 to 200 characters.", 400);
+        }
+        String copyFrom = textOrNull(request.path("modelSource"), "copyFrom");
+        if (copyFrom == null || copyFrom.isBlank()) {
+            throw new AwsException("ValidationException", "modelSource.copyFrom is required.", 400);
+        }
+        List<String> modelArns = sourceModelArns(copyFrom, region);
+        String prefix = region + "::";
+        for (ApplicationInferenceProfile existing : inferenceProfiles.scan(key -> key.startsWith(prefix))) {
+            if (existing.getInferenceProfileName().equals(name)) {
+                throw new AwsException("ConflictException",
+                        "Inference profile with name " + name + " already exists.", 400);
+            }
+        }
+        Map<String, String> tags = parseTagList(request.get("tags"));
+        String profileId = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        String arn = regionResolver.buildArn("bedrock", region, APPLICATION_PROFILE_RESOURCE + profileId);
+        if (tags.size() > TAGS_PER_RESOURCE_MAX) {
+            throw tooManyTags(arn, tags.size());
+        }
+        Instant now = Instant.now();
+        ApplicationInferenceProfile profile = new ApplicationInferenceProfile();
+        profile.setInferenceProfileId(profileId);
+        profile.setInferenceProfileName(name);
+        profile.setDescription(description);
+        profile.setInferenceProfileArn(arn);
+        profile.setModelArns(modelArns);
+        profile.setCreatedAt(now);
+        profile.setUpdatedAt(now);
+        profile.setTags(tags);
+        inferenceProfiles.put(prefix + profileId, profile);
+        LOG.infov("Created Bedrock application inference profile: {0}", profileId);
+        return view(profile);
+    }
+
+    public void deleteInferenceProfile(String identifier, String region) {
+        if (modelCatalog.findSystemInferenceProfile(identifier, region) != null) {
+            throw new AwsException("ValidationException",
+                    "A system-defined inference profile cannot be deleted.", 400);
+        }
+        ApplicationInferenceProfile profile = applicationProfile(identifier, region);
+        inferenceProfiles.delete(region + "::" + profile.getInferenceProfileId());
+        LOG.infov("Deleted Bedrock application inference profile: {0}", profile.getInferenceProfileId());
+    }
+
+    private List<String> sourceModelArns(String copyFrom, String region) {
+        if (copyFrom.contains(":foundation-model/")) {
+            BedrockModelCatalog.FoundationModel model = modelCatalog.getFoundationModel(copyFrom);
+            return List.of(modelCatalog.foundationModelArn(model.modelId(), region));
+        }
+        if (copyFrom.contains(":inference-profile/")) {
+            BedrockModelCatalog.InferenceProfile system = modelCatalog.findSystemInferenceProfile(copyFrom, region);
+            if (system != null) {
+                return system.modelArns();
+            }
+        }
+        throw new AwsException("ResourceNotFoundException",
+                "The model source " + copyFrom + " does not exist.", 404);
+    }
+
+    private ApplicationInferenceProfile applicationProfile(String identifier, String region) {
+        String profileId = BedrockModelCatalog.profileIdOf(identifier);
+        return inferenceProfiles.get(region + "::" + profileId)
+                .orElseThrow(() -> new AwsException("ResourceNotFoundException",
+                        "Inference profile " + identifier + " does not exist.", 404));
+    }
+
+    private static BedrockModelCatalog.InferenceProfile view(ApplicationInferenceProfile profile) {
+        return new BedrockModelCatalog.InferenceProfile(profile.getInferenceProfileId(),
+                profile.getInferenceProfileName(), profile.getDescription(), profile.getInferenceProfileArn(),
+                profile.getModelArns(), BedrockModelCatalog.APPLICATION, profile.getCreatedAt(),
+                profile.getUpdatedAt());
     }
 
     public Guardrail createGuardrail(JsonNode request, String region) {
@@ -244,6 +373,10 @@ public class BedrockService {
     // Tags
 
     public Map<String, String> listTags(String resourceArn, String region) {
+        if (isApplicationProfileArn(resourceArn)) {
+            Map<String, String> tags = applicationProfile(resourceArn, region).getTags();
+            return tags != null ? tags : Map.of();
+        }
         Guardrail guardrail = findByArn(resourceArn, region);
         return guardrail.getTags() != null ? guardrail.getTags() : Map.of();
     }
@@ -254,6 +387,17 @@ public class BedrockService {
      * the value of a key already present does not add to that total.
      */
     public synchronized void tagResource(String resourceArn, Map<String, String> tags, String region) {
+        if (isApplicationProfileArn(resourceArn)) {
+            ApplicationInferenceProfile profile = applicationProfile(resourceArn, region);
+            Map<String, String> merged = profile.getTags() == null ? new HashMap<>() : new HashMap<>(profile.getTags());
+            merged.putAll(tags);
+            if (merged.size() > TAGS_PER_RESOURCE_MAX) {
+                throw tooManyTags(resourceArn, merged.size());
+            }
+            profile.setTags(merged);
+            inferenceProfiles.put(region + "::" + profile.getInferenceProfileId(), profile);
+            return;
+        }
         Guardrail guardrail = findByArn(resourceArn, region);
         Map<String, String> merged = guardrail.getTags() == null
                 ? new HashMap<>()
@@ -267,6 +411,16 @@ public class BedrockService {
     }
 
     public synchronized void untagResource(String resourceArn, List<String> tagKeys, String region) {
+        if (isApplicationProfileArn(resourceArn)) {
+            ApplicationInferenceProfile profile = applicationProfile(resourceArn, region);
+            Map<String, String> remaining = profile.getTags() == null ? new HashMap<>() : new HashMap<>(profile.getTags());
+            if (tagKeys != null) {
+                tagKeys.forEach(remaining::remove);
+            }
+            profile.setTags(remaining);
+            inferenceProfiles.put(region + "::" + profile.getInferenceProfileId(), profile);
+            return;
+        }
         Guardrail guardrail = findByArn(resourceArn, region);
         if (guardrail.getTags() != null && tagKeys != null) {
             tagKeys.forEach(guardrail.getTags()::remove);
@@ -275,6 +429,10 @@ public class BedrockService {
     }
 
     // Helpers
+
+    private static boolean isApplicationProfileArn(String resourceArn) {
+        return resourceArn != null && resourceArn.contains(":" + APPLICATION_PROFILE_RESOURCE);
+    }
 
     private void applyPolicies(Guardrail guardrail, JsonNode request, String region) {
         guardrail.setTopicPolicy(renamePolicy(request.get("topicPolicyConfig")));

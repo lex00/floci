@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.cbor.CBORFactory;
 import com.fasterxml.jackson.dataformat.cbor.CBORGenerator;
 import com.google.gson.JsonParseException;
+import io.github.hectorvent.floci.services.arcregionswitch.ArcRegionSwitchJsonHandler;
 import io.github.hectorvent.floci.services.cloudwatch.metrics.CloudWatchMetricsJsonHandler;
 import io.github.hectorvent.floci.services.dynamodb.DynamoDbJsonHandler;
 import io.github.hectorvent.floci.services.dynamodb.DynamoDbStreamsJsonHandler;
@@ -31,6 +32,7 @@ import java.math.RoundingMode;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
@@ -63,6 +65,7 @@ public class AwsJsonCborController {
     private final StepFunctionsJsonHandler sfnJsonHandler;
     private final CloudWatchMetricsJsonHandler cloudWatchMetricsJsonHandler;
     private final MarketplaceEntitlementController marketplaceEntitlementController;
+    private final ArcRegionSwitchJsonHandler arcRegionSwitchJsonHandler;
 
     @Inject
     public AwsJsonCborController(ObjectMapper objectMapper, ResolvedServiceCatalog catalog,
@@ -73,7 +76,8 @@ public class AwsJsonCborController {
                                  KinesisJsonHandler kinesisJsonHandler,
                                  StepFunctionsJsonHandler sfnJsonHandler,
                                  CloudWatchMetricsJsonHandler cloudWatchMetricsJsonHandler,
-                                 MarketplaceEntitlementController marketplaceEntitlementController) {
+                                 MarketplaceEntitlementController marketplaceEntitlementController,
+                                 ArcRegionSwitchJsonHandler arcRegionSwitchJsonHandler) {
         this.objectMapper = objectMapper;
         this.catalog = catalog;
         this.regionResolver = regionResolver;
@@ -85,6 +89,7 @@ public class AwsJsonCborController {
         this.sfnJsonHandler = sfnJsonHandler;
         this.cloudWatchMetricsJsonHandler = cloudWatchMetricsJsonHandler;
         this.marketplaceEntitlementController = marketplaceEntitlementController;
+        this.arcRegionSwitchJsonHandler = arcRegionSwitchJsonHandler;
     }
 
 
@@ -104,7 +109,15 @@ public class AwsJsonCborController {
      * without booting Quarkus.
      */
     static byte[] nodeToSmithyCbor(JsonNode node) throws Exception {
-        return writeCbor(node, false);
+        return writeCbor(node, false, Set.of());
+    }
+
+    /**
+     * Same as {@link #nodeToSmithyCbor(JsonNode)}, also tagging the named members as timestamps,
+     * for a service whose timestamp members do not end in {@code Timestamp}.
+     */
+    static byte[] nodeToSmithyCbor(JsonNode node, Set<String> timestampFields) throws Exception {
+        return writeCbor(node, false, timestampFields);
     }
 
     /**
@@ -115,14 +128,15 @@ public class AwsJsonCborController {
      * newer smithy-rpc-v2-cbor protocol, and {@link #writeCborTimestamp} for why.
      */
     static byte[] nodeToLegacyCbor(JsonNode node) throws Exception {
-        return writeCbor(node, true);
+        return writeCbor(node, true, Set.of());
     }
 
-    private static byte[] writeCbor(JsonNode node, boolean legacyDialect) throws Exception {
+    private static byte[] writeCbor(JsonNode node, boolean legacyDialect, Set<String> timestampFields)
+            throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         CBORFactory factory = (CBORFactory) CBOR_MAPPER.getFactory();
         try (CBORGenerator gen = factory.createGenerator(out)) {
-            writeNodeToCbor(gen, node, false, legacyDialect);
+            writeNodeToCbor(gen, node, false, legacyDialect, timestampFields);
         }
         return out.toByteArray();
     }
@@ -137,14 +151,16 @@ public class AwsJsonCborController {
      * two wire conventions tag(1) uses - see {@link #nodeToSmithyCbor}/{@link #nodeToLegacyCbor}.
      */
     private static void writeNodeToCbor(CBORGenerator gen, JsonNode node, boolean numberIsTimestamp,
-            boolean legacyDialect) throws Exception {
+            boolean legacyDialect, Set<String> timestampFields) throws Exception {
         if (node.isObject()) {
             gen.writeStartObject();
             Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
             while (fields.hasNext()) {
                 Map.Entry<String, JsonNode> entry = fields.next();
                 gen.writeFieldName(entry.getKey());
-                writeNodeToCbor(gen, entry.getValue(), isTimestampField(entry.getKey()), legacyDialect);
+                writeNodeToCbor(gen, entry.getValue(),
+                        isTimestampField(entry.getKey()) || timestampFields.contains(entry.getKey()),
+                        legacyDialect, timestampFields);
             }
             gen.writeEndObject();
         } else if (node.isArray()) {
@@ -152,7 +168,7 @@ public class AwsJsonCborController {
             for (JsonNode item : node) {
                 // Propagate the timestamp context so every element of a timestamp list
                 // (e.g. CloudWatch GetMetricData MetricDataResults[].Timestamps) is tagged.
-                writeNodeToCbor(gen, item, numberIsTimestamp, legacyDialect);
+                writeNodeToCbor(gen, item, numberIsTimestamp, legacyDialect, timestampFields);
             }
             gen.writeEndArray();
         } else if (numberIsTimestamp && node.isNumber()) {
@@ -315,7 +331,7 @@ public class AwsJsonCborController {
             JsonNode responseNode = delegated.getEntity() instanceof JsonNode
                     ? (JsonNode) delegated.getEntity()
                     : objectMapper.valueToTree(delegated.getEntity());
-            byte[] cborBytes = nodeToSmithyCbor(responseNode);
+            byte[] cborBytes = nodeToSmithyCbor(responseNode, smithyTimestampFields(serviceId));
             String responseContentType = responseContentType(httpHeaders);
             return Response.status(delegated.getStatus())
                     .header("smithy-protocol", "rpc-v2-cbor")
@@ -493,8 +509,16 @@ public class AwsJsonCborController {
             case "states" -> sfnJsonHandler.handle(operation, request, region);
             case "monitoring" -> cloudWatchMetricsJsonHandler.handle(operation, request, region);
             case "marketplace" -> marketplaceEntitlementController.handle(operation, request, region);
+            case "arc-region-switch" -> arcRegionSwitchJsonHandler.handle(operation, request);
             default -> null;
         };
+    }
+
+    private Set<String> smithyTimestampFields(String serviceId) {
+        return catalog.byCborSdkServiceId(serviceId)
+                .filter(descriptor -> "arc-region-switch".equals(descriptor.externalKey()))
+                .map(descriptor -> ArcRegionSwitchJsonHandler.TIMESTAMP_FIELDS)
+                .orElse(Set.of());
     }
 
     private Response cborUnknownOperationError(String message, HttpHeaders httpHeaders) {

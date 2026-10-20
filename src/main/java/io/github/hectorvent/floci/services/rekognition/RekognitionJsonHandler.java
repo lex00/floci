@@ -19,15 +19,18 @@ public class RekognitionJsonHandler {
     private static final Logger LOG = Logger.getLogger(RekognitionJsonHandler.class);
     private final RekognitionService rekognitionService;
     private final RekognitionImageValidator imageValidator;
+    private final RekognitionCollectionService collectionService;
     @Inject
-    public RekognitionJsonHandler(RekognitionService rekognitionService, RekognitionImageValidator imageValidator) {
+    public RekognitionJsonHandler(RekognitionService rekognitionService, RekognitionImageValidator imageValidator,
+                                  RekognitionCollectionService collectionService) {
         this.rekognitionService = rekognitionService;
         this.imageValidator = imageValidator;
+        this.collectionService = collectionService;
     }
     /**
      * Dispatches Rekognition actions received via the AwsJson11Controller.
-     * Only sync image-analysis actions are implemented; face-collection persistence
-     * (CreateCollection/IndexFaces/SearchFaces), custom-model training (Projects/
+     * Sync image analysis, face collections and collection tagging are implemented; face
+     * indexing and search (IndexFaces/SearchFaces), custom-model training (Projects/
      * Datasets/ProjectVersions), live video (StreamProcessor), async video jobs
      * (the Start and Get pairs for Celebrity/Content/Face/Label/Person/Segment/Text
      * detection), and Face Liveness sessions are out of scope.
@@ -45,6 +48,13 @@ public class RekognitionJsonHandler {
                 yield rekognitionService.compareFaces(sourceKey);
             }
             case "DetectModerationLabels" -> rekognitionService.detectModerationLabels(validImage(action, request, region));
+            case "CreateCollection" -> Response.ok(collectionService.createCollection(request, region)).build();
+            case "DescribeCollection" -> Response.ok(collectionService.describeCollection(request, region)).build();
+            case "ListCollections" -> Response.ok(collectionService.listCollections(request, region)).build();
+            case "DeleteCollection" -> Response.ok(collectionService.deleteCollection(request, region)).build();
+            case "TagResource" -> Response.ok(collectionService.tagResource(request, region)).build();
+            case "UntagResource" -> Response.ok(collectionService.untagResource(request, region)).build();
+            case "ListTagsForResource" -> Response.ok(collectionService.listTags(request, region)).build();
             default -> Response.status(400)
                     .entity(new AwsErrorResponse("UnknownOperationException",
                             "Unknown operation: RekognitionService." + action))

@@ -422,6 +422,12 @@ floci:
       enabled: true
     rekognition:
       enabled: true
+    kendra:
+      enabled: true
+    qbusiness:
+      enabled: true
+    location:
+      enabled: true
     translate:
       enabled: true
     pricing:
@@ -432,6 +438,10 @@ floci:
       enabled: true
       emit-mode: off
     bcm-pricing-calculator:
+      enabled: true
+    opensearchserverless:
+      enabled: true
+    arcregionswitch:
       enabled: true
     timestream-influxdb:
       enabled: true
@@ -490,6 +500,12 @@ floci:
     rum:
       enabled: true
     networkfirewall:
+      enabled: true
+    appstream:
+      enabled: true
+    workspaces:
+      enabled: true
+    workspacesweb:
       enabled: true
     servicecatalog:
       enabled: true
@@ -580,4 +596,10 @@ floci:
     datazone:
       enabled: true
     dms:
+      enabled: true
+    codecommit:
+      enabled: true
+    codeconnections:
+      enabled: true
+    ecr-public:
       enabled: true
