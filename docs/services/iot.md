@@ -67,6 +67,15 @@ Current limitations:
 - A custom domain does not change where the broker listens or what `DescribeEndpoint` returns (see [Endpoint address](#endpoint-address)), and pointing DNS at the emulator is outside its scope.
 - Server certificate ARNs are stored as given and reported `VALID`; they are not checked against ACM.
 
+## Billing Groups, Role Aliases and Topic Rule Destinations
+
+Status: control plane only.
+
+- Billing groups: `CreateBillingGroup`, `DescribeBillingGroup`, `UpdateBillingGroup` (with `expectedVersion`), `DeleteBillingGroup` and `ListBillingGroups` with `namePrefixFilter`. Repeating `CreateBillingGroup` with the same properties returns the existing group.
+- Role aliases: `CreateRoleAlias`, `DescribeRoleAlias`, `UpdateRoleAlias`, `DeleteRoleAlias` and `ListRoleAliases`. `credentialDurationSeconds` defaults to 3600 and accepts 900 to 43200. The credentials provider endpoint does not vend credentials for an alias.
+- Topic rule destinations: `CreateTopicRuleDestination`, `GetTopicRuleDestination`, `UpdateTopicRuleDestination`, `DeleteTopicRuleDestination` and `ListTopicRuleDestinations`. A VPC or InfluxDB destination is `ENABLED` on create. An HTTP destination waits in `IN_PROGRESS`, since Floci sends no confirmation request, until `UpdateTopicRuleDestination` sets it `ENABLED`.
+- Billing groups and role aliases take tags through `TagResource`, `UntagResource` and `ListTagsForResource`.
+
 ## Authorizers
 
 Status: control plane, `TestInvokeAuthorizer` and MQTT `CONNECT` enforcement.

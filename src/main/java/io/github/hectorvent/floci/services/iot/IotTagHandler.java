@@ -14,13 +14,15 @@ public class IotTagHandler implements TagHandler {
     private final IotService iotService;
     private final IotDomainConfigurationService domainConfigurationService;
     private final IotAuthorizerService authorizerService;
+    private final IotBillingGroupService billingGroupService;
 
     @Inject
     public IotTagHandler(IotService iotService, IotDomainConfigurationService domainConfigurationService,
-                         IotAuthorizerService authorizerService) {
+                         IotAuthorizerService authorizerService, IotBillingGroupService billingGroupService) {
         this.iotService = iotService;
         this.domainConfigurationService = domainConfigurationService;
         this.authorizerService = authorizerService;
+        this.billingGroupService = billingGroupService;
     }
 
     @Override
@@ -35,6 +37,9 @@ public class IotTagHandler implements TagHandler {
 
     @Override
     public Map<String, String> listTags(String region, String arn) {
+        if (IotBillingGroupService.owns(arn)) {
+            return billingGroupService.listTagsForResource(arn);
+        }
         if (isAuthorizer(arn)) {
             return authorizerService.listTagsForResource(arn);
         }
@@ -45,7 +50,9 @@ public class IotTagHandler implements TagHandler {
 
     @Override
     public void tagResource(String region, String arn, Map<String, String> tags) {
-        if (isAuthorizer(arn)) {
+        if (IotBillingGroupService.owns(arn)) {
+            billingGroupService.tagResource(arn, tags);
+        } else if (isAuthorizer(arn)) {
             authorizerService.tagResource(arn, tags);
         } else if (isDomainConfiguration(arn)) {
             domainConfigurationService.tagResource(arn, tags);
@@ -56,7 +63,9 @@ public class IotTagHandler implements TagHandler {
 
     @Override
     public void untagResource(String region, String arn, List<String> tagKeys) {
-        if (isAuthorizer(arn)) {
+        if (IotBillingGroupService.owns(arn)) {
+            billingGroupService.untagResource(arn, tagKeys);
+        } else if (isAuthorizer(arn)) {
             authorizerService.untagResource(arn, tagKeys);
         } else if (isDomainConfiguration(arn)) {
             domainConfigurationService.untagResource(arn, tagKeys);
@@ -65,7 +74,10 @@ public class IotTagHandler implements TagHandler {
         }
     }
 
-    /** Domain configurations and authorizers have their own services; every other IoT resource is tagged through IotService. */
+    /**
+     * Domain configurations, authorizers, billing groups and role aliases have their own services;
+     * every other IoT resource is tagged through IotService.
+     */
     private static boolean isDomainConfiguration(String arn) {
         return arn != null && arn.contains(":domainconfiguration/");
     }
