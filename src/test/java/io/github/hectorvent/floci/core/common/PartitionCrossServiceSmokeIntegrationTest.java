@@ -46,7 +46,7 @@ class PartitionCrossServiceSmokeIntegrationTest {
             "ecr", "ecs", "efs", "eks", "elasticache", "elasticbeanstalk", "elbv2", "emr", "emrserverless",
             "eventbridge", "firehose", "fis", "glue", "guardduty", "iot", "kinesis", "kinesisanalytics", "lambda",
             "lambdamicrovms", "lambdaweb", "medialive", "mediapackage", "memorydb", "msk", "mwaa", "networkfirewall",
-            "oam", "opensearch", "organizations", "pipes", "ram", "rds", "redshift", "redshiftserverless",
+            "oam", "opensearch", "opensearchserverless", "organizations", "pipes", "ram", "rds", "redshift", "redshiftserverless",
             "resourceexplorer2", "route53", "route53resolver",
             "s3tables", "s3vectors", "sagemaker", "scheduler", "secretsmanager", "servicequotas", "ses", "sns", "sqs",
             "stepfunctions", "timestreaminfluxdb", "transfer", "verifiedpermissions", "wafv2");
@@ -1397,6 +1397,30 @@ class PartitionCrossServiceSmokeIntegrationTest {
                 "{\"SecretId\":\"READONLY-InfluxDB-auth-parameters-" + id
                         + "\",\"ForceDeleteWithoutRecovery\":true}").when().post("/"));
         PartitionMatrix.assertArnIn(partitionCase, created.jsonPath().getString("arn"));
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void openSearchServerlessCollectionArnAndEndpointHost(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "aoss");
+        String target = "OpenSearchServerless.";
+        String name = unique("smk", partitionCase);
+        json10(region, "aoss", target + "CreateSecurityPolicy",
+                "{\"name\":\"" + name + "\",\"type\":\"encryption\",\"policy\":"
+                        + "\"{\\\"Rules\\\":[{\\\"ResourceType\\\":\\\"collection\\\",\\\"Resource\\\":"
+                        + "[\\\"collection/" + name + "\\\"]}],\\\"AWSOwnedKey\\\":true}\"}")
+        .when().post("/").then().statusCode(200);
+        cleanup.register(() -> json10(region, "aoss", target + "DeleteSecurityPolicy",
+                "{\"name\":\"" + name + "\",\"type\":\"encryption\"}").when().post("/"));
+        String id = json10(region, "aoss", target + "CreateCollection", "{\"name\":\"" + name + "\"}")
+        .when().post("/").then().statusCode(200).extract().jsonPath().getString("createCollectionDetail.id");
+        cleanup.register(() -> json10(region, "aoss", target + "DeleteCollection",
+                "{\"id\":\"" + id + "\"}").when().post("/"));
+        Response read = json10(region, "aoss", target + "BatchGetCollection", "{\"ids\":[\"" + id + "\"]}")
+        .when().post("/").then().statusCode(200).extract().response();
+        PartitionMatrix.assertArnIn(partitionCase, read.jsonPath().getString("collectionDetails[0].arn"));
+        assertRegionalHostIn(partitionCase,
+                URI.create(read.jsonPath().getString("collectionDetails[0].collectionEndpoint")).getHost());
     }
 
     @ParameterizedTest

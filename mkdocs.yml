@@ -180,6 +180,7 @@ nav:
     - EKS: services/eks.md
     - MWAA: services/mwaa.md
     - OpenSearch: services/opensearch.md
+    - OpenSearch Serverless: services/opensearch-serverless.md
     - EC2: services/ec2.md
     - Lightsail: services/lightsail.md
     - App Runner: services/apprunner.md

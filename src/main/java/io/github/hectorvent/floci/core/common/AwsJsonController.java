@@ -15,6 +15,7 @@ import io.github.hectorvent.floci.services.dynamodb.DynamoDbResponses;
 import io.github.hectorvent.floci.services.dynamodb.DynamoDbStreamsJsonHandler;
 import io.github.hectorvent.floci.services.marketplace.MarketplaceJsonHandler;
 import io.github.hectorvent.floci.services.networkfirewall.NetworkFirewallJsonHandler;
+import io.github.hectorvent.floci.services.opensearchserverless.OpenSearchServerlessJsonHandler;
 import io.github.hectorvent.floci.services.sns.SnsJsonHandler;
 import io.github.hectorvent.floci.services.sqs.SqsJsonHandler;
 import io.github.hectorvent.floci.services.stepfunctions.StepFunctionsJsonHandler;
@@ -60,6 +61,7 @@ public class AwsJsonController {
     private final BcmPricingCalculatorJsonHandler bcmPricingCalculatorJsonHandler;
     private final TimestreamInfluxDbJsonHandler timestreamInfluxDbJsonHandler;
     private final AppRunnerJsonHandler appRunnerJsonHandler;
+    private final OpenSearchServerlessJsonHandler openSearchServerlessJsonHandler;
 
     @Inject
     public AwsJsonController(ObjectMapper objectMapper, ResolvedServiceCatalog catalog,
@@ -76,7 +78,8 @@ public class AwsJsonController {
                              VerifiedPermissionsJsonHandler verifiedPermissionsJsonHandler,
                              BcmPricingCalculatorJsonHandler bcmPricingCalculatorJsonHandler,
                              TimestreamInfluxDbJsonHandler timestreamInfluxDbJsonHandler,
-                             AppRunnerJsonHandler appRunnerJsonHandler) {
+                             AppRunnerJsonHandler appRunnerJsonHandler,
+                             OpenSearchServerlessJsonHandler openSearchServerlessJsonHandler) {
         this.objectMapper = objectMapper;
         this.strictBodyReader = objectMapper.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         this.catalog = catalog;
@@ -95,6 +98,7 @@ public class AwsJsonController {
         this.bcmPricingCalculatorJsonHandler = bcmPricingCalculatorJsonHandler;
         this.timestreamInfluxDbJsonHandler = timestreamInfluxDbJsonHandler;
         this.appRunnerJsonHandler = appRunnerJsonHandler;
+        this.openSearchServerlessJsonHandler = openSearchServerlessJsonHandler;
     }
 
     /**
@@ -181,6 +185,7 @@ public class AwsJsonController {
                 case "bcm-pricing-calculator" -> bcmPricingCalculatorJsonHandler.handle(action, request, region);
                 case "timestream-influxdb" -> timestreamInfluxDbJsonHandler.handle(action, request, region);
                 case "apprunner" -> appRunnerJsonHandler.handle(action, request, region);
+                case "aoss" -> openSearchServerlessJsonHandler.handle(action, request, region);
                 default -> null;
             };
             // catalog.matchTarget is protocol-agnostic: a JSON 1.1 target

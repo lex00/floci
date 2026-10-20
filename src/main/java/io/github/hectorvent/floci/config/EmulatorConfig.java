@@ -827,6 +827,7 @@ public interface EmulatorConfig {
         MediaPackageServiceConfig mediapackage();
         MediaPackageV2ServiceConfig mediapackagev2();
         BcmPricingCalculatorServiceConfig bcmPricingCalculator();
+        OpenSearchServerlessServiceConfig opensearchserverless();
         TimestreamInfluxDbServiceConfig timestreamInfluxdb();
         ConfigServiceConfig configservice();
         CloudTrailServiceConfig cloudtrail();
@@ -2687,6 +2688,11 @@ public interface EmulatorConfig {
     }
 
     interface BcmPricingCalculatorServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface OpenSearchServerlessServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }

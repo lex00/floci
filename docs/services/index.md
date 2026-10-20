@@ -94,6 +94,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [SES](ses.md) | `POST /` with `Action=` param | Query | 16 |
 | [SES v2](ses.md#v2) | `/v2/email/*` | REST JSON | 10 |
 | [OpenSearch](opensearch.md) | `/2021-01-01/opensearch/...` | REST JSON | 24 |
+| [OpenSearch Serverless](opensearch-serverless.md) | `POST /` + `X-Amz-Target: OpenSearchServerless.*` | JSON 1.0 | 18 |
 | [AppConfig](appconfig.md) | `/applications/...`, `/deploymentstrategies/...` | REST JSON | 16 |
 | [AppConfigData](appconfig.md#data-plane) | `/configurationsessions`, `/configuration` | REST JSON | 2 |
 | [AppSync](appsync.md) | `/v1/apis/...` | REST JSON | 33 |

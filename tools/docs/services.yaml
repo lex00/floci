@@ -30,6 +30,10 @@ services:
     doc: docs/services/apprunner.md
     sources:
       - { path: src/main/java/io/github/hectorvent/floci/services/apprunner/AppRunnerJsonHandler.java, mode: switch }
+  - service: opensearchserverless
+    doc: docs/services/opensearch-serverless.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/opensearchserverless/OpenSearchServerlessJsonHandler.java, mode: switch }
   - service: athena
     doc: docs/services/athena.md
     sources:

@@ -433,6 +433,8 @@ floci:
       emit-mode: off
     bcm-pricing-calculator:
       enabled: true
+    opensearchserverless:
+      enabled: true
     timestream-influxdb:
       enabled: true
       mock: true
