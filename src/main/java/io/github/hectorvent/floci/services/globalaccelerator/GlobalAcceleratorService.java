@@ -8,6 +8,8 @@ import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
 import io.github.hectorvent.floci.services.globalaccelerator.model.Accelerator;
 import io.github.hectorvent.floci.services.globalaccelerator.model.AcceleratorAttributes;
+import io.github.hectorvent.floci.services.globalaccelerator.model.AttachmentResource;
+import io.github.hectorvent.floci.services.globalaccelerator.model.CrossAccountAttachment;
 import io.github.hectorvent.floci.services.globalaccelerator.model.EndpointDescription;
 import io.github.hectorvent.floci.services.globalaccelerator.model.EndpointGroup;
 import io.github.hectorvent.floci.services.globalaccelerator.model.IpSet;
@@ -54,6 +56,7 @@ public class GlobalAcceleratorService {
     private static final String HEALTH_STATE_HEALTHY = "HEALTHY";
     private static final String LISTENER_SEGMENT = "/listener/";
     private static final String ENDPOINT_GROUP_SEGMENT = "/endpoint-group/";
+    private static final String ATTACHMENT_PREFIX = "attachment/";
     private static final String DNS_SUFFIX = ".awsglobalaccelerator.com";
     private static final String DUAL_STACK_DNS_SUFFIX = ".dualstack.awsglobalaccelerator.com";
 
@@ -75,6 +78,7 @@ public class GlobalAcceleratorService {
     private final StorageBackend<String, Listener> listeners;
     private final StorageBackend<String, EndpointGroup> endpointGroups;
     private final StorageBackend<String, Map<String, String>> tags;
+    private final StorageBackend<String, CrossAccountAttachment> attachments;
     private final RegionResolver regionResolver;
 
     @Inject
@@ -90,6 +94,9 @@ public class GlobalAcceleratorService {
                 new TypeReference<Map<String, EndpointGroup>>() {});
         this.tags = storageFactory.create("globalaccelerator", "globalaccelerator-tags.json",
                 new TypeReference<Map<String, Map<String, String>>>() {});
+        this.attachments = storageFactory.create("globalaccelerator",
+                "globalaccelerator-cross-account-attachments.json",
+                new TypeReference<Map<String, CrossAccountAttachment>>() {});
         this.regionResolver = regionResolver;
     }
 
@@ -394,6 +401,90 @@ public class GlobalAcceleratorService {
         endpointGroups.put(endpointGroupArn, group);
     }
 
+    public CrossAccountAttachment createCrossAccountAttachment(String name, List<String> principals,
+                                                               List<AttachmentResource> resources,
+                                                               Map<String, String> requestTags) {
+        requireArgument(name, "Name");
+        validateAttachmentResources(resources);
+        long now = Instant.now().getEpochSecond();
+        CrossAccountAttachment attachment = new CrossAccountAttachment();
+        attachment.setAttachmentArn(regionResolver.buildArn("globalaccelerator", "",
+                ATTACHMENT_PREFIX + UUID.randomUUID()));
+        attachment.setName(name);
+        attachment.setPrincipals(principals);
+        attachment.setResources(resources);
+        attachment.setCreatedTime(now);
+        attachment.setLastModifiedTime(now);
+        attachments.put(attachment.getAttachmentArn(), attachment);
+        tags.put(attachment.getAttachmentArn(),
+                requestTags != null ? new LinkedHashMap<>(requestTags) : new LinkedHashMap<>());
+        LOG.infov("Created Global Accelerator cross-account attachment: {0}", attachment.getAttachmentArn());
+        return attachment;
+    }
+
+    public CrossAccountAttachment describeCrossAccountAttachment(String attachmentArn) {
+        requireArgument(attachmentArn, "AttachmentArn");
+        return attachments.get(attachmentArn)
+                .orElseThrow(() -> new AwsException("AttachmentNotFoundException",
+                        "Attachment " + attachmentArn + " does not exist.", 400));
+    }
+
+    public CrossAccountAttachment updateCrossAccountAttachment(String attachmentArn, String name,
+                                                               List<String> addPrincipals,
+                                                               List<String> removePrincipals,
+                                                               List<AttachmentResource> addResources,
+                                                               List<AttachmentResource> removeResources) {
+        CrossAccountAttachment attachment = describeCrossAccountAttachment(attachmentArn);
+        if (name != null) {
+            attachment.setName(name);
+        }
+        List<String> principals = new ArrayList<>(attachment.getPrincipals());
+        if (removePrincipals != null) {
+            principals.removeAll(removePrincipals);
+        }
+        if (addPrincipals != null) {
+            addPrincipals.stream().filter(principal -> !principals.contains(principal)).forEach(principals::add);
+        }
+        validateAttachmentResources(addResources);
+        List<AttachmentResource> resources = new ArrayList<>(attachment.getResources());
+        if (removeResources != null) {
+            resources.removeAll(removeResources);
+        }
+        if (addResources != null) {
+            addResources.stream().filter(resource -> !resources.contains(resource)).forEach(resources::add);
+        }
+        attachment.setPrincipals(principals);
+        attachment.setResources(resources);
+        attachment.setLastModifiedTime(Instant.now().getEpochSecond());
+        attachments.put(attachmentArn, attachment);
+        return attachment;
+    }
+
+    public void deleteCrossAccountAttachment(String attachmentArn) {
+        describeCrossAccountAttachment(attachmentArn);
+        attachments.delete(attachmentArn);
+        tags.delete(attachmentArn);
+        LOG.infov("Deleted Global Accelerator cross-account attachment: {0}", attachmentArn);
+    }
+
+    public List<CrossAccountAttachment> listCrossAccountAttachments() {
+        return attachments.scan(key -> true);
+    }
+
+    private static void validateAttachmentResources(List<AttachmentResource> resources) {
+        if (resources == null) {
+            return;
+        }
+        for (AttachmentResource resource : resources) {
+            boolean endpoint = resource.getEndpointId() != null && !resource.getEndpointId().isBlank();
+            boolean cidr = resource.getCidr() != null && !resource.getCidr().isBlank();
+            if (endpoint == cidr) {
+                throw new AwsException("InvalidArgumentException",
+                        "Each resource must specify either an EndpointId or a Cidr.", 400);
+            }
+        }
+    }
+
     public Map<String, String> listTagsForResource(String resourceArn) {
         requireResourceExists(resourceArn);
         return tags.get(resourceArn).orElseGet(LinkedHashMap::new);
@@ -429,7 +520,9 @@ public class GlobalAcceleratorService {
 
     private void requireResourceExists(String resourceArn) {
         requireArgument(resourceArn, "ResourceArn");
-        if (resourceArn.contains(ENDPOINT_GROUP_SEGMENT)) {
+        if (resourceArn.contains(":" + ATTACHMENT_PREFIX)) {
+            describeCrossAccountAttachment(resourceArn);
+        } else if (resourceArn.contains(ENDPOINT_GROUP_SEGMENT)) {
             describeEndpointGroup(resourceArn);
         } else if (resourceArn.contains(LISTENER_SEGMENT)) {
             describeListener(resourceArn);
