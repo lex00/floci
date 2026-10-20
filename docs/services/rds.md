@@ -135,6 +135,9 @@ RDS Data API (`rds-data`) is documented separately because it uses REST JSON rou
 | `DescribeDBClusterSnapshotAttributes` | Return the `restore` attribute of a cluster snapshot |
 | `ModifyDBClusterSnapshotAttribute` | Add or remove `restore` values (account ids or `all`) on a cluster snapshot |
 | `StartExportTask` | Start an export task for a DB snapshot or DB cluster snapshot; see [Exporting snapshots to Amazon S3](#exporting-snapshots-to-amazon-s3) |
+| `StartDBInstanceAutomatedBackupsReplication` | Called in the destination region: replicate a DB instance's automated backups from its own region, `replicating` at once |
+| `StopDBInstanceAutomatedBackupsReplication` | Called in the destination region: stop the replication and remove the replicated backups |
+| `DescribeDBInstanceAutomatedBackups` | List the region's replicated automated backups by ARN, instance identifier or resource id |
 | `DescribeExportTasks` | List export tasks, by `ExportTaskIdentifier`, `SourceArn`, `SourceType` and the `export-task-identifier`, `s3-bucket`, `source-arn` and `status` filters |
 | `CancelExportTask` | Cancel a running export task; what it already wrote stays in the bucket |
 | `DescribeGlobalClusters` | List the account's global clusters with their primary and secondary members; see [Global clusters](#global-clusters) |

@@ -66,7 +66,8 @@ class RdsQueryHandlerTest {
         docDbHandler = mock(DocDbQueryHandler.class);
         neptuneHandler = mock(NeptuneQueryHandler.class);
         exportTaskService = mock(RdsExportTaskService.class);
-        handler = new RdsQueryHandler(service, exportTaskService, config, docDbHandler, neptuneHandler);
+        handler = new RdsQueryHandler(service, exportTaskService, config, docDbHandler, neptuneHandler,
+                mock(RdsAutomatedBackupReplicationService.class));
     }
 
     @ParameterizedTest

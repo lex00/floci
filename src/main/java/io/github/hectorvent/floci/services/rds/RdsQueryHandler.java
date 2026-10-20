@@ -16,6 +16,7 @@ import io.github.hectorvent.floci.services.rds.model.DbClusterParameterGroup;
 import io.github.hectorvent.floci.services.rds.model.DbClusterSnapshot;
 import io.github.hectorvent.floci.services.rds.model.DbEndpoint;
 import io.github.hectorvent.floci.services.rds.model.DbInstance;
+import io.github.hectorvent.floci.services.rds.model.DbInstanceAutomatedBackup;
 import io.github.hectorvent.floci.services.rds.model.DbInstanceScalingChanges;
 import io.github.hectorvent.floci.services.rds.model.DbInstanceSettings;
 import io.github.hectorvent.floci.services.rds.model.DbInstanceStatus;
@@ -68,10 +69,13 @@ public class RdsQueryHandler {
     private final DocDbQueryHandler docDbQueryHandler;
     private final NeptuneQueryHandler neptuneQueryHandler;
     private final EmulatorConfig config;
+    private final RdsAutomatedBackupReplicationService backupReplicationService;
 
     @Inject
     public RdsQueryHandler(RdsService service, RdsExportTaskService exportTaskService, EmulatorConfig config,
-                           DocDbQueryHandler docDbQueryHandler, NeptuneQueryHandler neptuneQueryHandler) {
+                           DocDbQueryHandler docDbQueryHandler, NeptuneQueryHandler neptuneQueryHandler,
+                           RdsAutomatedBackupReplicationService backupReplicationService) {
+        this.backupReplicationService = backupReplicationService;
         this.exportTaskService = exportTaskService;
         this.docDbQueryHandler = docDbQueryHandler;
         this.neptuneQueryHandler = neptuneQueryHandler;
@@ -183,6 +187,11 @@ public class RdsQueryHandler {
                 case "DescribeDBClusterSnapshotAttributes" -> handleDescribeDbClusterSnapshotAttributes(params, region);
                 case "ModifyDBClusterSnapshotAttribute" -> handleModifyDbClusterSnapshotAttribute(params, region);
                 case "StartExportTask" -> handleStartExportTask(params, region);
+                case "StartDBInstanceAutomatedBackupsReplication" ->
+                        handleStartDbInstanceAutomatedBackupsReplication(params, region);
+                case "StopDBInstanceAutomatedBackupsReplication" ->
+                        handleStopDbInstanceAutomatedBackupsReplication(params, region);
+                case "DescribeDBInstanceAutomatedBackups" -> handleDescribeDbInstanceAutomatedBackups(params, region);
                 case "DescribeExportTasks" -> handleDescribeExportTasks(params, region);
                 case "CancelExportTask" -> handleCancelExportTask(params, region);
                 case "DescribeGlobalClusters" -> handleDescribeGlobalClusters(params);
@@ -1990,6 +1999,87 @@ public class RdsQueryHandler {
         }
     }
 
+    private Response handleStartDbInstanceAutomatedBackupsReplication(MultivaluedMap<String, String> params,
+                                                                      String region) {
+        DbInstanceAutomatedBackup backup = backupReplicationService.start(region,
+                params.getFirst("SourceDBInstanceArn"), parseIntegerParam(params, "BackupRetentionPeriod"),
+                params.getFirst("KmsKeyId"));
+        return Response.ok(AwsQueryResponse.envelope("StartDBInstanceAutomatedBackupsReplication",
+                AwsNamespaces.RDS, automatedBackupXml(backup))).build();
+    }
+
+    private Response handleStopDbInstanceAutomatedBackupsReplication(MultivaluedMap<String, String> params,
+                                                                     String region) {
+        DbInstanceAutomatedBackup backup = backupReplicationService.stop(region,
+                params.getFirst("SourceDBInstanceArn"));
+        return Response.ok(AwsQueryResponse.envelope("StopDBInstanceAutomatedBackupsReplication",
+                AwsNamespaces.RDS, automatedBackupXml(backup))).build();
+    }
+
+    private Response handleDescribeDbInstanceAutomatedBackups(MultivaluedMap<String, String> params,
+                                                              String region) {
+        String identifier = params.getFirst("DBInstanceIdentifier");
+        if (identifier == null) {
+            identifier = extractRdsFilterValue(params, "db-instance-id");
+        }
+        String resourceId = params.getFirst("DbiResourceId");
+        if (resourceId == null) {
+            resourceId = extractRdsFilterValue(params, "dbi-resource-id");
+        }
+        List<DbInstanceAutomatedBackup> found = backupReplicationService.describe(region,
+                params.getFirst("DBInstanceAutomatedBackupsArn"), identifier, resourceId);
+        XmlBuilder xml = new XmlBuilder().start("DBInstanceAutomatedBackups");
+        for (DbInstanceAutomatedBackup backup : found) {
+            xml.raw(automatedBackupXml(backup));
+        }
+        xml.end("DBInstanceAutomatedBackups");
+        return Response.ok(AwsQueryResponse.envelope("DescribeDBInstanceAutomatedBackups", AwsNamespaces.RDS,
+                xml.build())).build();
+    }
+
+    private String automatedBackupXml(DbInstanceAutomatedBackup b) {
+        XmlBuilder xml = new XmlBuilder().start("DBInstanceAutomatedBackup")
+                .elem("DBInstanceArn", b.getDbInstanceArn())
+                .elem("DbiResourceId", b.getDbiResourceId())
+                .elem("Region", b.getSourceRegion())
+                .elem("DBInstanceIdentifier", b.getDbInstanceIdentifier())
+                .start("RestoreWindow")
+                .elem("EarliestTime", b.getRestoreWindowEarliest() != null ? b.getRestoreWindowEarliest().toString() : null)
+                .elem("LatestTime", Instant.now().toString())
+                .end("RestoreWindow")
+                .elem("AllocatedStorage", b.getAllocatedStorage())
+                .elem("Status", b.getStatus())
+                .elem("Port", b.getPort())
+                .elem("AvailabilityZone", b.getAvailabilityZone())
+                .elem("InstanceCreateTime", b.getInstanceCreateTime() != null ? b.getInstanceCreateTime().toString() : null)
+                .elem("MasterUsername", b.getMasterUsername())
+                .elem("Engine", b.getEngine())
+                .elem("EngineVersion", b.getEngineVersion())
+                .elem("Encrypted", b.isEncrypted())
+                .elem("StorageType", DbInstance.DEFAULT_STORAGE_TYPE)
+                .elem("KmsKeyId", b.getKmsKeyId())
+                .elem("IAMDatabaseAuthenticationEnabled", b.isIamDatabaseAuthenticationEnabled())
+                .elem("BackupRetentionPeriod", b.getBackupRetentionPeriod())
+                .elem("DBInstanceAutomatedBackupsArn", b.getDbInstanceAutomatedBackupsArn())
+                .elem("BackupTarget", "region");
+        return xml.end("DBInstanceAutomatedBackup").build();
+    }
+
+    /** The source instance's view of its cross-region automated backup replications. */
+    private String automatedBackupReplicationsXml(DbInstance i) {
+        List<DbInstanceAutomatedBackup> replications = backupReplicationService.replicationsOf(i.getDbInstanceArn());
+        if (replications.isEmpty()) {
+            return "";
+        }
+        XmlBuilder xml = new XmlBuilder().start("DBInstanceAutomatedBackupsReplications");
+        for (DbInstanceAutomatedBackup replication : replications) {
+            xml.start("DBInstanceAutomatedBackupsReplication")
+                    .elem("DBInstanceAutomatedBackupsArn", replication.getDbInstanceAutomatedBackupsArn())
+                    .end("DBInstanceAutomatedBackupsReplication");
+        }
+        return xml.end("DBInstanceAutomatedBackupsReplications").build();
+    }
+
     private Response handleStartExportTask(MultivaluedMap<String, String> params, String region) {
         String exportTaskIdentifier = params.getFirst("ExportTaskIdentifier");
         String sourceArn = params.getFirst("SourceArn");
@@ -2895,6 +2985,7 @@ public class RdsQueryHandler {
            .raw(dbSubnetGroupXml(dbSubnetGroupForInstance(i)))
            .elem("DbiResourceId", i.getDbiResourceId())
            .elem("DBInstanceArn", i.getDbInstanceArn())
+           .raw(automatedBackupReplicationsXml(i))
            .elem("MonitoringInterval", i.getMonitoringInterval())
            .elem("PerformanceInsightsEnabled", i.isPerformanceInsightsEnabled())
            .elem("EngineLifecycleSupport", i.getEngineLifecycleSupport());
