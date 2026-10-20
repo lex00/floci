@@ -52,6 +52,28 @@ public class TransferHandler {
                 case "TagResource"        -> tagResource(request);
                 case "UntagResource"      -> untagResource(request);
                 case "ListTagsForResource" -> listTagsForResource(request);
+                case "CreateConnector"    -> idResponse("ConnectorId",
+                        service.createConnector(request, parseTags(request.path("Tags"))).path("ConnectorId"));
+                case "DescribeConnector"  -> wrapped("Connector",
+                        service.describeConnector(request.path("ConnectorId").asText(null)));
+                case "UpdateConnector"    -> idResponse("ConnectorId",
+                        service.updateConnector(request).path("ConnectorId"));
+                case "DeleteConnector"    -> {
+                    service.deleteConnector(request.path("ConnectorId").asText(null));
+                    yield Response.ok(objectMapper.createObjectNode()).build();
+                }
+                case "ListConnectors"     -> listed("Connectors", service.listConnectors(),
+                        List.of("Arn", "ConnectorId", "Url"));
+                case "CreateWorkflow"     -> idResponse("WorkflowId",
+                        service.createWorkflow(request, parseTags(request.path("Tags"))).path("WorkflowId"));
+                case "DescribeWorkflow"   -> wrapped("Workflow",
+                        service.describeWorkflow(request.path("WorkflowId").asText(null)));
+                case "DeleteWorkflow"     -> {
+                    service.deleteWorkflow(request.path("WorkflowId").asText(null));
+                    yield Response.ok(objectMapper.createObjectNode()).build();
+                }
+                case "ListWorkflows"      -> listed("Workflows", service.listWorkflows(),
+                        List.of("WorkflowId", "Description", "Arn"));
                 default -> JsonErrorResponseUtils.createUnknownOperationErrorResponse("AmazonTransfer." + action);
             };
         } catch (AwsException e) {
@@ -59,6 +81,31 @@ public class TransferHandler {
         } catch (Exception e) {
             return JsonErrorResponseUtils.createErrorResponse(e);
         }
+    }
+
+    // ── Connector and workflow responses ──────────────────────────────────────
+
+    private Response idResponse(String member, JsonNode id) {
+        ObjectNode resp = objectMapper.createObjectNode();
+        resp.set(member, id);
+        return Response.ok(resp).build();
+    }
+
+    private Response wrapped(String member, ObjectNode resource) {
+        ObjectNode resp = objectMapper.createObjectNode();
+        resp.set(member, resource);
+        return Response.ok(resp).build();
+    }
+
+    /** Lists every resource; a single page, so no NextToken is returned. */
+    private Response listed(String member, List<ObjectNode> resources, List<String> summaryMembers) {
+        ObjectNode resp = objectMapper.createObjectNode();
+        ArrayNode items = resp.putArray(member);
+        for (ObjectNode resource : resources) {
+            ObjectNode item = items.addObject();
+            summaryMembers.stream().filter(resource::has).forEach(name -> item.set(name, resource.get(name)));
+        }
+        return Response.ok(resp).build();
     }
 
     // ── Server handlers ───────────────────────────────────────────────────────

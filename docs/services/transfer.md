@@ -37,13 +37,32 @@ AWS Transfer Family managed file transfer server management. This implementation
 | `ImportSshPublicKey` | Attach an SSH public key to a user |
 | `DeleteSshPublicKey` | Remove an SSH public key from a user |
 
+### Connectors
+
+| Action | Description |
+|---|---|
+| `CreateConnector` | Create an AS2 or SFTP connector, `ACTIVE` at once |
+| `DescribeConnector` | Get a connector's configuration and tags |
+| `UpdateConnector` | Update the members the request names |
+| `DeleteConnector` | Delete a connector |
+| `ListConnectors` | List connectors |
+
+### Workflows
+
+| Action | Description |
+|---|---|
+| `CreateWorkflow` | Create a workflow of steps and exception steps |
+| `DescribeWorkflow` | Get a workflow's steps and tags |
+| `DeleteWorkflow` | Delete a workflow |
+| `ListWorkflows` | List workflows |
+
 ### Tagging
 
 | Action | Description |
 |---|---|
-| `TagResource` | Add or update tags on a server or user |
-| `UntagResource` | Remove tags from a server or user |
-| `ListTagsForResource` | List tags for a server or user |
+| `TagResource` | Add or update tags on a server, user, connector or workflow |
+| `UntagResource` | Remove tags from a server, user, connector or workflow |
+| `ListTagsForResource` | List tags for a server, user, connector or workflow |
 
 ## Configuration
 

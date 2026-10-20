@@ -35,6 +35,9 @@ those subnets actually have. No data is migrated: the resources are control-plan
 | `DeleteReplicationTask` | Deletes a replication task that is not running. |
 | `StartReplicationTask` | Moves a task to `running`. |
 | `StopReplicationTask` | Moves a running task to `stopped`. |
+| `ImportCertificate` | Import a PEM certificate, read for its validity window, signing algorithm and key length, or an Oracle wallet |
+| `DescribeCertificates` | List certificates by `certificate-id` or `certificate-arn` |
+| `DeleteCertificate` | Delete a certificate |
 <!-- floci:actions:end -->
 
 ## Behaviour
