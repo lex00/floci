@@ -109,4 +109,50 @@ class WorkSpacesIntegrationTest {
                 .body("WorkspacesPools[0].CapacityStatus.DesiredUserSessions", equalTo(2));
         call("TerminateWorkspacesPool", "{\"PoolId\":\"" + poolId + "\"}").statusCode(200);
     }
+
+    @Test
+    void directoryAndBundleLifecycle() {
+        call("RegisterWorkspaceDirectory", """
+                {"DirectoryId":"d-9067a1b2c3","SubnetIds":["subnet-1","subnet-2"],"EnableSelfService":true,
+                 "Tenancy":"SHARED","Tags":[{"Key":"team","Value":"euc"}]}""")
+                .statusCode(200)
+                .body("State", equalTo("REGISTERED"));
+        call("ModifyWorkspaceCreationProperties", """
+                {"ResourceId":"d-9067a1b2c3","WorkspaceCreationProperties":{"EnableInternetAccess":true}}""")
+                .statusCode(200);
+        call("ModifySelfservicePermissions", """
+                {"ResourceId":"d-9067a1b2c3","SelfservicePermissions":{"RebuildWorkspace":"DISABLED"}}""")
+                .statusCode(200);
+        call("DescribeWorkspaceDirectories", "{\"DirectoryIds\":[\"d-9067a1b2c3\"]}")
+                .statusCode(200)
+                .body("Directories", hasSize(1))
+                .body("Directories[0].WorkspaceCreationProperties.EnableInternetAccess", equalTo(true))
+                .body("Directories[0].SelfservicePermissions.RebuildWorkspace", equalTo("DISABLED"))
+                .body("Directories[0].SelfservicePermissions.IncreaseVolumeSize", equalTo("ENABLED"));
+        call("DescribeTags", "{\"ResourceId\":\"d-9067a1b2c3\"}")
+                .statusCode(200)
+                .body("TagList[0].Value", equalTo("euc"));
+        call("DeregisterWorkspaceDirectory", "{\"DirectoryId\":\"d-9067a1b2c3\"}").statusCode(200);
+        call("DescribeWorkspaceDirectories", "{\"DirectoryIds\":[\"d-9067a1b2c3\"]}")
+                .statusCode(200)
+                .body("Directories", empty());
+
+        call("DescribeWorkspaceBundles", "{\"Owner\":\"AMAZON\"}")
+                .statusCode(200)
+                .body("Bundles[0].Owner", equalTo("Amazon"));
+        String bundleId = call("CreateWorkspaceBundle", """
+                {"BundleName":"it-bundle","BundleDescription":"custom","ImageId":"wsi-123456789",
+                 "ComputeType":{"Name":"VALUE"},"UserStorage":{"Capacity":"10"},"RootStorage":{"Capacity":"80"}}""")
+                .statusCode(200)
+                .body("WorkspaceBundle.State", equalTo("AVAILABLE"))
+                .body("WorkspaceBundle.BundleId", startsWith("wsb-"))
+                .extract().path("WorkspaceBundle.BundleId");
+        call("DescribeWorkspaceBundles", "{\"BundleIds\":[\"" + bundleId + "\"]}")
+                .statusCode(200)
+                .body("Bundles[0].Name", equalTo("it-bundle"));
+        call("DeleteWorkspaceBundle", "{\"BundleId\":\"" + bundleId + "\"}").statusCode(200);
+        call("DescribeWorkspaceBundles", "{\"BundleIds\":[\"" + bundleId + "\"]}")
+                .statusCode(200)
+                .body("Bundles", empty());
+    }
 }

@@ -17,6 +17,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -37,11 +38,39 @@ public class WorkSpacesService implements Resettable {
 
     private static final Set<String> RUNNING_MODES = Set.of("AUTO_STOP", "ALWAYS_ON");
 
+    private static final List<String> DEVICE_TYPES = List.of("DeviceTypeWindows", "DeviceTypeOsx",
+            "DeviceTypeWeb", "DeviceTypeIos", "DeviceTypeAndroid", "DeviceTypeChromeOs", "DeviceTypeZeroClient",
+            "DeviceTypeLinux", "DeviceTypeWorkSpacesThinClient");
+
+    /** {@code PropertiesToDelete} values mapped to the property member each one clears. */
+    private static final Map<String, String> DELETABLE_PROPERTIES = Map.of(
+            "SAML_PROPERTIES_USER_ACCESS_URL", "UserAccessUrl",
+            "SAML_PROPERTIES_RELAY_STATE_PARAMETER_NAME", "RelayStateParameterName",
+            "CERTIFICATE_BASED_AUTH_PROPERTIES_CERTIFICATE_AUTHORITY_ARN", "CertificateAuthorityArn");
+
+    /** Amazon-owned bundles: id, name, image id, compute type, root and user volume GiB. */
+    private static final List<String[]> AMAZON_BUNDLES = List.of(
+            new String[] {"wsb-bh8rsxt14", "Value with Windows 10 (Server 2019 based) (English)",
+                "wsi-1f6vt5bw5", "VALUE", "80", "10"},
+            new String[] {"wsb-gm4d5tx2v", "Standard with Windows 10 (Server 2019 based) (English)",
+                "wsi-1f6vt5bw5", "STANDARD", "80", "50"},
+            new String[] {"wsb-8vbljg4r6", "Performance with Windows 10 (Server 2019 based) (English)",
+                "wsi-1f6vt5bw5", "PERFORMANCE", "80", "100"},
+            new String[] {"wsb-1pzkp0bx4", "Standard with Windows Server 2022 (English)",
+                "wsi-2c8sxxm1q", "STANDARD", "80", "50"},
+            new String[] {"wsb-clj85qzj1", "Standard with Amazon Linux 2 (English)",
+                "wsi-6nlnt9k1h", "STANDARD", "80", "50"},
+            new String[] {"wsb-3t36q0xfc", "Power with Ubuntu 22.04 (English)",
+                "wsi-9h0b4fwkd", "POWER", "175", "100"});
+    private static final double AMAZON_BUNDLE_UPDATED = 1735689600.0;
+
     private final StorageBackend<String, ObjectNode> ipGroups;
     private final StorageBackend<String, ObjectNode> aliases;
     private final StorageBackend<String, ObjectNode> workspaces;
     private final StorageBackend<String, ObjectNode> pools;
     private final StorageBackend<String, ObjectNode> tags;
+    private final StorageBackend<String, ObjectNode> directories;
+    private final StorageBackend<String, ObjectNode> bundles;
     private final RegionResolver regionResolver;
 
     @Inject
@@ -51,17 +80,22 @@ public class WorkSpacesService implements Resettable {
                 storageFactory.create("workspaces", "workspaces-workspaces.json", NODES),
                 storageFactory.create("workspaces", "workspaces-pools.json", NODES),
                 storageFactory.create("workspaces", "workspaces-tags.json", NODES),
+                storageFactory.create("workspaces", "workspaces-directories.json", NODES),
+                storageFactory.create("workspaces", "workspaces-bundles.json", NODES),
                 regionResolver);
     }
 
     WorkSpacesService(StorageBackend<String, ObjectNode> ipGroups, StorageBackend<String, ObjectNode> aliases,
                       StorageBackend<String, ObjectNode> workspaces, StorageBackend<String, ObjectNode> pools,
-                      StorageBackend<String, ObjectNode> tags, RegionResolver regionResolver) {
+                      StorageBackend<String, ObjectNode> tags, StorageBackend<String, ObjectNode> directories,
+                      StorageBackend<String, ObjectNode> bundles, RegionResolver regionResolver) {
         this.ipGroups = ipGroups;
         this.aliases = aliases;
         this.workspaces = workspaces;
         this.pools = pools;
         this.tags = tags;
+        this.directories = directories;
+        this.bundles = bundles;
         this.regionResolver = regionResolver;
     }
 
@@ -72,6 +106,8 @@ public class WorkSpacesService implements Resettable {
         workspaces.clear();
         pools.clear();
         tags.clear();
+        directories.clear();
+        bundles.clear();
     }
 
     // ──────────────────────────── IP groups ────────────────────────────
@@ -472,6 +508,319 @@ public class WorkSpacesService implements Resettable {
         return pools.get(key(region, poolId)).orElseThrow(() -> notFound("WorkSpaces pool", poolId));
     }
 
+    // ──────────────────────────── Directories ────────────────────────────
+
+    public synchronized ObjectNode registerWorkspaceDirectory(JsonNode request, String region) {
+        String identityType = request.path("UserIdentityType").asText("AWS_DIRECTORY_SERVICE");
+        String directoryId = request.path("DirectoryId").asText("");
+        if (directoryId.isBlank()) {
+            if ("AWS_DIRECTORY_SERVICE".equals(identityType)) {
+                throw new AwsException("InvalidParameterValuesException", "DirectoryId is required.", 400);
+            }
+            directoryId = newId("wsd-");
+        }
+        if (directories.get(key(region, directoryId)).isPresent()) {
+            throw new AwsException("ResourceAlreadyExistsException",
+                    "The directory " + directoryId + " is already registered.", 400);
+        }
+        ObjectNode directory = JSON.objectNode();
+        directory.put("DirectoryId", directoryId);
+        directory.put("Alias", directoryId);
+        String name = request.path("WorkspaceDirectoryName").asText(directoryId + ".workspaces.local");
+        directory.put("DirectoryName", name);
+        directory.put("RegistrationCode", "WSpdx+" + newId("").toUpperCase());
+        directory.set("SubnetIds", request.path("SubnetIds").isArray()
+                ? request.path("SubnetIds").deepCopy() : JSON.arrayNode());
+        ArrayNode dns = directory.putArray("DnsIpAddresses");
+        if ("AWS_DIRECTORY_SERVICE".equals(identityType)) {
+            dns.add("10.0.0.10").add("10.0.1.10");
+            directory.put("CustomerUserName", "Administrator");
+        }
+        directory.put("IamRoleId", regionResolver.buildGlobalArn("iam", "role/workspaces_DefaultRole"));
+        directory.put("DirectoryType", switch (identityType) {
+            case "CUSTOMER_MANAGED" -> "CUSTOMER_MANAGED";
+            case "AWS_IAM_IDENTITY_CENTER" -> "AWS_IAM_IDENTITY_CENTER";
+            default -> "SIMPLE_AD";
+        });
+        directory.put("WorkspaceSecurityGroupId", "sg-" + newId("") + "abcdefgh");
+        directory.put("State", "REGISTERED");
+        directory.set("WorkspaceCreationProperties", JSON.objectNode()
+                .put("EnableInternetAccess", false)
+                .put("UserEnabledAsLocalAdministrator", true)
+                .put("EnableMaintenanceMode", true));
+        directory.putArray("ipGroupIds");
+        ObjectNode access = directory.putObject("WorkspaceAccessProperties");
+        for (String device : DEVICE_TYPES) {
+            access.put(device, "DeviceTypeZeroClient".equals(device) ? "DENY" : "ALLOW");
+        }
+        directory.put("Tenancy", request.path("Tenancy").asText("SHARED"));
+        boolean selfService = request.path("EnableSelfService").asBoolean(false);
+        directory.set("SelfservicePermissions", JSON.objectNode()
+                .put("RestartWorkspace", "ENABLED")
+                .put("IncreaseVolumeSize", selfService ? "ENABLED" : "DISABLED")
+                .put("ChangeComputeType", selfService ? "ENABLED" : "DISABLED")
+                .put("SwitchRunningMode", selfService ? "ENABLED" : "DISABLED")
+                .put("RebuildWorkspace", selfService ? "ENABLED" : "DISABLED"));
+        directory.set("SamlProperties", JSON.objectNode().put("Status", "DISABLED"));
+        directory.set("CertificateBasedAuthProperties", JSON.objectNode().put("Status", "DISABLED"));
+        directory.put("EndpointEncryptionMode", "STANDARD_TLS");
+        directory.put("UserIdentityType", identityType);
+        directory.put("WorkspaceType", request.path("WorkspaceType").asText("PERSONAL"));
+        for (String member : List.of("WorkspaceDirectoryName", "WorkspaceDirectoryDescription",
+                "MicrosoftEntraConfig", "ActiveDirectoryConfig")) {
+            if (request.hasNonNull(member)) {
+                directory.set(member, request.get(member).deepCopy());
+            }
+        }
+        if (request.hasNonNull("IdcInstanceArn")) {
+            directory.set("IDCConfig", JSON.objectNode().put("InstanceArn", request.path("IdcInstanceArn").asText()));
+        }
+        directory.set("ClientProperties", JSON.objectNode()
+                .put("ReconnectEnabled", "ENABLED").put("LogUploadEnabled", "ENABLED"));
+        directories.put(key(region, directoryId), directory);
+        writeTags(region, directoryId, request.path("Tags"));
+        return JSON.objectNode().put("DirectoryId", directoryId).put("State", "REGISTERED");
+    }
+
+    public List<ObjectNode> describeWorkspaceDirectories(JsonNode request, String region) {
+        Set<String> ids = new HashSet<>();
+        request.path("DirectoryIds").forEach(id -> ids.add(id.asText()));
+        Set<String> names = new HashSet<>();
+        request.path("WorkspaceDirectoryNames").forEach(n -> names.add(n.asText()));
+        List<ObjectNode> result = new ArrayList<>();
+        for (ObjectNode directory : directories.scan(k -> k.startsWith(region + "::"))) {
+            if (!ids.isEmpty() && !ids.contains(directory.path("DirectoryId").asText())) {
+                continue;
+            }
+            if (!names.isEmpty() && !names.contains(directory.path("WorkspaceDirectoryName").asText())) {
+                continue;
+            }
+            if (directoryMatchesFilters(directory, request.path("Filters"))) {
+                ObjectNode copy = directory.deepCopy();
+                copy.remove("ClientProperties");
+                result.add(copy);
+            }
+        }
+        result.sort(Comparator.comparing((ObjectNode n) -> n.path("DirectoryId").asText()));
+        return result;
+    }
+
+    public synchronized void deregisterWorkspaceDirectory(String directoryId, String region) {
+        requireDirectory(directoryId, region);
+        boolean inUse = workspaces.scan(k -> k.startsWith(region + "::")).stream()
+                .anyMatch(w -> directoryId.equals(w.path("DirectoryId").asText()));
+        if (inUse) {
+            throw new AwsException("InvalidResourceStateException",
+                    "The directory " + directoryId + " has WorkSpaces.", 400);
+        }
+        directories.delete(key(region, directoryId));
+        tags.delete(key(region, directoryId));
+    }
+
+    /** Replaces or merges one directory property, as the {@code Modify*Properties} actions do. */
+    public synchronized void modifyDirectoryProperty(String directoryId, String member, JsonNode value,
+                                                     JsonNode propertiesToDelete, String region) {
+        ObjectNode directory = requireDirectory(directoryId, region);
+        ObjectNode current = directory.get(member) instanceof ObjectNode o ? o : directory.putObject(member);
+        if (value instanceof ObjectNode requested) {
+            current.setAll(requested.deepCopy());
+        }
+        if (propertiesToDelete != null) {
+            for (JsonNode property : propertiesToDelete) {
+                String field = DELETABLE_PROPERTIES.get(property.asText());
+                if (field != null) {
+                    current.remove(field);
+                }
+            }
+        }
+        directories.put(key(region, directoryId), directory);
+    }
+
+    public synchronized void modifyEndpointEncryptionMode(String directoryId, String mode, String region) {
+        ObjectNode directory = requireDirectory(directoryId, region);
+        directory.put("EndpointEncryptionMode", mode);
+        directories.put(key(region, directoryId), directory);
+    }
+
+    public List<ObjectNode> describeClientProperties(JsonNode resourceIds, String region) {
+        List<ObjectNode> result = new ArrayList<>();
+        for (JsonNode id : resourceIds) {
+            ObjectNode directory = requireDirectory(id.asText(), region);
+            ObjectNode entry = JSON.objectNode().put("ResourceId", id.asText());
+            entry.set("ClientProperties", directory.path("ClientProperties").deepCopy());
+            result.add(entry);
+        }
+        return result;
+    }
+
+    public synchronized void setIpGroups(String directoryId, JsonNode groupIds, String region, boolean associate) {
+        ObjectNode directory = requireDirectory(directoryId, region);
+        Set<String> current = new LinkedHashSet<>();
+        directory.path("ipGroupIds").forEach(id -> current.add(id.asText()));
+        for (JsonNode id : groupIds) {
+            if (associate) {
+                requireIpGroup(id.asText(), region);
+                current.add(id.asText());
+            } else {
+                current.remove(id.asText());
+            }
+        }
+        ArrayNode updated = directory.putArray("ipGroupIds");
+        current.forEach(updated::add);
+        directories.put(key(region, directoryId), directory);
+    }
+
+    private ObjectNode requireDirectory(String directoryId, String region) {
+        if (directoryId == null || directoryId.isBlank()) {
+            throw new AwsException("InvalidParameterValuesException", "DirectoryId is required.", 400);
+        }
+        return directories.get(key(region, directoryId)).orElseThrow(() -> notFound("directory", directoryId));
+    }
+
+    private static boolean directoryMatchesFilters(JsonNode directory, JsonNode filters) {
+        for (JsonNode filter : filters) {
+            String member = switch (filter.path("Name").asText()) {
+                case "USER_IDENTITY_TYPE" -> "UserIdentityType";
+                case "WORKSPACE_TYPE" -> "WorkspaceType";
+                default -> null;
+            };
+            if (member == null) {
+                continue;
+            }
+            boolean any = false;
+            for (JsonNode value : filter.path("Values")) {
+                any |= value.asText().equals(directory.path(member).asText());
+            }
+            if (!any) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // ──────────────────────────── Bundles ────────────────────────────
+
+    public synchronized ObjectNode createWorkspaceBundle(JsonNode request, String region) {
+        String name = required(request, "BundleName");
+        required(request, "BundleDescription");
+        String imageId = required(request, "ImageId");
+        if (!request.path("ComputeType").has("Name") || !request.path("UserStorage").has("Capacity")) {
+            throw new AwsException("InvalidParameterValuesException",
+                    "ComputeType.Name and UserStorage.Capacity are required.", 400);
+        }
+        for (ObjectNode bundle : bundles.scan(k -> k.startsWith(region + "::"))) {
+            if (name.equals(bundle.path("Name").asText())) {
+                throw new AwsException("ResourceAlreadyExistsException",
+                        "The bundle " + name + " already exists.", 400);
+            }
+        }
+        double now = Instant.now().toEpochMilli() / 1000.0;
+        String id = newId("wsb-");
+        ObjectNode bundle = JSON.objectNode();
+        bundle.put("BundleId", id);
+        bundle.put("Name", name);
+        bundle.put("Owner", regionResolver.getAccountId());
+        bundle.put("Description", request.path("BundleDescription").asText());
+        bundle.put("ImageId", imageId);
+        bundle.set("RootStorage", request.path("RootStorage").isObject()
+                ? request.path("RootStorage").deepCopy() : JSON.objectNode().put("Capacity", "80"));
+        bundle.set("UserStorage", request.path("UserStorage").deepCopy());
+        bundle.set("ComputeType", request.path("ComputeType").deepCopy());
+        bundle.put("LastUpdatedTime", now);
+        bundle.put("CreationTime", now);
+        bundle.put("State", "AVAILABLE");
+        bundle.put("BundleType", "REGULAR");
+        bundles.put(key(region, id), bundle);
+        writeTags(region, id, request.path("Tags"));
+        return bundle.deepCopy();
+    }
+
+    public List<ObjectNode> describeWorkspaceBundles(JsonNode request, String region) {
+        JsonNode ids = request.path("BundleIds");
+        String owner = request.path("Owner").asText("");
+        if (!ids.isEmpty() && !owner.isEmpty()) {
+            throw new AwsException("InvalidParameterValuesException", "BundleIds and Owner cannot be combined.", 400);
+        }
+        List<ObjectNode> amazon = amazonBundles();
+        List<ObjectNode> owned = sorted(bundles.scan(k -> k.startsWith(region + "::")), "BundleId");
+        if (!ids.isEmpty()) {
+            Set<String> wanted = new HashSet<>();
+            ids.forEach(id -> wanted.add(id.asText()));
+            List<ObjectNode> result = new ArrayList<>();
+            for (ObjectNode bundle : owned) {
+                if (wanted.contains(bundle.path("BundleId").asText())) {
+                    result.add(bundle);
+                }
+            }
+            for (ObjectNode bundle : amazon) {
+                if (wanted.contains(bundle.path("BundleId").asText())) {
+                    result.add(bundle);
+                }
+            }
+            return result;
+        }
+        if ("AMAZON".equals(owner)) {
+            return amazon;
+        }
+        return owned;
+    }
+
+    public synchronized void updateWorkspaceBundle(JsonNode request, String region) {
+        String id = required(request, "BundleId");
+        ObjectNode bundle = requireOwnedBundle(id, region);
+        if (request.hasNonNull("ImageId")) {
+            bundle.put("ImageId", request.path("ImageId").asText());
+        }
+        bundle.put("LastUpdatedTime", Instant.now().toEpochMilli() / 1000.0);
+        bundles.put(key(region, id), bundle);
+    }
+
+    public synchronized void deleteWorkspaceBundle(String bundleId, String region) {
+        requireOwnedBundle(bundleId, region);
+        boolean inUse = workspaces.scan(k -> k.startsWith(region + "::")).stream()
+                .anyMatch(w -> bundleId.equals(w.path("BundleId").asText()))
+                || pools.scan(k -> k.startsWith(region + "::")).stream()
+                        .anyMatch(p -> bundleId.equals(p.path("BundleId").asText()));
+        if (inUse) {
+            throw new AwsException("ResourceAssociatedException", "The bundle " + bundleId + " is in use.", 400);
+        }
+        bundles.delete(key(region, bundleId));
+        tags.delete(key(region, bundleId));
+    }
+
+    public List<ObjectNode> describeBundleAssociations(String bundleId, String region) {
+        requireOwnedBundle(bundleId, region);
+        return List.of();
+    }
+
+    private ObjectNode requireOwnedBundle(String bundleId, String region) {
+        if (bundleId == null || bundleId.isBlank()) {
+            throw new AwsException("InvalidParameterValuesException", "BundleId is required.", 400);
+        }
+        return bundles.get(key(region, bundleId)).orElseThrow(() -> notFound("bundle", bundleId));
+    }
+
+    private static List<ObjectNode> amazonBundles() {
+        List<ObjectNode> result = new ArrayList<>();
+        for (String[] row : AMAZON_BUNDLES) {
+            ObjectNode bundle = JSON.objectNode();
+            bundle.put("BundleId", row[0]);
+            bundle.put("Name", row[1]);
+            bundle.put("Owner", "Amazon");
+            bundle.put("Description", row[1]);
+            bundle.put("ImageId", row[2]);
+            bundle.set("RootStorage", JSON.objectNode().put("Capacity", row[4]));
+            bundle.set("UserStorage", JSON.objectNode().put("Capacity", row[5]));
+            bundle.set("ComputeType", JSON.objectNode().put("Name", row[3]));
+            bundle.put("LastUpdatedTime", AMAZON_BUNDLE_UPDATED);
+            bundle.put("CreationTime", AMAZON_BUNDLE_UPDATED);
+            bundle.put("State", "AVAILABLE");
+            bundle.put("BundleType", "REGULAR");
+            result.add(bundle);
+        }
+        return result;
+    }
+
     // ──────────────────────────── Tags ────────────────────────────
 
     public synchronized void createTags(String resourceId, JsonNode newTags, String region) {
@@ -509,7 +858,8 @@ public class WorkSpacesService implements Resettable {
         String id = resourceId.startsWith("arn:") ? resourceId.substring(resourceId.lastIndexOf('/') + 1) : resourceId;
         String key = key(region, id);
         boolean exists = ipGroups.get(key).isPresent() || aliases.get(key).isPresent()
-                || workspaces.get(key).isPresent() || pools.get(key).isPresent();
+                || workspaces.get(key).isPresent() || pools.get(key).isPresent()
+                || directories.get(key).isPresent() || bundles.get(key).isPresent();
         if (!exists) {
             throw notFound("resource", resourceId);
         }

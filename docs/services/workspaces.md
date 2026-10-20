@@ -30,6 +30,25 @@ Floci emulates the WorkSpaces control plane. No desktops run.
 | `StartWorkspacesPool` | Move a pool to RUNNING |
 | `StopWorkspacesPool` | Move a pool to STOPPED |
 | `TerminateWorkspacesPool` | Delete a pool |
+| `RegisterWorkspaceDirectory` | Register a directory, REGISTERED at once |
+| `DescribeWorkspaceDirectories` | Describe directories by id, name or filter |
+| `DeregisterWorkspaceDirectory` | Deregister a directory with no WorkSpaces |
+| `ModifySelfservicePermissions` | Update a directory's self-service permissions |
+| `ModifyWorkspaceAccessProperties` | Update a directory's device access properties |
+| `ModifyWorkspaceCreationProperties` | Update a directory's default creation properties |
+| `ModifySamlProperties` | Update or clear a directory's SAML properties |
+| `ModifyCertificateBasedAuthProperties` | Update or clear certificate-based authentication |
+| `ModifyStreamingProperties` | Update a directory's streaming properties |
+| `ModifyClientProperties` | Update a directory's client properties |
+| `DescribeClientProperties` | Describe client properties of directories |
+| `ModifyEndpointEncryptionMode` | Set a directory's endpoint encryption mode |
+| `AssociateIpGroups` | Associate IP groups with a directory |
+| `DisassociateIpGroups` | Remove IP groups from a directory |
+| `CreateWorkspaceBundle` | Create a custom bundle |
+| `DescribeWorkspaceBundles` | Describe bundles by id, the account's own, or Amazon's |
+| `UpdateWorkspaceBundle` | Change a custom bundle's image |
+| `DeleteWorkspaceBundle` | Delete a custom bundle no WorkSpace or pool uses |
+| `DescribeBundleAssociations` | List a bundle's application associations, always empty |
 | `CreateTags` | Tag a resource by id |
 | `DeleteTags` | Remove tags from a resource |
 | `DescribeTags` | List a resource's tags |
@@ -46,10 +65,14 @@ Floci emulates the WorkSpaces control plane. No desktops run.
   defines.
 - `CreateTags`, `DeleteTags` and `DescribeTags` accept the id of any emulated resource, and a pool
   ARN.
-- Directory and bundle ids are stored as given and not checked against registered directories.
+- `RegisterWorkspaceDirectory` accepts any Directory Service id, and mints a `wsd-` id for a
+  `CUSTOMER_MANAGED` or IAM Identity Center directory registered without one. A new directory
+  allows every device type except zero clients.
+- `DescribeWorkspaceBundles` with `Owner` `AMAZON` lists six Amazon bundles. Without `Owner` or
+  `BundleIds` it lists the account's own bundles.
+- `CreateWorkspaces` stores directory and bundle ids as given.
 
 ## Not emulated
 
-- Directory registration
-- Bundles and images
+- WorkSpace images and bundle application associations
 - Account links and connection alias associations

@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -20,7 +21,7 @@ class WorkSpacesServiceTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private final WorkSpacesService service = new WorkSpacesService(new InMemoryStorage<>(),
             new InMemoryStorage<>(), new InMemoryStorage<>(), new InMemoryStorage<>(), new InMemoryStorage<>(),
-            new RegionResolver(REGION, "000000000000"));
+            new InMemoryStorage<>(), new InMemoryStorage<>(), new RegionResolver(REGION, "000000000000"));
 
     private JsonNode json(String text) throws Exception {
         return mapper.readTree(text);
@@ -86,6 +87,58 @@ class WorkSpacesServiceTest {
     @Test
     void tagsOnUnknownResourceAreNotFound() {
         AwsException missing = assertThrows(AwsException.class, () -> service.describeTags("wsipg-unknown", REGION));
+        assertEquals("ResourceNotFoundException", missing.getErrorCode());
+    }
+
+    @Test
+    void directoryRegistersWithDefaultsAndTakesModifications() throws Exception {
+        ObjectNode registered = service.registerWorkspaceDirectory(json(
+                "{\"DirectoryId\":\"d-1234567890\",\"SubnetIds\":[\"subnet-a\",\"subnet-b\"]}"), REGION);
+        assertEquals("REGISTERED", registered.path("State").asText());
+
+        service.modifyDirectoryProperty("d-1234567890", "SamlProperties", json("""
+                {"Status":"ENABLED","UserAccessUrl":"https://idp.example.com"}"""), null, REGION);
+        service.modifyDirectoryProperty("d-1234567890", "SamlProperties", null,
+                json("[\"SAML_PROPERTIES_USER_ACCESS_URL\"]"), REGION);
+        String groupId = service.createIpGroup(json("{\"GroupName\":\"dir-group\"}"), REGION);
+        service.setIpGroups("d-1234567890", json("[\"" + groupId + "\"]"), REGION, true);
+
+        ObjectNode directory = service.describeWorkspaceDirectories(json("{}"), REGION).getFirst();
+        assertEquals("ENABLED", directory.path("SamlProperties").path("Status").asText());
+        assertFalse(directory.path("SamlProperties").has("UserAccessUrl"));
+        assertEquals(groupId, directory.path("ipGroupIds").get(0).asText());
+        assertEquals("ALLOW", directory.path("WorkspaceAccessProperties").path("DeviceTypeWeb").asText());
+
+        service.deregisterWorkspaceDirectory("d-1234567890", REGION);
+        assertTrue(service.describeWorkspaceDirectories(json("{}"), REGION).isEmpty());
+    }
+
+    @Test
+    void poolsDirectoryGetsGeneratedId() throws Exception {
+        ObjectNode registered = service.registerWorkspaceDirectory(json("""
+                {"WorkspaceType":"POOLS","UserIdentityType":"CUSTOMER_MANAGED","WorkspaceDirectoryName":"pool-dir"}"""),
+                REGION);
+        assertTrue(registered.path("DirectoryId").asText().startsWith("wsd-"));
+        assertEquals(1, service.describeWorkspaceDirectories(json("""
+                {"Filters":[{"Name":"WORKSPACE_TYPE","Values":["POOLS"]}]}"""), REGION).size());
+    }
+
+    @Test
+    void customBundleLifecycle() throws Exception {
+        ObjectNode bundle = service.createWorkspaceBundle(json("""
+                {"BundleName":"mine","BundleDescription":"d","ImageId":"wsi-abc",
+                 "ComputeType":{"Name":"STANDARD"},"UserStorage":{"Capacity":"50"}}"""), REGION);
+        String id = bundle.path("BundleId").asText();
+        assertTrue(id.startsWith("wsb-"));
+        assertEquals("000000000000", bundle.path("Owner").asText());
+
+        service.updateWorkspaceBundle(json("{\"BundleId\":\"" + id + "\",\"ImageId\":\"wsi-new\"}"), REGION);
+        assertEquals("wsi-new", service.describeWorkspaceBundles(json("{}"), REGION).getFirst()
+                .path("ImageId").asText());
+        assertFalse(service.describeWorkspaceBundles(json("{\"Owner\":\"AMAZON\"}"), REGION).isEmpty());
+
+        service.deleteWorkspaceBundle(id, REGION);
+        AwsException missing = assertThrows(AwsException.class, () -> service.deleteWorkspaceBundle(id, REGION));
         assertEquals("ResourceNotFoundException", missing.getErrorCode());
     }
 }

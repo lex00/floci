@@ -83,6 +83,47 @@ public class WorkSpacesJsonHandler {
                 service.terminateWorkspacesPool(text(request, "PoolId"), region);
                 yield empty();
             }
+            case "RegisterWorkspaceDirectory" -> ok(service.registerWorkspaceDirectory(request, region));
+            case "DescribeWorkspaceDirectories" -> list("Directories",
+                    service.describeWorkspaceDirectories(request, region));
+            case "DeregisterWorkspaceDirectory" -> {
+                service.deregisterWorkspaceDirectory(text(request, "DirectoryId"), region);
+                yield empty();
+            }
+            case "ModifySelfservicePermissions" -> modify(request, "SelfservicePermissions", region);
+            case "ModifyWorkspaceAccessProperties" -> modify(request, "WorkspaceAccessProperties", region);
+            case "ModifyWorkspaceCreationProperties" -> modify(request, "WorkspaceCreationProperties", region);
+            case "ModifySamlProperties" -> modify(request, "SamlProperties", region);
+            case "ModifyCertificateBasedAuthProperties" -> modify(request, "CertificateBasedAuthProperties", region);
+            case "ModifyStreamingProperties" -> modify(request, "StreamingProperties", region);
+            case "ModifyClientProperties" -> modify(request, "ClientProperties", region);
+            case "DescribeClientProperties" -> list("ClientPropertiesList",
+                    service.describeClientProperties(request.path("ResourceIds"), region));
+            case "ModifyEndpointEncryptionMode" -> {
+                service.modifyEndpointEncryptionMode(text(request, "DirectoryId"),
+                        text(request, "EndpointEncryptionMode"), region);
+                yield empty();
+            }
+            case "AssociateIpGroups" -> {
+                service.setIpGroups(text(request, "DirectoryId"), request.path("GroupIds"), region, true);
+                yield empty();
+            }
+            case "DisassociateIpGroups" -> {
+                service.setIpGroups(text(request, "DirectoryId"), request.path("GroupIds"), region, false);
+                yield empty();
+            }
+            case "CreateWorkspaceBundle" -> wrap("WorkspaceBundle", service.createWorkspaceBundle(request, region));
+            case "DescribeWorkspaceBundles" -> list("Bundles", service.describeWorkspaceBundles(request, region));
+            case "UpdateWorkspaceBundle" -> {
+                service.updateWorkspaceBundle(request, region);
+                yield empty();
+            }
+            case "DeleteWorkspaceBundle" -> {
+                service.deleteWorkspaceBundle(text(request, "BundleId"), region);
+                yield empty();
+            }
+            case "DescribeBundleAssociations" -> list("Associations",
+                    service.describeBundleAssociations(text(request, "BundleId"), region));
             case "CreateTags" -> {
                 service.createTags(text(request, "ResourceId"), request.path("Tags"), region);
                 yield empty();
@@ -97,6 +138,12 @@ public class WorkSpacesJsonHandler {
                             "Unknown operation: WorkspacesService." + action))
                     .build();
         };
+    }
+
+    private Response modify(JsonNode request, String member, String region) {
+        service.modifyDirectoryProperty(text(request, "ResourceId"), member, request.get(member),
+                request.get("PropertiesToDelete"), region);
+        return empty();
     }
 
     private Response ok(ObjectNode response) {
