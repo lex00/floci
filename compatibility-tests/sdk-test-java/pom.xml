@@ -553,6 +553,11 @@
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>resourceexplorer2</artifactId>
         </dependency>
+        <!-- DataZone client -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>datazone</artifactId>
+        </dependency>
         <!-- CloudWatch OAM client -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>

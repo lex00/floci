@@ -297,7 +297,7 @@ Floci supports local emulation for application services, data services, eventing
 | Events and workflows | EventBridge, EventBridge Pipes, EventBridge Scheduler, Step Functions, SWF, CloudWatch Logs, CloudWatch Metrics, CloudWatch OAM, CloudWatch RUM, Managed Prometheus (AMP) |
 | API and identity | API Gateway REST, API Gateway v2, AppSync, Cognito, Cognito Identity, ACM, Route53, Route 53 Resolver, Cloud Map, Global Accelerator |
 | Containers and compute | ECS, App Runner, EC2, Lightsail, EKS, MWAA, ECR, EFS, CodeBuild, CodeDeploy, CodePipeline, CodeGuru Reviewer, CodeArtifact, AWS Batch, Auto Scaling, Application Auto Scaling, Elastic Beanstalk, ELB v2, ELB Classic |
-| Data, analytics, and AI | Athena, Glue, Lake Formation, EMR, EMR Serverless, Redshift, Redshift Data API, Redshift Serverless, Firehose, Managed Service for Apache Flink, OpenSearch, S3 Tables, S3 Vectors, Textract, Transcribe, Comprehend, Rekognition, Translate, Bedrock, Bedrock Runtime, Bedrock AgentCore, Bedrock AgentCore Control, SageMaker |
+| Data, analytics, and AI | Athena, Glue, Lake Formation, DataZone, EMR, EMR Serverless, Redshift, Redshift Data API, Redshift Serverless, Firehose, Managed Service for Apache Flink, OpenSearch, S3 Tables, S3 Vectors, Textract, Transcribe, Comprehend, Rekognition, Translate, Bedrock, Bedrock Runtime, Bedrock AgentCore, Bedrock AgentCore Control, SageMaker |
 | Databases and caching | RDS, RDS Data API, Neptune, DocumentDB, DMS, MemoryDB, ElastiCache, Timestream for InfluxDB |
 | Messaging and transfer | SES, Kinesis, MSK, Amazon MQ, Transfer Family, DataSync, IoT Core, Amazon Connect, Amazon AppIntegrations, Amazon AppFlow |
 | Media | Amazon IVS, Amazon IVS Chat, MediaLive, MediaPackage, MediaPackage V2 |

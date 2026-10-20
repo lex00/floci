@@ -862,6 +862,7 @@ public interface EmulatorConfig {
         DetectiveServiceConfig detective();
         ServiceQuotasServiceConfig servicequotas();
         VerifiedPermissionsServiceConfig verifiedpermissions();
+        DataZoneServiceConfig datazone();
         RamServiceConfig ram();
         ControlCatalogServiceConfig controlcatalog();
         ControlTowerServiceConfig controltower();
@@ -1159,6 +1160,11 @@ public interface EmulatorConfig {
     }
 
     interface IvsServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface DataZoneServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }

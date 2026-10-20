@@ -48,6 +48,7 @@ import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityPr
 import software.amazon.awssdk.services.controlcatalog.ControlCatalogClient;
 import software.amazon.awssdk.services.databasemigration.DatabaseMigrationClient;
 import software.amazon.awssdk.services.datasync.DataSyncClient;
+import software.amazon.awssdk.services.datazone.DataZoneClient;
 import software.amazon.awssdk.services.detective.DetectiveClient;
 import software.amazon.awssdk.services.dlm.DlmClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
@@ -1568,6 +1569,14 @@ public final class TestFixtures {
 
     public static BackupClient backupClient() {
         return BackupClient.builder()
+                .endpointOverride(ENDPOINT)
+                .region(REGION)
+                .credentialsProvider(CREDENTIALS)
+                .build();
+    }
+
+    public static DataZoneClient dataZoneClient() {
+        return DataZoneClient.builder()
                 .endpointOverride(ENDPOINT)
                 .region(REGION)
                 .credentialsProvider(CREDENTIALS)

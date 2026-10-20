@@ -147,6 +147,7 @@ nav:
     - Amazon MQ: services/amazonmq.md
     - Glue: services/glue.md
     - Lake Formation: services/lakeformation.md
+    - DataZone: services/datazone.md
     - Neptune: services/neptune.md
     - DocumentDB: services/docdb.md
     - DMS: services/dms.md

@@ -141,6 +141,7 @@ quarkus:
       - --initialize-at-run-time=io.github.hectorvent.floci.services.elb.ElbClassicService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.datasync.DataSyncService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.dms.DmsService
+      - --initialize-at-run-time=io.github.hectorvent.floci.services.datazone.DataZoneService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.lambda.launcher.LambdaExecutionRoleCredentials
       - --initialize-at-run-time=io.github.hectorvent.floci.services.ecs.container.EcsTaskRoleCredentials
       - --initialize-at-run-time=io.github.hectorvent.floci.services.ssoportal.SsoPortalService
@@ -1048,6 +1049,8 @@ floci:
       pypi-image: "pypiserver/pypiserver:v2.4.2"
       nuget-image: "bagetter/bagetter:1.6.5"
     marketplace:
+      enabled: true
+    datazone:
       enabled: true
     dms:
       enabled: true

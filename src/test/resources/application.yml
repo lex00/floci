@@ -575,5 +575,7 @@ floci:
       enabled: true
     marketplace:
       enabled: true
+    datazone:
+      enabled: true
     dms:
       enabled: true

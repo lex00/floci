@@ -42,7 +42,7 @@ class PartitionCrossServiceSmokeIntegrationTest {
             "appsync",
             "aps", "autoscaling", "backup", "batch", "bcmdataexports", "bedrock", "bedrockagentcore", "bedrockagentcorecontrol", "ce",
             "cloudfront", "cloudmap", "cloudwatch", "codebuild", "codedeploy", "codepipeline", "cognito",
-            "configservice", "connect", "controlcatalog", "controltower", "datasync", "dlm", "dms", "dynamodb", "ec2",
+            "configservice", "connect", "controlcatalog", "controltower", "datasync", "datazone", "dlm", "dms", "dynamodb", "ec2",
             "ecr", "ecs", "efs", "eks", "elasticache", "elasticbeanstalk", "elbv2", "emr", "emrserverless",
             "eventbridge", "firehose", "fis", "glue", "guardduty", "iot", "kinesis", "kinesisanalytics", "lambda",
             "lambdamicrovms", "lambdaweb", "medialive", "mediapackage", "memorydb", "msk", "mwaa", "networkfirewall",
@@ -127,6 +127,21 @@ class PartitionCrossServiceSmokeIntegrationTest {
         String host = URI.create(created.jsonPath().getString("apiEndpoint")).getHost();
         PartitionMatrix.assertHostIn(partitionCase, host);
         assertEquals(apiId + ".execute-api." + region + "." + partitionCase.dnsSuffix(), host);
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void dataZoneDomainArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "datazone");
+        String name = unique("smoke-domain", partitionCase);
+        Response created = signed(region, "datazone")
+            .contentType(JSON)
+            .body("{\"name\":\"" + name + "\",\"domainExecutionRole\":\"arn:" + partitionCase.partition()
+                    + ":iam::000000000000:role/smoke-datazone\"}")
+        .when().post("/v2/domains").then().statusCode(201).extract().response();
+        String id = created.jsonPath().getString("id");
+        cleanup.register(() -> signed(region, "datazone").when().delete("/v2/domains/" + id));
+        PartitionMatrix.assertArnIn(partitionCase, created.jsonPath().getString("arn"));
     }
 
     @ParameterizedTest
