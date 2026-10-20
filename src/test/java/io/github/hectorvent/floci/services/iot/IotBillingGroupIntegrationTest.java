@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.startsWith;
 
 @QuarkusTest
@@ -107,5 +108,25 @@ class IotBillingGroupIntegrationTest {
         given().when().delete("/destinations/" + arn).then().statusCode(200);
         given().when().get("/destinations")
             .then().statusCode(200).body("destinationSummaries.arn", not(hasItem(arn)));
+    }
+
+    @Test
+    void httpDestinationConfirmsItselfAfterCreate() {
+        String arn = given().contentType("application/json")
+                .body("{\"destinationConfiguration\":{\"httpUrlConfiguration\":"
+                        + "{\"confirmationUrl\":\"https://example.com/self-confirm\"}}}")
+            .when().post("/destinations")
+            .then().statusCode(200)
+                .body("topicRuleDestination.status", equalTo("IN_PROGRESS"))
+                .extract().path("topicRuleDestination.arn");
+
+        given().when().get("/destinations/" + arn)
+            .then().statusCode(200)
+                .body("topicRuleDestination.status", equalTo("ENABLED"))
+                .body("topicRuleDestination.statusReason", nullValue());
+
+        given().when().get("/confirmdestination/not-a-token")
+            .then().statusCode(400).body("__type", equalTo("InvalidRequestException"));
+        given().when().delete("/destinations/" + arn).then().statusCode(200);
     }
 }

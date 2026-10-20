@@ -948,6 +948,7 @@ floci:
     iot:
       enabled: true
       rule-sql-strict: false
+      auto-confirm-destinations: true  # an HTTP topic rule destination is ENABLED on create; false posts the confirmation to its URL
       # endpoint-address: ""  # DescribeEndpoint value when the AWS IoT ports (8883, 443, 8443) reach Floci; default: host and port of base-url
       mqtt:
         enabled: true

@@ -402,6 +402,7 @@ See [Initialization Hooks](./initialization-hooks.md) for lifecycle phases and s
 | Variable | Default | Description |
 |---|---|---|
 | `FLOCI_SERVICES_IOT_ENABLED` | `true` | Enable the IoT Core service |
+| `FLOCI_SERVICES_IOT_AUTO_CONFIRM_DESTINATIONS` | `true` | Confirm an HTTP topic rule destination on create, so it reaches `ENABLED` on its own. `false` posts the confirmation message to its URL and waits for `ConfirmTopicRuleDestination` |
 | `FLOCI_SERVICES_IOT_ENDPOINT_ADDRESS` | _(none)_ | Value `DescribeEndpoint` returns for every endpoint type, and the domain name of the AWS-managed domain configurations. Set it to a bare hostname when the AWS IoT ports (8883, 443, 8443) reach Floci; the name is added to the server certificate. Defaults to the host and port of `FLOCI_BASE_URL`, with `FLOCI_HOSTNAME` applied |
 | `FLOCI_SERVICES_IOT_RULE_SQL_STRICT` | `false` | Reject topic rules whose SQL falls outside the evaluated subset, as AWS does |
 | `FLOCI_SERVICES_IOT_MQTT_ENABLED` | `true` | Run the embedded MQTT broker |

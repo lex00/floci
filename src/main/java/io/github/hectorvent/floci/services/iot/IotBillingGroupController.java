@@ -207,6 +207,13 @@ public class IotBillingGroupController {
         return Response.ok(objectMapper.createObjectNode()).build();
     }
 
+    @GET
+    @Path("/confirmdestination/{confirmationToken: .+}")
+    public Response confirmTopicRuleDestination(@PathParam("confirmationToken") String confirmationToken) {
+        service.confirmTopicRuleDestination(confirmationToken);
+        return Response.ok(objectMapper.createObjectNode()).build();
+    }
+
     @DELETE
     @Path("/destinations/{arn: .+}")
     public Response deleteTopicRuleDestination(@Context HttpHeaders headers, @PathParam("arn") String arn) {

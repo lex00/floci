@@ -1105,6 +1105,15 @@ public interface EmulatorConfig {
          */
         Optional<String> endpointAddress();
 
+        /**
+         * Confirm an HTTP topic rule destination on create, so it reaches ENABLED with no call to
+         * ConfirmTopicRuleDestination. Set to false to post the confirmation message to the
+         * destination's URL and wait in IN_PROGRESS.
+         * Env: FLOCI_SERVICES_IOT_AUTO_CONFIRM_DESTINATIONS
+         */
+        @WithDefault("true")
+        boolean autoConfirmDestinations();
+
         MqttConfig mqtt();
     }
 

@@ -2,8 +2,12 @@ package io.github.hectorvent.floci.services.iot;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RegionResolver;
+import io.github.hectorvent.floci.core.common.SsrfProtection;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
 import io.github.hectorvent.floci.services.iot.model.IotBillingGroup;
@@ -11,7 +15,15 @@ import io.github.hectorvent.floci.services.iot.model.IotRoleAlias;
 import io.github.hectorvent.floci.services.iot.model.IotTopicRuleDestination;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.jboss.logging.Logger;
 
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -21,17 +33,21 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
 /**
  * AWS IoT billing groups, role aliases and topic rule destinations: registry records with no
  * behaviour behind them in the emulator. A role alias names a role the credentials provider would
- * assume, and a destination is ENABLED once created, except an HTTP one, which waits in
- * IN_PROGRESS for the confirmation AWS sends to its URL.
+ * assume, and a destination is ENABLED once created. An HTTP destination is confirmed on create
+ * by default. With auto-confirm off Floci posts the confirmation message to its URL, as AWS does,
+ * and the destination waits in IN_PROGRESS for ConfirmTopicRuleDestination.
  */
 @ApplicationScoped
 public class IotBillingGroupService {
+
+    private static final Logger LOG = Logger.getLogger(IotBillingGroupService.class);
 
     private static final Pattern NAME_PATTERN = Pattern.compile("[a-zA-Z0-9:_-]{1,128}");
     private static final Pattern ROLE_ALIAS_PATTERN = Pattern.compile("[\\w=,@-]{1,128}");
@@ -44,27 +60,46 @@ public class IotBillingGroupService {
     private final StorageBackend<String, IotRoleAlias> roleAliases;
     private final StorageBackend<String, IotTopicRuleDestination> destinations;
     private final RegionResolver regionResolver;
+    private final boolean autoConfirmDestinations;
+    private final String baseUrl;
+    private final ObjectMapper objectMapper;
+    private final HttpClient httpClient;
     private final Object lock = new Object();
 
     @Inject
-    public IotBillingGroupService(StorageFactory storageFactory, RegionResolver regionResolver) {
+    public IotBillingGroupService(StorageFactory storageFactory, RegionResolver regionResolver,
+                                  EmulatorConfig config, ObjectMapper objectMapper) {
         this(storageFactory.create("iot", "iot-billing-groups.json",
                         new TypeReference<Map<String, IotBillingGroup>>() {}),
                 storageFactory.create("iot", "iot-role-aliases.json",
                         new TypeReference<Map<String, IotRoleAlias>>() {}),
                 storageFactory.create("iot", "iot-topic-rule-destinations.json",
                         new TypeReference<Map<String, IotTopicRuleDestination>>() {}),
-                regionResolver);
+                regionResolver, config.services().iot().autoConfirmDestinations(), config.effectiveBaseUrl(),
+                objectMapper, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build());
     }
 
     IotBillingGroupService(StorageBackend<String, IotBillingGroup> billingGroups,
                            StorageBackend<String, IotRoleAlias> roleAliases,
                            StorageBackend<String, IotTopicRuleDestination> destinations,
                            RegionResolver regionResolver) {
+        this(billingGroups, roleAliases, destinations, regionResolver, true, "http://localhost:4566",
+                new ObjectMapper(), null);
+    }
+
+    IotBillingGroupService(StorageBackend<String, IotBillingGroup> billingGroups,
+                           StorageBackend<String, IotRoleAlias> roleAliases,
+                           StorageBackend<String, IotTopicRuleDestination> destinations,
+                           RegionResolver regionResolver, boolean autoConfirmDestinations, String baseUrl,
+                           ObjectMapper objectMapper, HttpClient httpClient) {
         this.billingGroups = billingGroups;
         this.roleAliases = roleAliases;
         this.destinations = destinations;
         this.regionResolver = regionResolver;
+        this.autoConfirmDestinations = autoConfirmDestinations;
+        this.baseUrl = baseUrl;
+        this.objectMapper = objectMapper;
+        this.httpClient = httpClient;
     }
 
     // ── Billing groups ────────────────────────────────────────────────────────
@@ -221,6 +256,8 @@ public class IotBillingGroupService {
         if (http.isObject()) {
             kind = "http";
             destination.setConfirmationUrl(required(http, "confirmationUrl"));
+            destination.setConfirmationToken(UUID.randomUUID().toString().replace("-", "")
+                    + UUID.randomUUID().toString().replace("-", ""));
             destination.setStatus("IN_PROGRESS");
             destination.setStatusReason("Awaiting confirmation of the destination URL.");
         } else if (vpc.isObject()) {
@@ -260,9 +297,75 @@ public class IotBillingGroupService {
                 throw new AwsException("ResourceAlreadyExistsException",
                         "A destination for " + destination.getConfirmationUrl() + " already exists.", 409);
             }
-            destinations.put(key(region, destination.getArn()), destination);
+            IotTopicRuleDestination stored = destination.copy();
+            if (stored.getConfirmationToken() != null && autoConfirmDestinations) {
+                enable(stored);
+            }
+            destinations.put(key(region, destination.getArn()), stored);
+        }
+        if (destination.getConfirmationToken() != null && !autoConfirmDestinations) {
+            sendConfirmation(destination, region);
         }
         return destination;
+    }
+
+    /** Enables the IN_PROGRESS HTTP destination the token was issued to, as its enable URL does. */
+    public void confirmTopicRuleDestination(String confirmationToken) {
+        if (confirmationToken == null || confirmationToken.isBlank()) {
+            throw invalid("confirmationToken is required");
+        }
+        synchronized (lock) {
+            Map.Entry<String, IotTopicRuleDestination> match = destinations.keys().stream()
+                    .map(k -> Map.entry(k, destinations.get(k).orElse(null)))
+                    .filter(e -> e.getValue() != null
+                            && confirmationToken.equals(e.getValue().getConfirmationToken()))
+                    .findFirst()
+                    .orElseThrow(() -> invalid("Invalid confirmation token."));
+            IotTopicRuleDestination destination = match.getValue();
+            if ("IN_PROGRESS".equals(destination.getStatus())) {
+                enable(destination);
+                destination.setLastUpdatedAt(Instant.now());
+            }
+            destinations.put(match.getKey(), destination);
+        }
+    }
+
+    private static void enable(IotTopicRuleDestination destination) {
+        destination.setStatus("ENABLED");
+        destination.setStatusReason(null);
+        destination.setConfirmationToken(null);
+    }
+
+    /** Posts AWS's DestinationConfirmation message to the destination URL, skipping metadata addresses. */
+    private void sendConfirmation(IotTopicRuleDestination destination, String region) {
+        if (httpClient == null) {
+            return;
+        }
+        String url = destination.getConfirmationUrl();
+        ObjectNode message = objectMapper.createObjectNode();
+        message.put("arn", destination.getArn());
+        message.put("confirmationToken", destination.getConfirmationToken());
+        message.put("enableUrl", baseUrl + "/confirmdestination/" + destination.getConfirmationToken());
+        message.put("messageType", "DestinationConfirmation");
+        CompletableFuture.runAsync(() -> {
+            try {
+                URI uri = URI.create(url);
+                SsrfProtection.rejectMetadataAddresses(InetAddress.getAllByName(uri.getHost()), uri.getHost());
+                HttpRequest request = HttpRequest.newBuilder(uri)
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(message)))
+                        .build();
+                int status = httpClient.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+                LOG.infov("Sent IoT destination confirmation for {0} in {1} to {2}: HTTP {3}",
+                        destination.getArn(), region, url, status);
+            } catch (IOException | IllegalArgumentException e) {
+                LOG.warnv("Failed to send IoT destination confirmation to {0}: {1}", url, e.getMessage());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                LOG.warnv("Interrupted sending IoT destination confirmation to {0}", url);
+            }
+        });
     }
 
     public IotTopicRuleDestination getTopicRuleDestination(String arn, String region) {
@@ -279,6 +382,7 @@ public class IotBillingGroupService {
             IotTopicRuleDestination destination = getTopicRuleDestination(arn, region);
             destination.setStatus(status);
             destination.setStatusReason(null);
+            destination.setConfirmationToken(null);
             destination.setLastUpdatedAt(Instant.now());
             destinations.put(key(region, arn), destination);
         }
