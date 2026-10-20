@@ -2,8 +2,12 @@ package io.github.hectorvent.floci.services.globalaccelerator;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
+import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
+import io.github.hectorvent.floci.core.common.PaginatedResult;
+import io.github.hectorvent.floci.core.common.Pagination;
 import io.github.hectorvent.floci.core.common.RegionResolver;
+import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
 import io.github.hectorvent.floci.services.globalaccelerator.model.Accelerator;
@@ -27,6 +31,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Pattern;
@@ -69,6 +74,7 @@ public class GlobalAcceleratorService {
     private static final int MAX_ENDPOINT_CONFIGURATIONS = 10;
     private static final int MAX_PORT_OVERRIDES = 10;
     private static final int MAX_IP_ADDRESSES = 2;
+    private static final int MAX_LIST_RESULTS = 100;
     private static final int MAX_HEALTH_CHECK_PATH_LENGTH = 255;
     private static final Pattern HEALTH_CHECK_PATH_PATTERN =
             Pattern.compile("^/[-a-zA-Z0-9@:%_\\+.~#?&/=]*$");
@@ -78,7 +84,7 @@ public class GlobalAcceleratorService {
     private final StorageBackend<String, Listener> listeners;
     private final StorageBackend<String, EndpointGroup> endpointGroups;
     private final StorageBackend<String, Map<String, String>> tags;
-    private final StorageBackend<String, CrossAccountAttachment> attachments;
+    private final AccountAwareStorageBackend<CrossAccountAttachment> attachments;
     private final RegionResolver regionResolver;
 
     @Inject
@@ -469,6 +475,78 @@ public class GlobalAcceleratorService {
 
     public List<CrossAccountAttachment> listCrossAccountAttachments() {
         return attachments.scan(key -> true);
+    }
+
+    /** The accounts whose cross-account attachments name the caller's account or one of its accelerators. */
+    public List<String> listCrossAccountResourceAccounts() {
+        String caller = regionResolver.getAccountId();
+        TreeSet<String> owners = new TreeSet<>();
+        for (AccountAwareStorageBackend.AccountEntry<CrossAccountAttachment> entry
+                : attachments.scanAllAccountEntries(key -> true)) {
+            if (grantsTo(entry.value(), caller, null)) {
+                owners.add(entry.accountId());
+            }
+        }
+        return new ArrayList<>(owners);
+    }
+
+    /** The resources that {@code ownerAccountId}'s attachments make available to the caller. */
+    public PaginatedResult<Map<String, String>> listCrossAccountResources(String acceleratorArn,
+                                                                         String ownerAccountId,
+                                                                         Integer maxResults,
+                                                                         String nextToken) {
+        requireArgument(ownerAccountId, "ResourceOwnerAwsAccountId");
+        if (maxResults != null && (maxResults < 1 || maxResults > MAX_LIST_RESULTS)) {
+            throw new AwsException("InvalidArgumentException",
+                    "MaxResults must be between 1 and " + MAX_LIST_RESULTS + ".", 400);
+        }
+        if (acceleratorArn != null) {
+            describeAccelerator(acceleratorArn);
+        }
+        String caller = regionResolver.getAccountId();
+        List<Map<String, String>> resources = new ArrayList<>();
+        for (AccountAwareStorageBackend.AccountEntry<CrossAccountAttachment> entry
+                : attachments.scanAllAccountEntries(key -> true)) {
+            CrossAccountAttachment attachment = entry.value();
+            if (!ownerAccountId.equals(entry.accountId()) || !grantsTo(attachment, caller, acceleratorArn)) {
+                continue;
+            }
+            for (AttachmentResource resource : attachment.getResources()) {
+                Map<String, String> item = new LinkedHashMap<>();
+                if (resource.getEndpointId() != null) {
+                    item.put("EndpointId", resource.getEndpointId());
+                }
+                if (resource.getCidr() != null) {
+                    item.put("Cidr", resource.getCidr());
+                }
+                item.put("AttachmentArn", attachment.getAttachmentArn());
+                resources.add(item);
+            }
+        }
+        return Pagination.paginate(resources,
+                item -> item.get("AttachmentArn") + "|" + item.getOrDefault("EndpointId", item.get("Cidr")),
+                maxResults != null ? maxResults : MAX_LIST_RESULTS, nextToken, "cross-account-resources",
+                token -> new AwsException("InvalidNextTokenException", "The NextToken is not valid.", 400));
+    }
+
+    /**
+     * A principal is an account id or an accelerator ARN. With {@code acceleratorArn} set, only
+     * that accelerator or its whole account qualifies.
+     */
+    private static boolean grantsTo(CrossAccountAttachment attachment, String callerAccountId,
+                                    String acceleratorArn) {
+        for (String principal : attachment.getPrincipals()) {
+            if (principal.equals(callerAccountId)) {
+                return true;
+            }
+            if (AwsArnUtils.isArn(principal)) {
+                boolean callerOwnsIt = callerAccountId.equals(AwsArnUtils.parse(principal).accountId());
+                if (callerOwnsIt && (acceleratorArn == null || acceleratorArn.equals(principal))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static void validateAttachmentResources(List<AttachmentResource> resources) {

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.AwsException;
+import io.github.hectorvent.floci.core.common.PaginatedResult;
 import io.github.hectorvent.floci.services.globalaccelerator.model.AttachmentResource;
 import io.github.hectorvent.floci.services.globalaccelerator.model.EndpointGroup;
 import io.github.hectorvent.floci.services.globalaccelerator.model.PortOverride;
@@ -152,6 +153,21 @@ public class GlobalAcceleratorJsonHandler {
             }
             case "ListCrossAccountAttachments" -> Response.ok(Map.of("CrossAccountAttachments",
                     service.listCrossAccountAttachments())).build();
+            case "ListCrossAccountResourceAccounts" -> Response.ok(Map.of("ResourceOwnerAwsAccountIds",
+                    service.listCrossAccountResourceAccounts())).build();
+            case "ListCrossAccountResources" -> {
+                PaginatedResult<Map<String, String>> page = service.listCrossAccountResources(
+                        text(request, "AcceleratorArn"),
+                        text(request, "ResourceOwnerAwsAccountId"),
+                        integer(request, "MaxResults"),
+                        text(request, "NextToken"));
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("CrossAccountResources", page.items());
+                if (page.nextToken() != null) {
+                    body.put("NextToken", page.nextToken());
+                }
+                yield Response.ok(body).build();
+            }
 
             case "TagResource" -> {
                 service.tagResource(text(request, "ResourceArn"), tagMap(request.path("Tags")));
