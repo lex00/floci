@@ -160,6 +160,9 @@ The data-plane operations are canned, in the same spirit as `InvokeAgentRuntime`
 - `StopBatchEvaluation` before that first read moves the job to `STOPPED`. Stopping a completed
   job is a `ConflictException`, as is deleting one that has not reached a terminal status.
 - No CloudWatch Logs are read and no results or metrics are written to CloudWatch.
+- Floci writes no trace spans to the `aws/spans` log group. Logs Insights queries over it run on
+  the CloudWatch Logs `StartQuery` subset and return the spans an agent wrote there with
+  `PutLogEvents`.
 
 ## Data plane — `InvokeAgentRuntime`
 
