@@ -243,7 +243,9 @@ query language. Supported commands:
 | `limit N` | The effective cap is the smallest of this value, the `StartQuery` `limit` parameter, and `FLOCI_SERVICES_CLOUDWATCHLOGS_MAX_EVENTS_PER_QUERY` |
 
 Fields may be `@timestamp`, `@message`, `@ingestionTime`, `@ptr`, or a dotted path into
-a JSON log message (for example `level` or `params.job_id`). A `@ptr` column is always
+a JSON log message (for example `level` or `params.job_id`). A path also matches a key that
+holds dots, as OpenTelemetry attribute names do: `attributes.session.id` reads the
+`session.id` key of `attributes`. A `@ptr` column is always
 included in each result row, appended unless `fields` already names it.
 
 A command or filter operator outside this subset fails the query instead of being dropped:

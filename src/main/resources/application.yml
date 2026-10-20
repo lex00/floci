@@ -1060,6 +1060,7 @@ floci:
       # validate-runtime-exists: false        # true = reject unknown runtime ARNs
       # runtime-mode: stub                   # docker = run the runtime's artifact and forward invocations
       # runtime-idle-timeout-seconds: 900     # Stop a session's container after this long unused
+      # write-trace-spans: false             # true = write each InvokeAgentRuntime span to the aws/spans log group
       # runtime-startup-timeout-seconds: 60   # Time a new container has to answer its readiness probe
       # code-runtime-image: python:{version}-slim
       # harness-echo-prefix: 'You said: '      # Prefix on the reply InvokeHarness streams back

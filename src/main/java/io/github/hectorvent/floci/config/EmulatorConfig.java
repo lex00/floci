@@ -3559,6 +3559,13 @@ public interface EmulatorConfig {
         @WithDefault("900")
         int runtimeIdleTimeoutSeconds();
 
+        /**
+         * Write each InvokeAgentRuntime call's server span to the {@code aws/spans} log group, as
+         * AgentCore does with CloudWatch Transaction Search on. Env: FLOCI_SERVICES_BEDROCK_AGENT_CORE_WRITE_TRACE_SPANS
+         */
+        @WithDefault("false")
+        boolean writeTraceSpans();
+
         /** Seconds a new container has to answer its readiness probe. */
         @WithDefault("60")
         int runtimeStartupTimeoutSeconds();

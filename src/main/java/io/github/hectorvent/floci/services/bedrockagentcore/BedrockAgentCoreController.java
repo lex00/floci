@@ -29,8 +29,10 @@ import org.jboss.logging.Logger;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -61,6 +63,7 @@ public class BedrockAgentCoreController {
     private final boolean validateRuntimeExists;
     private final boolean runInDocker;
     private final AgentRuntimeSessions sessions;
+    private final AgentRuntimeSpanWriter spanWriter;
 
     @Inject
     public BedrockAgentCoreController(BedrockAgentCoreService service,
@@ -69,7 +72,8 @@ public class BedrockAgentCoreController {
                                       RegionResolver regionResolver,
                                       ObjectMapper objectMapper,
                                       EmulatorConfig config,
-                                      AgentRuntimeSessions sessions) {
+                                      AgentRuntimeSessions sessions,
+                                      AgentRuntimeSpanWriter spanWriter) {
         this.service = service;
         this.harnessService = harnessService;
         this.controlService = controlService;
@@ -78,6 +82,7 @@ public class BedrockAgentCoreController {
         this.validateRuntimeExists = config.services().bedrockAgentCore().validateRuntimeExists();
         this.runInDocker = "docker".equalsIgnoreCase(config.services().bedrockAgentCore().runtimeMode());
         this.sessions = sessions;
+        this.spanWriter = spanWriter;
     }
 
     @POST
@@ -102,11 +107,22 @@ public class BedrockAgentCoreController {
                     .build();
         }
 
+        Instant start = Instant.now();
         String sessionId = headers.getHeaderString(SESSION_HEADER);
         LOG.debugv("InvokeAgentRuntime: arn={0}, qualifier={1}, bytes={2}",
                 agentRuntimeArn, qualifier, payload == null ? 0 : payload.length);
 
         Response.ResponseBuilder builder = Response.ok(service.invoke(), MediaType.APPLICATION_JSON);
+        if (spanWriter.enabled()) {
+            Optional<AgentRuntime> runtime = controlService.findRuntimeByInvokeArn(region, agentRuntimeArn);
+            spanWriter.write(new AgentRuntimeSpanWriter.Invocation(regionResolver.getAccountId(), region,
+                    agentRuntimeArn,
+                    runtime.map(AgentRuntime::getAgentRuntimeName).orElse(runtimeIdOf(agentRuntimeArn)),
+                    qualifier == null || qualifier.isBlank() ? "DEFAULT" : qualifier,
+                    sessionId != null ? sessionId : UUID.randomUUID().toString(),
+                    headers.getHeaderString("X-Amzn-Trace-Id"), headers.getHeaderString("traceparent"),
+                    start, Instant.now(), 200));
+        }
         if (sessionId != null) {
             builder.header(SESSION_HEADER, sessionId);
         }
@@ -142,19 +158,36 @@ public class BedrockAgentCoreController {
                 forwarded.put(name, value);
             }
         }
+        Instant start = Instant.now();
         AgentRuntimeSessions.Invocation invocation = sessions.invoke(
                 new AgentRuntimeSessions.Target(runtime.getAccountId(), region, runtime, resolved, endpointName),
                 sessionId, forwarded, payload);
         LOG.debugv("InvokeAgentRuntime: runtime={0}, version={1}, session={2}, status={3}",
                 runtime.getAgentRuntimeId(), resolved.getVersion(), sessionId, invocation.status());
+        AgentRuntimeSpanWriter.Invocation span = new AgentRuntimeSpanWriter.Invocation(runtime.getAccountId(),
+                region, agentRuntimeArn, runtime.getAgentRuntimeName(), endpointName, sessionId,
+                headers.getHeaderString("X-Amzn-Trace-Id"), headers.getHeaderString("traceparent"),
+                start, start, invocation.status());
         Response.ResponseBuilder builder = Response.status(invocation.status())
-                .entity(streaming(out -> relay(invocation.body(), out)))
+                .entity(streaming(out -> {
+                    relay(invocation.body(), out);
+                    spanWriter.write(new AgentRuntimeSpanWriter.Invocation(span.accountId(), span.region(),
+                            span.runtimeArn(), span.runtimeName(), span.endpointName(), span.sessionId(),
+                            span.xrayTraceHeader(), span.traceparent(), span.start(), Instant.now(),
+                            span.status()));
+                }))
                 .header(SESSION_HEADER, sessionId);
         invocation.headers().forEach(builder::header);
         if (!invocation.headers().containsKey("Content-Type")) {
             builder.header("Content-Type", MediaType.APPLICATION_OCTET_STREAM);
         }
         return builder.build();
+    }
+
+    /** The runtime id an ARN's {@code runtime/<id>} or {@code agent/<id>} resource names. */
+    private static String runtimeIdOf(String agentRuntimeArn) {
+        int slash = agentRuntimeArn == null ? -1 : agentRuntimeArn.lastIndexOf('/');
+        return slash < 0 ? String.valueOf(agentRuntimeArn) : agentRuntimeArn.substring(slash + 1);
     }
 
     /** Copies the runtime's answer as it arrives, so event streams reach the caller event by event. */
