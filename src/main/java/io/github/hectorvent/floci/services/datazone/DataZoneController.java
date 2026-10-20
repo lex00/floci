@@ -2,6 +2,8 @@ package io.github.hectorvent.floci.services.datazone;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.common.SmithyValidationErrors;
 import io.github.hectorvent.floci.services.datazone.model.DataZoneDomain;
@@ -14,6 +16,7 @@ import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.PATCH;
 import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
@@ -33,18 +36,24 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
-/** Amazon DataZone REST JSON API: domains, projects, glossaries and glossary terms. */
+/**
+ * Amazon DataZone REST JSON API: domains, projects, glossaries and glossary terms, plus the
+ * environments, form types, asset types and user profiles that {@link DataZoneEnvironmentService} keeps.
+ */
 @Path("/v2/domains")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class DataZoneController {
 
     private final DataZoneService service;
+    private final DataZoneEnvironmentService environments;
     private final RegionResolver regionResolver;
 
     @Inject
-    public DataZoneController(DataZoneService service, RegionResolver regionResolver) {
+    public DataZoneController(DataZoneService service, DataZoneEnvironmentService environments,
+                              RegionResolver regionResolver) {
         this.service = service;
+        this.environments = environments;
         this.regionResolver = regionResolver;
     }
 
@@ -80,8 +89,33 @@ public class DataZoneController {
     @DELETE
     @Path("/{identifier}")
     public Response deleteDomain(@Context HttpHeaders headers, @PathParam("identifier") String identifier) {
-        service.deleteDomain(region(headers), identifier);
+        String region = region(headers);
+        String domainId = service.getDomain(region, identifier).getId();
+        service.deleteDomain(region, identifier);
+        environments.deleteDomainResources(region, domainId);
         return Response.status(202).entity(Map.of("status", "DELETING")).build();
+    }
+
+    @PUT
+    @Path("/{identifier}")
+    public Response updateDomain(@Context HttpHeaders headers, @PathParam("identifier") String identifier,
+                                 JsonNode request) {
+        JsonNode body = body(request);
+        DataZoneDomain domain = service.updateDomain(region(headers), identifier, text(body, "name"),
+                text(body, "description"), text(body, "domainExecutionRole"), text(body, "serviceRole"),
+                object(body, "singleSignOn"));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", domain.getId());
+        out.put("rootDomainUnitId", domain.getRootDomainUnitId());
+        putIfPresent(out, "description", domain.getDescription());
+        if (domain.getSingleSignOn() != null) {
+            out.put("singleSignOn", domain.getSingleSignOn());
+        }
+        putIfPresent(out, "domainExecutionRole", domain.getDomainExecutionRole());
+        putIfPresent(out, "serviceRole", domain.getServiceRole());
+        out.put("name", domain.getName());
+        out.put("lastUpdatedAt", epochSeconds(domain.getUpdatedAt()));
+        return Response.ok(out).build();
     }
 
     // Projects
@@ -117,8 +151,249 @@ public class DataZoneController {
     public Response deleteProject(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
                                   @PathParam("identifier") String identifier,
                                   @QueryParam("skipDeletionCheck") boolean skipDeletionCheck) {
-        service.deleteProject(region(headers), domainId, identifier, skipDeletionCheck);
+        String region = region(headers);
+        DataZoneProject project = service.getProject(region, domainId, identifier);
+        if (!skipDeletionCheck && environments.projectHasEnvironments(region, project.getDomainId(), project.getId())) {
+            throw new AwsException("ConflictException", "Project " + identifier + " still has environments.", 409);
+        }
+        service.deleteProject(region, domainId, identifier, skipDeletionCheck);
         return Response.noContent().build();
+    }
+
+    @PATCH
+    @Path("/{domainIdentifier}/projects/{identifier}")
+    public Response updateProject(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                  @PathParam("identifier") String identifier, JsonNode request) {
+        JsonNode body = body(request);
+        DataZoneProject project = service.updateProject(region(headers), domainId, identifier, text(body, "name"),
+                text(body, "description"), text(body, "domainUnitId"), stringList(body.get("glossaryTerms")));
+        return Response.ok(projectBody(project)).build();
+    }
+
+    // Environment blueprints
+
+    @GET
+    @Path("/{domainIdentifier}/environment-blueprints")
+    public Response listEnvironmentBlueprints(@Context HttpHeaders headers,
+                                              @PathParam("domainIdentifier") String domainId,
+                                              @QueryParam("name") String name, @QueryParam("managed") Boolean managed,
+                                              @QueryParam("maxResults") Integer maxResults,
+                                              @QueryParam("nextToken") String nextToken) {
+        return Response.ok(page(environments.listEnvironmentBlueprints(region(headers), domainId, name, managed),
+                maxResults, 50, nextToken, DataZoneController::asMap)).build();
+    }
+
+    @GET
+    @Path("/{domainIdentifier}/environment-blueprints/{identifier}")
+    public Response getEnvironmentBlueprint(@Context HttpHeaders headers,
+                                            @PathParam("domainIdentifier") String domainId,
+                                            @PathParam("identifier") String identifier) {
+        return Response.ok(environments.getEnvironmentBlueprint(region(headers), domainId, identifier)).build();
+    }
+
+    @PUT
+    @Path("/{domainIdentifier}/environment-blueprint-configurations/{blueprintId}")
+    public Response putEnvironmentBlueprintConfiguration(@Context HttpHeaders headers,
+                                                         @PathParam("domainIdentifier") String domainId,
+                                                         @PathParam("blueprintId") String blueprintId,
+                                                         JsonNode request) {
+        return Response.ok(environments.putEnvironmentBlueprintConfiguration(region(headers), domainId, blueprintId,
+                body(request))).build();
+    }
+
+    @GET
+    @Path("/{domainIdentifier}/environment-blueprint-configurations/{blueprintId}")
+    public Response getEnvironmentBlueprintConfiguration(@Context HttpHeaders headers,
+                                                         @PathParam("domainIdentifier") String domainId,
+                                                         @PathParam("blueprintId") String blueprintId) {
+        return Response.ok(environments.getEnvironmentBlueprintConfiguration(region(headers), domainId,
+                blueprintId)).build();
+    }
+
+    @GET
+    @Path("/{domainIdentifier}/environment-blueprint-configurations")
+    public Response listEnvironmentBlueprintConfigurations(@Context HttpHeaders headers,
+                                                           @PathParam("domainIdentifier") String domainId,
+                                                           @QueryParam("maxResults") Integer maxResults,
+                                                           @QueryParam("nextToken") String nextToken) {
+        return Response.ok(page(environments.listEnvironmentBlueprintConfigurations(region(headers), domainId),
+                maxResults, 50, nextToken, DataZoneController::asMap)).build();
+    }
+
+    @DELETE
+    @Path("/{domainIdentifier}/environment-blueprint-configurations/{blueprintId}")
+    public Response deleteEnvironmentBlueprintConfiguration(@Context HttpHeaders headers,
+                                                            @PathParam("domainIdentifier") String domainId,
+                                                            @PathParam("blueprintId") String blueprintId) {
+        environments.deleteEnvironmentBlueprintConfiguration(region(headers), domainId, blueprintId);
+        return Response.noContent().build();
+    }
+
+    // Environment profiles
+
+    @POST
+    @Path("/{domainIdentifier}/environment-profiles")
+    public Response createEnvironmentProfile(@Context HttpHeaders headers,
+                                             @PathParam("domainIdentifier") String domainId, JsonNode request) {
+        return Response.status(201).entity(environments.createEnvironmentProfile(region(headers), domainId,
+                body(request))).build();
+    }
+
+    @GET
+    @Path("/{domainIdentifier}/environment-profiles/{identifier}")
+    public Response getEnvironmentProfile(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                          @PathParam("identifier") String identifier) {
+        return Response.ok(environments.getEnvironmentProfile(region(headers), domainId, identifier)).build();
+    }
+
+    @PATCH
+    @Path("/{domainIdentifier}/environment-profiles/{identifier}")
+    public Response updateEnvironmentProfile(@Context HttpHeaders headers,
+                                             @PathParam("domainIdentifier") String domainId,
+                                             @PathParam("identifier") String identifier, JsonNode request) {
+        return Response.ok(environments.updateEnvironmentProfile(region(headers), domainId, identifier,
+                body(request))).build();
+    }
+
+    @DELETE
+    @Path("/{domainIdentifier}/environment-profiles/{identifier}")
+    public Response deleteEnvironmentProfile(@Context HttpHeaders headers,
+                                             @PathParam("domainIdentifier") String domainId,
+                                             @PathParam("identifier") String identifier) {
+        environments.deleteEnvironmentProfile(region(headers), domainId, identifier);
+        return Response.noContent().build();
+    }
+
+    @GET
+    @Path("/{domainIdentifier}/environment-profiles")
+    public Response listEnvironmentProfiles(@Context HttpHeaders headers,
+                                            @PathParam("domainIdentifier") String domainId,
+                                            @QueryParam("projectIdentifier") String projectId,
+                                            @QueryParam("environmentBlueprintIdentifier") String blueprintId,
+                                            @QueryParam("name") String name,
+                                            @QueryParam("maxResults") Integer maxResults,
+                                            @QueryParam("nextToken") String nextToken) {
+        return Response.ok(page(environments.listEnvironmentProfiles(region(headers), domainId, projectId,
+                blueprintId, name), maxResults, 50, nextToken, DataZoneController::asMap)).build();
+    }
+
+    // Environments
+
+    @POST
+    @Path("/{domainIdentifier}/environments")
+    public Response createEnvironment(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                      JsonNode request) {
+        return Response.status(201).entity(environments.createEnvironment(region(headers), domainId,
+                body(request))).build();
+    }
+
+    @GET
+    @Path("/{domainIdentifier}/environments/{identifier}")
+    public Response getEnvironment(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                   @PathParam("identifier") String identifier) {
+        return Response.ok(environments.getEnvironment(region(headers), domainId, identifier)).build();
+    }
+
+    @PATCH
+    @Path("/{domainIdentifier}/environments/{identifier}")
+    public Response updateEnvironment(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                      @PathParam("identifier") String identifier, JsonNode request) {
+        return Response.ok(environments.updateEnvironment(region(headers), domainId, identifier,
+                body(request))).build();
+    }
+
+    @DELETE
+    @Path("/{domainIdentifier}/environments/{identifier}")
+    public Response deleteEnvironment(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                      @PathParam("identifier") String identifier) {
+        environments.deleteEnvironment(region(headers), domainId, identifier);
+        return Response.noContent().build();
+    }
+
+    @GET
+    @Path("/{domainIdentifier}/environments")
+    public Response listEnvironments(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                     @QueryParam("projectIdentifier") String projectId,
+                                     @QueryParam("environmentProfileIdentifier") String profileId,
+                                     @QueryParam("environmentBlueprintIdentifier") String blueprintId,
+                                     @QueryParam("status") String status, @QueryParam("name") String name,
+                                     @QueryParam("maxResults") Integer maxResults,
+                                     @QueryParam("nextToken") String nextToken) {
+        return Response.ok(page(environments.listEnvironments(region(headers), domainId, projectId, profileId,
+                blueprintId, status, name), maxResults, 50, nextToken, DataZoneController::asMap)).build();
+    }
+
+    // Form types and asset types
+
+    @POST
+    @Path("/{domainIdentifier}/form-types")
+    public Response createFormType(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                   JsonNode request) {
+        return Response.status(201).entity(environments.createFormType(region(headers), domainId, body(request)))
+                .build();
+    }
+
+    @GET
+    @Path("/{domainIdentifier}/form-types/{identifier}")
+    public Response getFormType(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                @PathParam("identifier") String identifier) {
+        return Response.ok(environments.getFormType(region(headers), domainId, identifier)).build();
+    }
+
+    @DELETE
+    @Path("/{domainIdentifier}/form-types/{identifier}")
+    public Response deleteFormType(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                   @PathParam("identifier") String identifier) {
+        environments.deleteFormType(region(headers), domainId, identifier);
+        return Response.noContent().build();
+    }
+
+    @POST
+    @Path("/{domainIdentifier}/asset-types")
+    public Response createAssetType(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                    JsonNode request) {
+        return Response.status(201).entity(environments.createAssetType(region(headers), domainId, body(request)))
+                .build();
+    }
+
+    @GET
+    @Path("/{domainIdentifier}/asset-types/{identifier}")
+    public Response getAssetType(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                 @PathParam("identifier") String identifier) {
+        return Response.ok(environments.getAssetType(region(headers), domainId, identifier)).build();
+    }
+
+    @DELETE
+    @Path("/{domainIdentifier}/asset-types/{identifier}")
+    public Response deleteAssetType(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                    @PathParam("identifier") String identifier) {
+        environments.deleteAssetType(region(headers), domainId, identifier);
+        return Response.noContent().build();
+    }
+
+    // User profiles
+
+    @POST
+    @Path("/{domainIdentifier}/user-profiles")
+    public Response createUserProfile(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                      JsonNode request) {
+        return Response.status(201).entity(environments.createUserProfile(region(headers), domainId, body(request)))
+                .build();
+    }
+
+    @GET
+    @Path("/{domainIdentifier}/user-profiles/{userIdentifier}")
+    public Response getUserProfile(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                   @PathParam("userIdentifier") String userIdentifier) {
+        return Response.ok(environments.getUserProfile(region(headers), domainId, userIdentifier)).build();
+    }
+
+    @PUT
+    @Path("/{domainIdentifier}/user-profiles/{userIdentifier}")
+    public Response updateUserProfile(@Context HttpHeaders headers, @PathParam("domainIdentifier") String domainId,
+                                      @PathParam("userIdentifier") String userIdentifier, JsonNode request) {
+        return Response.ok(environments.updateUserProfile(region(headers), domainId, userIdentifier,
+                body(request))).build();
     }
 
     // Glossaries
@@ -356,6 +631,12 @@ public class DataZoneController {
 
     private String region(HttpHeaders headers) {
         return regionResolver.resolveRegion(headers);
+    }
+
+    private static Map<String, Object> asMap(ObjectNode node) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        node.properties().forEach(e -> out.put(e.getKey(), e.getValue()));
+        return out;
     }
 
     private static JsonNode body(JsonNode request) {

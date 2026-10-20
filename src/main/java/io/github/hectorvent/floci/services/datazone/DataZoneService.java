@@ -154,6 +154,36 @@ public class DataZoneService implements TagHandler, Resettable {
         domains.delete(domainKey(region, domain.getId()));
     }
 
+    public DataZoneDomain updateDomain(String region, String identifier, String name, String description,
+                                       String domainExecutionRole, String serviceRole, JsonNode singleSignOn) {
+        DataZoneDomain domain = getDomain(region, identifier);
+        if (domainExecutionRole != null) {
+            validateRole(domainExecutionRole, "domainExecutionRole");
+            domain.setDomainExecutionRole(domainExecutionRole);
+        }
+        if (serviceRole != null) {
+            validateRole(serviceRole, "serviceRole");
+            domain.setServiceRole(serviceRole);
+        }
+        if (name != null && !name.equals(domain.getName())) {
+            boolean nameTaken = listDomains(region, null).stream().anyMatch(d -> d.getName().equals(name));
+            if (nameTaken) {
+                throw conflict("A domain with name " + name + " already exists.");
+            }
+            domain.setName(name);
+        }
+        if (description != null) {
+            domain.setDescription(description);
+        }
+        if (singleSignOn != null) {
+            domain.setSingleSignOn(singleSignOn);
+        }
+        domain.setUpdatedAt(Instant.now().toEpochMilli());
+        domain.setUpdatedBy(regionResolver.getAccountId());
+        domains.put(domainKey(region, domain.getId()), domain);
+        return domain;
+    }
+
     // Projects
 
     public DataZoneProject createProject(String region, String domainIdentifier, String name, String description,
@@ -200,6 +230,38 @@ public class DataZoneService implements TagHandler, Resettable {
                 .filter(p -> name == null || p.getName().contains(name))
                 .sorted(Comparator.comparingLong(DataZoneProject::getCreatedAt).thenComparing(DataZoneProject::getId))
                 .toList();
+    }
+
+    public DataZoneProject updateProject(String region, String domainIdentifier, String identifier, String name,
+                                         String description, String domainUnitId, List<String> glossaryTerms) {
+        DataZoneProject project = getProject(region, domainIdentifier, identifier);
+        if (name != null && !name.equals(project.getName())) {
+            if (!PROJECT_NAME.matcher(name).matches() || name.length() > 64) {
+                throw SmithyValidationErrors.validationException("Value '" + name
+                        + "' at 'name' failed to satisfy constraint: Member must satisfy regular expression pattern: "
+                        + "[\\w -]+");
+            }
+            boolean nameTaken = listProjects(region, project.getDomainId(), null).stream()
+                    .anyMatch(p -> p.getName().equals(name));
+            if (nameTaken) {
+                throw conflict("A project with name " + name + " already exists in domain "
+                        + project.getDomainId() + ".");
+            }
+            project.setName(name);
+        }
+        if (description != null) {
+            project.setDescription(description);
+        }
+        if (domainUnitId != null) {
+            project.setDomainUnitId(domainUnitId);
+        }
+        if (glossaryTerms != null) {
+            project.setGlossaryTerms(List.copyOf(glossaryTerms));
+        }
+        project.setUpdatedAt(Instant.now().toEpochMilli());
+        project.setUpdatedBy(regionResolver.getAccountId());
+        projects.put(childKey(region, project.getDomainId(), project.getId()), project);
+        return project;
     }
 
     /** Refuses a project that still owns glossaries unless {@code skipDeletionCheck} is set. */
