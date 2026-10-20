@@ -14,6 +14,7 @@ import jakarta.ws.rs.core.Response;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -51,6 +52,27 @@ class CloudWatchMetricsTagsTest {
 
         Map<String, String> tags = service.listTagsForResource(alarm.getAlarmArn(), REGION);
         assertTrue(tags.isEmpty());
+    }
+
+    @Test
+    void putMetricAlarmUpdateKeepsTheTagsTheAlarmHas() {
+        MetricAlarm alarm = new MetricAlarm();
+        alarm.setAlarmName("tagged-alarm");
+        alarm.setTags(new HashMap<>(Map.of("owner", "ops")));
+        service.putMetricAlarm(alarm, REGION);
+        String arn = alarm.getAlarmArn();
+
+        MetricAlarm update = new MetricAlarm();
+        update.setAlarmName("tagged-alarm");
+        update.setAlarmDescription("changed");
+        service.putMetricAlarm(update, REGION);
+        assertEquals(Map.of("owner", "ops"), service.listTagsForResource(arn, REGION));
+
+        MetricAlarm retag = new MetricAlarm();
+        retag.setAlarmName("tagged-alarm");
+        retag.setTags(new HashMap<>(Map.of("owner", "someone-else")));
+        service.putMetricAlarm(retag, REGION);
+        assertEquals(Map.of("owner", "ops"), service.listTagsForResource(arn, REGION));
     }
 
     @Test

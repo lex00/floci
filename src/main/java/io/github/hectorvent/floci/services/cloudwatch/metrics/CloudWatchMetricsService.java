@@ -302,7 +302,10 @@ public class CloudWatchMetricsService {
         }
         alarm.setRegion(region);
         alarm.setAlarmConfigurationUpdatedTimestamp(Instant.now().getEpochSecond());
-        alarmStore.put(region + "::" + alarm.getAlarmName(), alarm);
+        String key = region + "::" + alarm.getAlarmName();
+        // Tags apply only on create: updating an alarm keeps the tags it already has.
+        alarmStore.get(key).ifPresent(existing -> alarm.setTags(existing.getTags()));
+        alarmStore.put(key, alarm);
         LOG.infov("PutMetricAlarm: {0} in {1}", alarm.getAlarmName(), region);
     }
 
