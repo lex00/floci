@@ -89,6 +89,55 @@ class ArcRegionSwitchIntegrationTest {
         rpcV2("DeletePlan", get);
     }
 
+    @Test
+    void executionWaitsForManualApproval() {
+        String arn = call("CreatePlan", """
+                {"name":"exec-plan","regions":["us-east-1","us-west-2"],"recoveryApproach":"activePassive",
+                 "primaryRegion":"us-east-1","executionRole":"arn:aws:iam::000000000000:role/switch",
+                 "workflows":[{"workflowTargetAction":"activate","workflowTargetRegion":"us-west-2","steps":[
+                   {"name":"approve","executionBlockType":"ManualApproval",
+                    "executionBlockConfiguration":{"executionApprovalConfig":{"approvalRole":"arn:aws:iam::000000000000:role/a"}}},
+                   {"name":"dns","executionBlockType":"Route53HealthCheck",
+                    "executionBlockConfiguration":{"route53HealthCheckConfig":{"hostedZoneId":"Z123","recordName":"app.example.com",
+                     "crossAccountRole":"arn:aws:iam::000000000000:role/a"}}}]}]}
+                """)
+                .statusCode(200).extract().path("plan.arn");
+
+        String executionId = call("StartPlanExecution",
+                "{\"planArn\":\"" + arn + "\",\"targetRegion\":\"us-west-2\",\"action\":\"activate\"}")
+                .statusCode(200)
+                .body("activateRegion", equalTo("us-west-2"))
+                .body("deactivateRegion", equalTo("us-east-1"))
+                .extract().path("executionId");
+        String execution = "{\"planArn\":\"" + arn + "\",\"executionId\":\"" + executionId + "\"}";
+        call("GetPlanExecution", execution)
+                .statusCode(200)
+                .body("executionState", equalTo("pendingManualApproval"))
+                .body("stepStates[0].status", equalTo("pendingApproval"))
+                .body("plan.arn", equalTo(arn));
+        call("StartPlanExecution",
+                "{\"planArn\":\"" + arn + "\",\"targetRegion\":\"us-west-2\",\"action\":\"activate\"}")
+                .statusCode(400)
+                .body("__type", equalTo("IllegalStateException"));
+
+        call("ApprovePlanExecutionStep", "{\"planArn\":\"" + arn + "\",\"executionId\":\"" + executionId
+                + "\",\"stepName\":\"approve\",\"approval\":\"approve\"}").statusCode(200);
+        call("GetPlanExecution", execution)
+                .statusCode(200)
+                .body("executionState", equalTo("completed"))
+                .body("stepStates[1].status", equalTo("completed"));
+        call("ListPlanExecutions", "{\"planArn\":\"" + arn + "\"}")
+                .statusCode(200).body("items.executionId", hasItem(executionId));
+        call("ListPlanExecutionEvents", execution)
+                .statusCode(200).body("items.type", hasItem("executionSucceeded"));
+        call("ListRoute53HealthChecks", "{\"arn\":\"" + arn + "\"}")
+                .statusCode(200).body("healthChecks.region", hasItem("us-west-2"));
+        call("GetPlanEvaluationStatus", "{\"planArn\":\"" + arn + "\"}")
+                .statusCode(200).body("evaluationState", equalTo("passed"));
+
+        call("DeletePlan", "{\"arn\":\"" + arn + "\"}").statusCode(200);
+    }
+
     private static byte[] rpcV2(String operation, ObjectNode body) throws Exception {
         return given()
                 .contentType("application/cbor")
