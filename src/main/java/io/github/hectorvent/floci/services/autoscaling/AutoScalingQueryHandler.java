@@ -1055,15 +1055,20 @@ public class AutoScalingQueryHandler {
     // ── Scaling policies ───────────────────────────────────────────────────────
 
     private Response handlePutScalingPolicy(MultivaluedMap<String, String> p, String region) {
+        ScalingPolicy request = new ScalingPolicy();
+        request.setPolicyType(p.getFirst("PolicyType"));
+        request.setAdjustmentType(p.getFirst("AdjustmentType"));
+        request.setScalingAdjustment(intParam(p, "ScalingAdjustment", 0));
+        request.setCooldown(nullableIntParam(p, "Cooldown"));
+        request.setEnabled(nullableBoolParam(p, "Enabled"));
+        request.setMetricAggregationType(p.getFirst("MetricAggregationType"));
+        request.setMinAdjustmentMagnitude(nullableIntParam(p, "MinAdjustmentMagnitude"));
+        request.setEstimatedInstanceWarmup(nullableIntParam(p, "EstimatedInstanceWarmup"));
+        request.setTargetTrackingConfiguration(parseTargetTrackingConfiguration(p));
+        request.setStepAdjustments(parseStepAdjustments(p));
+        request.setPredictiveScalingConfiguration(parsePredictiveScalingConfiguration(p));
         ScalingPolicy policy = service.putScalingPolicy(region,
-                p.getFirst("AutoScalingGroupName"),
-                p.getFirst("PolicyName"),
-                p.getFirst("PolicyType"),
-                p.getFirst("AdjustmentType"),
-                intParam(p, "ScalingAdjustment", 0),
-                intParam(p, "Cooldown", 300),
-                nullableIntParam(p, "EstimatedInstanceWarmup"),
-                parseTargetTrackingConfiguration(p));
+                p.getFirst("AutoScalingGroupName"), p.getFirst("PolicyName"), request);
         return ok(new XmlBuilder()
                 .start("PutScalingPolicyResponse", NS)
                   .start("PutScalingPolicyResult")
@@ -1096,12 +1101,21 @@ public class AutoScalingQueryHandler {
                .elem("AutoScalingGroupName", policy.getAutoScalingGroupName())
                .elem("PolicyType", policy.getPolicyType() != null ? policy.getPolicyType() : "SimpleScaling")
                .elem("ScalingAdjustment", String.valueOf(policy.getScalingAdjustment()))
-               .elem("Cooldown", String.valueOf(policy.getCooldown()));
+               .elem("Enabled", String.valueOf(!Boolean.FALSE.equals(policy.getEnabled())));
+            if (policy.getCooldown() != null) { xml.elem("Cooldown", String.valueOf(policy.getCooldown())); }
             if (policy.getAdjustmentType() != null) { xml.elem("AdjustmentType", policy.getAdjustmentType()); }
+            if (policy.getMinAdjustmentMagnitude() != null) {
+                xml.elem("MinAdjustmentMagnitude", String.valueOf(policy.getMinAdjustmentMagnitude()));
+            }
+            if (policy.getMetricAggregationType() != null) {
+                xml.elem("MetricAggregationType", policy.getMetricAggregationType());
+            }
             if (policy.getEstimatedInstanceWarmup() != null) {
                 xml.elem("EstimatedInstanceWarmup", String.valueOf(policy.getEstimatedInstanceWarmup()));
             }
             appendTargetTrackingConfigurationXml(xml, policy.getTargetTrackingConfiguration());
+            appendStepAdjustmentsXml(xml, policy.getStepAdjustments());
+            appendPredictiveScalingConfigurationXml(xml, policy.getPredictiveScalingConfiguration());
             xml.end("member");
         }
         xml.end("ScalingPolicies")
@@ -1109,6 +1123,144 @@ public class AutoScalingQueryHandler {
            .raw(AwsQueryResponse.responseMetadata())
            .end("DescribePoliciesResponse");
         return ok(xml.build());
+    }
+
+    private static List<ScalingPolicy.StepAdjustment> parseStepAdjustments(MultivaluedMap<String, String> p) {
+        List<ScalingPolicy.StepAdjustment> steps = new ArrayList<>();
+        for (int i = 1; p.getFirst("StepAdjustments.member." + i + ".ScalingAdjustment") != null; i++) {
+            String base = "StepAdjustments.member." + i + ".";
+            ScalingPolicy.StepAdjustment step = new ScalingPolicy.StepAdjustment();
+            step.setScalingAdjustment(requiredInt(p.getFirst(base + "ScalingAdjustment"), "ScalingAdjustment"));
+            step.setMetricIntervalLowerBound(nullableDoubleParam(p, base + "MetricIntervalLowerBound"));
+            step.setMetricIntervalUpperBound(nullableDoubleParam(p, base + "MetricIntervalUpperBound"));
+            steps.add(step);
+        }
+        return steps;
+    }
+
+    private static int requiredInt(String value, String member) {
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            throw new AwsException("ValidationError", member + " must be an integer.", 400);
+        }
+    }
+
+    private static void appendStepAdjustmentsXml(XmlBuilder xml, List<ScalingPolicy.StepAdjustment> steps) {
+        if (steps == null || steps.isEmpty()) {
+            return;
+        }
+        xml.start("StepAdjustments");
+        for (ScalingPolicy.StepAdjustment step : steps) {
+            xml.start("member");
+            if (step.getMetricIntervalLowerBound() != null) {
+                xml.elem("MetricIntervalLowerBound", String.valueOf(step.getMetricIntervalLowerBound()));
+            }
+            if (step.getMetricIntervalUpperBound() != null) {
+                xml.elem("MetricIntervalUpperBound", String.valueOf(step.getMetricIntervalUpperBound()));
+            }
+            xml.elem("ScalingAdjustment", String.valueOf(step.getScalingAdjustment()))
+               .end("member");
+        }
+        xml.end("StepAdjustments");
+    }
+
+    private static final String PSC = "PredictiveScalingConfiguration.";
+
+    private static ScalingPolicy.PredictiveScalingConfiguration parsePredictiveScalingConfiguration(
+            MultivaluedMap<String, String> p) {
+        List<ScalingPolicy.PredictiveScalingMetricSpecification> specs = new ArrayList<>();
+        for (int i = 1; ; i++) {
+            String base = PSC + "MetricSpecifications.member." + i + ".";
+            Double targetValue = nullableDoubleParam(p, base + "TargetValue");
+            ScalingPolicy.PredefinedMetricSpecification pair =
+                    parsePredefinedMetric(p, base + "PredefinedMetricPairSpecification.");
+            ScalingPolicy.PredefinedMetricSpecification scaling =
+                    parsePredefinedMetric(p, base + "PredefinedScalingMetricSpecification.");
+            ScalingPolicy.PredefinedMetricSpecification load =
+                    parsePredefinedMetric(p, base + "PredefinedLoadMetricSpecification.");
+            if (targetValue == null && pair == null && scaling == null && load == null) {
+                break;
+            }
+            ScalingPolicy.PredictiveScalingMetricSpecification spec =
+                    new ScalingPolicy.PredictiveScalingMetricSpecification();
+            spec.setTargetValue(targetValue);
+            spec.setPredefinedMetricPairSpecification(pair);
+            spec.setPredefinedScalingMetricSpecification(scaling);
+            spec.setPredefinedLoadMetricSpecification(load);
+            specs.add(spec);
+        }
+        if (specs.isEmpty()) {
+            return null;
+        }
+        ScalingPolicy.PredictiveScalingConfiguration configuration = new ScalingPolicy.PredictiveScalingConfiguration();
+        configuration.setMetricSpecifications(specs);
+        configuration.setMode(p.getFirst(PSC + "Mode"));
+        configuration.setSchedulingBufferTime(parseMetricPeriod(p.getFirst(PSC + "SchedulingBufferTime"),
+                "SchedulingBufferTime"));
+        configuration.setMaxCapacityBreachBehavior(p.getFirst(PSC + "MaxCapacityBreachBehavior"));
+        String buffer = p.getFirst(PSC + "MaxCapacityBuffer");
+        configuration.setMaxCapacityBuffer(buffer == null || buffer.isBlank() ? null : requiredInt(buffer, "MaxCapacityBuffer"));
+        return configuration;
+    }
+
+    private static ScalingPolicy.PredefinedMetricSpecification parsePredefinedMetric(
+            MultivaluedMap<String, String> p, String prefix) {
+        String type = p.getFirst(prefix + "PredefinedMetricType");
+        if (type == null) {
+            return null;
+        }
+        ScalingPolicy.PredefinedMetricSpecification spec = new ScalingPolicy.PredefinedMetricSpecification();
+        spec.setPredefinedMetricType(type);
+        spec.setResourceLabel(p.getFirst(prefix + "ResourceLabel"));
+        return spec;
+    }
+
+    private static void appendPredefinedMetricXml(XmlBuilder xml, String element,
+                                                  ScalingPolicy.PredefinedMetricSpecification spec) {
+        if (spec == null) {
+            return;
+        }
+        xml.start(element).elem("PredefinedMetricType", spec.getPredefinedMetricType());
+        if (spec.getResourceLabel() != null) {
+            xml.elem("ResourceLabel", spec.getResourceLabel());
+        }
+        xml.end(element);
+    }
+
+    private static void appendPredictiveScalingConfigurationXml(
+            XmlBuilder xml, ScalingPolicy.PredictiveScalingConfiguration configuration) {
+        if (configuration == null) {
+            return;
+        }
+        xml.start("PredictiveScalingConfiguration").start("MetricSpecifications");
+        for (ScalingPolicy.PredictiveScalingMetricSpecification spec : configuration.getMetricSpecifications()) {
+            xml.start("member");
+            if (spec.getTargetValue() != null) {
+                xml.elem("TargetValue", String.valueOf(spec.getTargetValue()));
+            }
+            appendPredefinedMetricXml(xml, "PredefinedMetricPairSpecification",
+                    spec.getPredefinedMetricPairSpecification());
+            appendPredefinedMetricXml(xml, "PredefinedScalingMetricSpecification",
+                    spec.getPredefinedScalingMetricSpecification());
+            appendPredefinedMetricXml(xml, "PredefinedLoadMetricSpecification",
+                    spec.getPredefinedLoadMetricSpecification());
+            xml.end("member");
+        }
+        xml.end("MetricSpecifications");
+        if (configuration.getMode() != null) {
+            xml.elem("Mode", configuration.getMode());
+        }
+        if (configuration.getSchedulingBufferTime() != null) {
+            xml.elem("SchedulingBufferTime", String.valueOf(configuration.getSchedulingBufferTime()));
+        }
+        if (configuration.getMaxCapacityBreachBehavior() != null) {
+            xml.elem("MaxCapacityBreachBehavior", configuration.getMaxCapacityBreachBehavior());
+        }
+        if (configuration.getMaxCapacityBuffer() != null) {
+            xml.elem("MaxCapacityBuffer", String.valueOf(configuration.getMaxCapacityBuffer()));
+        }
+        xml.end("PredictiveScalingConfiguration");
     }
 
     private static final String TTC = "TargetTrackingConfiguration.";

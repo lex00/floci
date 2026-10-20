@@ -1166,19 +1166,41 @@ public class AutoScalingService {
                                            int scalingAdjustment, int cooldown,
                                            Integer estimatedInstanceWarmup,
                                            ScalingPolicy.TargetTrackingConfiguration targetTrackingConfiguration) {
+        ScalingPolicy request = new ScalingPolicy();
+        request.setPolicyType(policyType);
+        request.setAdjustmentType(adjustmentType);
+        request.setScalingAdjustment(scalingAdjustment);
+        request.setCooldown(cooldown);
+        request.setEstimatedInstanceWarmup(estimatedInstanceWarmup);
+        request.setTargetTrackingConfiguration(targetTrackingConfiguration);
+        return putScalingPolicy(region, asgName, policyName, request);
+    }
+
+    /**
+     * Stores the policy the request describes. Cooldown applies to SimpleScaling only, defaulting
+     * to 300 there and dropped for every other type; Enabled defaults to true.
+     */
+    public ScalingPolicy putScalingPolicy(String region, String asgName, String policyName, ScalingPolicy request) {
         requireGroup(region, asgName);
         String key = policyKey(region, asgName, policyName);
         ScalingPolicy policy = policies.computeIfAbsent(key, k -> new ScalingPolicy());
+        String policyType = request.getPolicyType() != null ? request.getPolicyType() : "SimpleScaling";
+        boolean simple = "SimpleScaling".equals(policyType);
         policy.setPolicyName(policyName);
         policy.setPolicyArn(AwsArnUtils.Arn.of("autoscaling", region, regionResolver.getAccountId(),
                 "scalingPolicy:" + asgName + ":" + policyName).toString());
         policy.setAutoScalingGroupName(asgName);
-        policy.setPolicyType(policyType != null ? policyType : "SimpleScaling");
-        policy.setAdjustmentType(adjustmentType);
-        policy.setScalingAdjustment(scalingAdjustment);
-        policy.setCooldown(cooldown);
-        policy.setEstimatedInstanceWarmup(estimatedInstanceWarmup);
-        policy.setTargetTrackingConfiguration(targetTrackingConfiguration);
+        policy.setPolicyType(policyType);
+        policy.setAdjustmentType(request.getAdjustmentType());
+        policy.setScalingAdjustment(request.getScalingAdjustment());
+        policy.setCooldown(simple ? (request.getCooldown() != null ? request.getCooldown() : 300) : null);
+        policy.setEnabled(request.getEnabled() != null ? request.getEnabled() : Boolean.TRUE);
+        policy.setMetricAggregationType(request.getMetricAggregationType());
+        policy.setMinAdjustmentMagnitude(request.getMinAdjustmentMagnitude());
+        policy.setEstimatedInstanceWarmup(request.getEstimatedInstanceWarmup());
+        policy.setTargetTrackingConfiguration(request.getTargetTrackingConfiguration());
+        policy.setStepAdjustments(request.getStepAdjustments());
+        policy.setPredictiveScalingConfiguration(request.getPredictiveScalingConfiguration());
         policy.setRegion(region);
         policies.put(key, policy);
         return policy;
