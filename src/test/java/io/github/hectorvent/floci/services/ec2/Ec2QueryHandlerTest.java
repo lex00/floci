@@ -276,7 +276,7 @@ class Ec2QueryHandlerTest {
         return new Ec2QueryHandler(
                 service, mock(EmulatorConfig.class), mock(FlowLogService.class),
                 mock(Ec2EbsEncryptionService.class), mock(Ec2SnapshotBlockPublicAccessService.class),
-                mock(Ec2IpamService.class), regionResolver);
+                mock(Ec2IpamService.class), regionResolver, mock(Ec2PlacementGroupService.class));
     }
 
     private MultivaluedMap<String, String> createSubnetParams(String cidrBlock) {

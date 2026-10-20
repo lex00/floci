@@ -622,6 +622,18 @@ still carrying instances on release, goes to `unsuccessful` instead of failing t
 tenancy to `host` and, without a subnet, the zone to the host's. `hostProperties` reports a
 fixed socket/core/vCPU shape rather than one derived from the instance family.
 
+### Placement Groups
+
+| Action | Description |
+|--------|-------------|
+| CreatePlacementGroup | Creates a `cluster`, `spread` or `partition` group, `available` immediately, with `placement-group` tags from `TagSpecification`. |
+| DescribePlacementGroups | Lists groups by `GroupName.N`, `GroupId.N` and the `group-name`, `group-arn`, `state`, `strategy`, `spread-level`, `tag:` and `tag-key` filters. |
+| DeletePlacementGroup | Deletes the group named by `GroupName`. |
+
+`Strategy` defaults to `cluster`. A `partition` group defaults to 2 partitions (1 to 7), and a
+`spread` group to the `rack` spread level. A repeated name fails with
+`InvalidPlacementGroup.Duplicate`, and an unknown name with `InvalidPlacementGroup.Unknown`.
+
 ### Elastic IPs
 
 | Action | Description |

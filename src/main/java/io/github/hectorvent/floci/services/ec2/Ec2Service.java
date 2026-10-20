@@ -8401,6 +8401,11 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
         }
     }
 
+    /** Drops every tag of a resource that no longer exists. */
+    public void removeResourceTags(String resourceId) {
+        tags.delete(resourceId);
+    }
+
     /** The tags currently on one resource, as CreateTags and DeleteTags maintain them. */
     public List<Tag> resourceTags(String resourceId) {
         return List.copyOf(tags.get(resourceId).orElse(List.of()));
@@ -8480,6 +8485,9 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
         }
         if (resourceId.startsWith("h-")) {
             return "dedicated-host";
+        }
+        if (resourceId.startsWith("pg-")) {
+            return "placement-group";
         }
         if (resourceId.startsWith("vpc-")) {
             return "vpc";

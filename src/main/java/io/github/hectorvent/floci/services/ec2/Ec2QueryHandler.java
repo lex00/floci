@@ -47,12 +47,14 @@ public class Ec2QueryHandler {
     private final Ec2SnapshotBlockPublicAccessService snapshotBlockPublicAccessService;
     private final Ec2IpamService ipamService;
     private final RegionResolver regionResolver;
+    private final Ec2PlacementGroupService placementGroupService;
 
     @Inject
     public Ec2QueryHandler(Ec2Service service, EmulatorConfig config, FlowLogService flowLogService,
                            Ec2EbsEncryptionService ebsEncryptionService,
                            Ec2SnapshotBlockPublicAccessService snapshotBlockPublicAccessService,
-                           Ec2IpamService ipamService, RegionResolver regionResolver) {
+                           Ec2IpamService ipamService, RegionResolver regionResolver,
+                           Ec2PlacementGroupService placementGroupService) {
         this.service = service;
         this.config = config;
         this.flowLogService = flowLogService;
@@ -60,6 +62,7 @@ public class Ec2QueryHandler {
         this.snapshotBlockPublicAccessService = snapshotBlockPublicAccessService;
         this.ipamService = ipamService;
         this.regionResolver = regionResolver;
+        this.placementGroupService = placementGroupService;
     }
 
     public Response handle(String action, MultivaluedMap<String, String> params, String region) {
@@ -255,6 +258,9 @@ public class Ec2QueryHandler {
                 case "CancelCapacityReservation" -> handleCancelCapacityReservation(params, region);
                 // Dedicated Hosts
                 case "AllocateHosts" -> handleAllocateHosts(params, region);
+                case "CreatePlacementGroup" -> handleCreatePlacementGroup(params, region);
+                case "DescribePlacementGroups" -> handleDescribePlacementGroups(params, region);
+                case "DeletePlacementGroup" -> handleDeletePlacementGroup(params, region);
                 case "DescribeHosts" -> handleDescribeHosts(params, region);
                 case "ModifyHosts" -> handleModifyHosts(params, region);
                 case "ReleaseHosts" -> handleReleaseHosts(params, region);
@@ -4207,6 +4213,60 @@ public class Ec2QueryHandler {
     }
 
     // ─── Dedicated Host handlers ──────────────────────────────────────────────
+
+    private Response handleCreatePlacementGroup(MultivaluedMap<String, String> p, String region) {
+        List<Tag> groupTags = parseTagsForResource(p, "placement-group");
+        PlacementGroup group = placementGroupService.createPlacementGroup(region, p.getFirst("GroupName"),
+                p.getFirst("Strategy"), intOrNull(p, "PartitionCount"), p.getFirst("SpreadLevel"));
+        applyResourceTags(groupTags, region, group.getGroupId());
+        return xmlResponse(new XmlBuilder()
+                .start("CreatePlacementGroupResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .start("placementGroup").raw(placementGroupXml(group)).end("placementGroup")
+                .end("CreatePlacementGroupResponse").build());
+    }
+
+    private Response handleDescribePlacementGroups(MultivaluedMap<String, String> p, String region) {
+        Map<String, List<String>> filters = getFilters(p);
+        List<PlacementGroup> found = placementGroupService.describePlacementGroups(region,
+                getList(p, "GroupName"), getList(p, "GroupId")).stream()
+                .filter(group -> filters.entrySet().stream().allMatch(filter ->
+                        Ec2PlacementGroupService.matchesFilter(group, filter.getKey(), filter.getValue(),
+                                service.resourceTags(group.getGroupId()))))
+                .toList();
+        XmlBuilder xml = new XmlBuilder()
+                .start("DescribePlacementGroupsResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .start("placementGroupSet");
+        for (PlacementGroup group : found) {
+            xml.start("item").raw(placementGroupXml(group)).end("item");
+        }
+        xml.end("placementGroupSet").end("DescribePlacementGroupsResponse");
+        return xmlResponse(xml.build());
+    }
+
+    private Response handleDeletePlacementGroup(MultivaluedMap<String, String> p, String region) {
+        PlacementGroup deleted = placementGroupService.deletePlacementGroup(region, p.getFirst("GroupName"));
+        service.removeResourceTags(deleted.getGroupId());
+        return booleanResponse("DeletePlacementGroup");
+    }
+
+    private String placementGroupXml(PlacementGroup group) {
+        XmlBuilder xml = new XmlBuilder()
+                .elem("groupName", group.getGroupName())
+                .elem("state", group.getState())
+                .elem("strategy", group.getStrategy());
+        if (group.getPartitionCount() != null) {
+            xml.elem("partitionCount", String.valueOf(group.getPartitionCount()));
+        }
+        xml.elem("groupId", group.getGroupId())
+                .raw(tagSetXml(service.resourceTags(group.getGroupId())))
+                .elem("groupArn", group.getGroupArn());
+        if (group.getSpreadLevel() != null) {
+            xml.elem("spreadLevel", group.getSpreadLevel());
+        }
+        return xml.build();
+    }
 
     private Response handleAllocateHosts(MultivaluedMap<String, String> p, String region) {
         List<Tag> resourceTags = parseTagsForResource(p, "dedicated-host");
