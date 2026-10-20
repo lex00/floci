@@ -15,6 +15,7 @@ Floci is configured exclusively through environment variables. Every option belo
 | `FLOCI_PARTITIONS_STRICT` | `false` | Reject requests signed for a service AWS does not publish in the request's partition (CloudFront in `aws-us-gov`, Lightsail in `aws-cn`) with a 404 `UnknownOperationException`, mirroring the host that fails to resolve on AWS. See [AWS Partitions](./partitions.md#partition-absent-services) |
 | `FLOCI_PARTITIONS_ALLOW_UNKNOWN_REGIONS` | `false` | Accept a request signed for a region no AWS partition publishes or admits by its region pattern (`polygondwanaland-west-1`), giving the label its own namespace. Off, such a request is refused with a 400, as moto and LocalStack refuse it. See [AWS Partitions](./partitions.md#which-partition-a-request-belongs-to) |
 | `FLOCI_DEFAULT_ACCOUNT_ID` | `000000000000` | Fallback account ID used in ARNs when the request's access key is not exactly 12 digits. When the access key IS 12 digits, it is used directly as the account ID — see [Multi-Account Isolation](./multi-account.md) |
+| `FLOCI_ALLOWED_REGIONS` | _(none)_ | Comma-separated regions the account can reach, as a region-restriction service control policy allows. A request signed for any other region gets `AccessDenied` in its protocol's error shape. `DescribeRegions` still lists every region. Leaving it unset keeps every region reachable |
 | `FLOCI_DEFAULT_AVAILABILITY_ZONE` | `us-east-1a` | Availability zone reported in EC2 and other responses |
 
 ---

@@ -66,6 +66,13 @@ public interface EmulatorConfig {
     @WithDefault("000000000000")
     String defaultAccountId();
 
+    /**
+     * Regions the account can reach, in the manner of a region-restriction service control
+     * policy. Unset means every region. When set, a request signed for any other region is
+     * refused with AccessDenied; DescribeRegions still lists every region.
+     */
+    Optional<List<String>> allowedRegions();
+
     PartitionsConfig partitions();
 
     /**
