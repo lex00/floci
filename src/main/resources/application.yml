@@ -134,6 +134,7 @@ quarkus:
       - --initialize-at-run-time=io.github.hectorvent.floci.core.common.Totp
       - --initialize-at-run-time=io.github.hectorvent.floci.services.route53.Route53Service
       - --initialize-at-run-time=io.github.hectorvent.floci.services.kms.KmsService
+      - --initialize-at-run-time=io.github.hectorvent.floci.services.workspaces.WorkSpacesService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.bedrockagentcore.BedrockAgentCoreEventService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.opensearchserverless.OpenSearchServerlessService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.arcregionswitch.ArcRegionSwitchService
@@ -954,6 +955,12 @@ floci:
     rum:
       enabled: true
     networkfirewall:
+      enabled: true
+    appstream:
+      enabled: true
+    workspaces:
+      enabled: true
+    workspacesweb:
       enabled: true
     servicecatalog:
       enabled: true

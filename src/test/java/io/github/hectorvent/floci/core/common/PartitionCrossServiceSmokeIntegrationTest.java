@@ -40,6 +40,7 @@ class PartitionCrossServiceSmokeIntegrationTest {
     static final Set<String> COVERED_PACKAGES = Set.of(
             "accessanalyzer", "acm", "amazonmq", "apigateway", "apigatewayv2", "appflow", "applicationautoscaling",
             "appsync",
+            "accessanalyzer", "acm", "amazonmq", "apigateway", "apigatewayv2", "applicationautoscaling", "appstream", "appsync",
             "aps", "autoscaling", "backup", "batch", "bcmdataexports", "bedrock", "bedrockagentcore", "bedrockagentcorecontrol", "ce",
             "cloudfront", "cloudmap", "cloudwatch", "codebuild", "codedeploy", "codepipeline", "cognito",
             "configservice", "connect", "controlcatalog", "controltower", "datasync", "datazone", "dlm", "dms", "dynamodb", "ec2",
@@ -49,7 +50,7 @@ class PartitionCrossServiceSmokeIntegrationTest {
             "oam", "opensearch", "opensearchserverless", "organizations", "pipes", "ram", "rds", "redshift", "redshiftserverless",
             "resourceexplorer2", "route53", "route53resolver",
             "s3tables", "s3vectors", "sagemaker", "scheduler", "secretsmanager", "servicequotas", "ses", "sns", "sqs",
-            "stepfunctions", "timestreaminfluxdb", "transfer", "verifiedpermissions", "wafv2");
+            "stepfunctions", "timestreaminfluxdb", "transfer", "verifiedpermissions", "wafv2", "workspaces");
 
     private static final String JSON_1_0 = "application/x-amz-json-1.0";
     private static final String JSON_1_1 = "application/x-amz-json-1.1";
@@ -997,6 +998,38 @@ class PartitionCrossServiceSmokeIntegrationTest {
             .extract().jsonPath().getString("RuleGroupResponse.RuleGroupArn");
         cleanup.register(() -> json10(region, "network-firewall", "NetworkFirewall_20201112.DeleteRuleGroup",
                 "{\"RuleGroupName\":\"" + name + "\",\"Type\":\"STATEFUL\"}").when().post("/"));
+        PartitionMatrix.assertArnIn(partitionCase, arn);
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void appStreamStackArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "appstream");
+        String name = unique("smoke-stack", partitionCase);
+        String arn = json11(region, "appstream", "PhotonAdminProxyService.CreateStack", "{\"Name\":\"" + name + "\"}")
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath().getString("Stack.Arn");
+        cleanup.register(() -> json11(region, "appstream", "PhotonAdminProxyService.DeleteStack",
+                "{\"Name\":\"" + name + "\"}").when().post("/"));
+        PartitionMatrix.assertArnIn(partitionCase, arn);
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void workSpacesPoolArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "workspaces");
+        String name = unique("smokepool", partitionCase).replace("-", "");
+        String poolId = json11(region, "workspaces", "WorkspacesService.CreateWorkspacesPool",
+                "{\"PoolName\":\"" + name + "\",\"Description\":\"smoke\",\"BundleId\":\"wsb-1\","
+                        + "\"DirectoryId\":\"wsd-1\",\"Capacity\":{\"DesiredUserSessions\":1}}")
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath().getString("WorkspacesPool.PoolId");
+        cleanup.register(() -> json11(region, "workspaces", "WorkspacesService.TerminateWorkspacesPool",
+                "{\"PoolId\":\"" + poolId + "\"}").when().post("/"));
+        String arn = json11(region, "workspaces", "WorkspacesService.DescribeWorkspacesPools",
+                "{\"PoolIds\":[\"" + poolId + "\"]}")
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath().getString("WorkspacesPools[0].PoolArn");
         PartitionMatrix.assertArnIn(partitionCase, arn);
     }
 

@@ -851,6 +851,9 @@ public interface EmulatorConfig {
         EmrServerlessServiceConfig emrserverless();
         Route53ResolverServiceConfig route53resolver();
         NetworkFirewallServiceConfig networkfirewall();
+        AppStreamServiceConfig appstream();
+        WorkSpacesServiceConfig workspaces();
+        WorkSpacesWebServiceConfig workspacesweb();
         ServiceCatalogServiceConfig servicecatalog();
         SsoAdminServiceConfig ssoadmin();
         SsoOidcServiceConfig ssooidc();
@@ -1130,6 +1133,21 @@ public interface EmulatorConfig {
     }
 
     interface NetworkFirewallServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface AppStreamServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface WorkSpacesServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface WorkSpacesWebServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }

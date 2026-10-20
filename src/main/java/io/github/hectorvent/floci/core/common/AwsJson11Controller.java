@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectReader;
 import io.github.hectorvent.floci.services.acm.AcmJsonHandler;
 import io.github.hectorvent.floci.services.apigatewayv2.ApiGatewayV2JsonHandler;
 import io.github.hectorvent.floci.services.applicationautoscaling.ApplicationAutoScalingJsonHandler;
+import io.github.hectorvent.floci.services.appstream.AppStreamJsonHandler;
 import io.github.hectorvent.floci.services.athena.AthenaJsonHandler;
 import io.github.hectorvent.floci.services.bcmdataexports.BcmDataExportsJsonHandler;
 import io.github.hectorvent.floci.services.budgets.BudgetsJsonHandler;
@@ -62,6 +63,7 @@ import io.github.hectorvent.floci.services.transcribe.TranscribeJsonHandler;
 import io.github.hectorvent.floci.services.transfer.TransferHandler;
 import io.github.hectorvent.floci.services.translate.TranslateJsonHandler;
 import io.github.hectorvent.floci.services.wafv2.WafV2Handler;
+import io.github.hectorvent.floci.services.workspaces.WorkSpacesJsonHandler;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.Context;
@@ -133,6 +135,8 @@ public class AwsJson11Controller {
     private final GlobalAcceleratorJsonHandler globalAcceleratorJsonHandler;
     private final DataSyncJsonHandler dataSyncJsonHandler;
     private final NetworkFirewallJsonHandler networkFirewallJsonHandler;
+    private final AppStreamJsonHandler appStreamJsonHandler;
+    private final WorkSpacesJsonHandler workSpacesJsonHandler;
     private final ServiceCatalogJsonHandler serviceCatalogJsonHandler;
     private final CloudControlJsonHandler cloudControlJsonHandler;
     private final ApplicationAutoScalingJsonHandler applicationAutoScalingJsonHandler;
@@ -190,6 +194,8 @@ public class AwsJson11Controller {
                                GlobalAcceleratorJsonHandler globalAcceleratorJsonHandler,
                                DataSyncJsonHandler dataSyncJsonHandler,
                                NetworkFirewallJsonHandler networkFirewallJsonHandler,
+                               AppStreamJsonHandler appStreamJsonHandler,
+                               WorkSpacesJsonHandler workSpacesJsonHandler,
                                ServiceCatalogJsonHandler serviceCatalogJsonHandler,
                                CloudControlJsonHandler cloudControlJsonHandler,
                                ApplicationAutoScalingJsonHandler applicationAutoScalingJsonHandler,
@@ -251,6 +257,8 @@ public class AwsJson11Controller {
         this.globalAcceleratorJsonHandler = globalAcceleratorJsonHandler;
         this.dataSyncJsonHandler = dataSyncJsonHandler;
         this.networkFirewallJsonHandler = networkFirewallJsonHandler;
+        this.appStreamJsonHandler = appStreamJsonHandler;
+        this.workSpacesJsonHandler = workSpacesJsonHandler;
         this.serviceCatalogJsonHandler = serviceCatalogJsonHandler;
         this.cloudControlJsonHandler = cloudControlJsonHandler;
         this.applicationAutoScalingJsonHandler = applicationAutoScalingJsonHandler;
@@ -363,6 +371,8 @@ public class AwsJson11Controller {
                 case "datasync" -> dataSyncJsonHandler.handle(action, request, region);
                 case "network-firewall" -> networkFirewallJsonHandler.handle(
                         action, request, region, regionResolver.getAccountId());
+                case "appstream" -> appStreamJsonHandler.handle(action, request, region);
+                case "workspaces" -> workSpacesJsonHandler.handle(action, request, region);
                 case "servicecatalog" -> serviceCatalogJsonHandler.handle(
                         action, request, region, regionResolver.getAccountId());
                 case "cloudcontrol" -> cloudControlJsonHandler.handle(

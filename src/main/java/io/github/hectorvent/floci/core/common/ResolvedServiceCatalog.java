@@ -31,6 +31,7 @@ import io.github.hectorvent.floci.services.codeartifact.CodeArtifactMavenControl
 import io.github.hectorvent.floci.services.codeartifact.CodeArtifactPypiController;
 import io.github.hectorvent.floci.services.cognito.CognitoOAuthController;
 import io.github.hectorvent.floci.services.cognito.CognitoWellKnownController;
+import io.github.hectorvent.floci.services.connect.ConnectDirectoryController;
 import io.github.hectorvent.floci.services.controlcatalog.ControlCatalogController;
 import io.github.hectorvent.floci.services.controltower.ControlTowerControlController;
 import io.github.hectorvent.floci.services.controltower.ControlTowerController;
@@ -94,6 +95,7 @@ import io.github.hectorvent.floci.services.ses.SesTenantController;
 import io.github.hectorvent.floci.services.ssooidc.SsoOidcController;
 import io.github.hectorvent.floci.services.ssoportal.SsoPortalController;
 import io.github.hectorvent.floci.services.swf.model.SwfConstants;
+import io.github.hectorvent.floci.services.workspacesweb.WorkSpacesWebController;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -730,7 +732,22 @@ public class ResolvedServiceCatalog {
                         "connect", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
                         protocols(ServiceProtocol.REST_JSON),
                         Set.of(), Set.of("connect"), Set.of(),
-                        Set.of(io.github.hectorvent.floci.services.connect.ConnectController.class)),
+                        Set.of(io.github.hectorvent.floci.services.connect.ConnectController.class,
+                                ConnectDirectoryController.class)),
+                // AppStream 2.0's Smithy service shape is PhotonAdminProxyService, so that is the
+                // target prefix the SDK sends; its signing name is appstream.
+                descriptor("appstream", "appstream", config.services().appstream().enabled(), true,
+                        "appstream", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
+                        protocols(ServiceProtocol.JSON),
+                        Set.of("PhotonAdminProxyService."), Set.of("appstream"), Set.of(), Set.of()),
+                descriptor("workspaces", "workspaces", config.services().workspaces().enabled(), true,
+                        "workspaces", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
+                        protocols(ServiceProtocol.JSON),
+                        Set.of("WorkspacesService."), Set.of("workspaces"), Set.of(), Set.of()),
+                descriptor("workspaces-web", "workspacesweb", config.services().workspacesweb().enabled(), true,
+                        "workspacesweb", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
+                        protocols(ServiceProtocol.REST_JSON),
+                        Set.of(), Set.of("workspaces-web"), Set.of(), Set.of(WorkSpacesWebController.class)),
                 descriptor("app-integrations", "appintegrations",
                         config.services().appintegrations().enabled(), true,
                         "appintegrations", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,

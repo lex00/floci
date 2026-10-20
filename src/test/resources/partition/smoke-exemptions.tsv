@@ -34,3 +34,4 @@ ssm	covered by PartitionArnMintingIntegrationTest (all partitions)
 ssoadmin	one instance per account, minted in its primary region's partition, so a request signed in another partition sees that ARN (BL-243)
 ssoportal	no portal response carries the reserved role ARN, and a portal session cannot be built over HTTP under the test config
 swf	a registered domain can only be deprecated, never removed, so a case would leak state into the shared emulator
+workspacesweb	no non-commercial partition publishes the service, so a case would be skipped in every partition

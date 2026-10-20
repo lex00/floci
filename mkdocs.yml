@@ -171,6 +171,9 @@ nav:
     - Connect: services/connect.md
     - AppIntegrations: services/appintegrations.md
     - Amazon AppFlow: services/appflow.md
+    - AppStream 2.0: services/appstream.md
+    - WorkSpaces: services/workspaces.md
+    - WorkSpaces Secure Browser: services/workspaces-web.md
     - Amazon Data Lifecycle Manager: services/dlm.md
     - ACM: services/acm.md
     - ECS: services/ecs.md
