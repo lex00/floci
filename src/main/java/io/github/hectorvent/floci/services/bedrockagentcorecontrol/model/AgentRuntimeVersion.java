@@ -26,6 +26,8 @@ public class AgentRuntimeVersion {
     private JsonNode networkConfiguration;
     private JsonNode authorizerConfiguration;
     private JsonNode protocolConfiguration;
+    private JsonNode lifecycleConfiguration;
+    private JsonNode requestHeaderConfiguration;
     private Map<String, String> environmentVariables;
 
     public String getVersion() {
@@ -90,6 +92,22 @@ public class AgentRuntimeVersion {
 
     public void setProtocolConfiguration(JsonNode protocolConfiguration) {
         this.protocolConfiguration = protocolConfiguration;
+    }
+
+    public JsonNode getLifecycleConfiguration() {
+        return lifecycleConfiguration;
+    }
+
+    public void setLifecycleConfiguration(JsonNode lifecycleConfiguration) {
+        this.lifecycleConfiguration = lifecycleConfiguration;
+    }
+
+    public JsonNode getRequestHeaderConfiguration() {
+        return requestHeaderConfiguration;
+    }
+
+    public void setRequestHeaderConfiguration(JsonNode requestHeaderConfiguration) {
+        this.requestHeaderConfiguration = requestHeaderConfiguration;
     }
 
     public Map<String, String> getEnvironmentVariables() {

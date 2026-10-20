@@ -98,7 +98,7 @@ class BedrockAgentCoreControlServiceTest {
     @Test
     void updatePublishesExactlyTheConfigurationTheRequestCarries() {
         ObjectNode authorizer = mapper.createObjectNode();
-        authorizer.putObject("customJWTAuthorizer").put("discoveryUrl", "A");
+        authorizer.putObject("customJWTAuthorizer").put("discoveryUrl", "https://a/.well-known/openid-configuration");
         ObjectNode protocol = mapper.createObjectNode().put("serverProtocol", "MCP");
         AgentRuntime rt = service.createAgentRuntime("myAgent", artifact(), network(),
                 "arn:aws:iam::000000000000:role/agent", "desc", Map.of("K", "v"), authorizer, protocol, null, REGION);
@@ -115,7 +115,7 @@ class BedrockAgentCoreControlServiceTest {
         assertNull(latest.getProtocolConfiguration());
         assertTrue(latest.getEnvironmentVariables().isEmpty());
         AgentRuntimeVersion first = service.resolveVersion(fresh, "1");
-        assertEquals("A", first.getAuthorizerConfiguration().path("customJWTAuthorizer").path("discoveryUrl").asText());
+        assertEquals("https://a/.well-known/openid-configuration", first.getAuthorizerConfiguration().path("customJWTAuthorizer").path("discoveryUrl").asText());
         assertEquals("MCP", first.getProtocolConfiguration().path("serverProtocol").asText());
         assertEquals(Map.of("K", "v"), first.getEnvironmentVariables());
     }
@@ -229,9 +229,9 @@ class BedrockAgentCoreControlServiceTest {
     void versionSnapshotCapturesAuthorizerAndProtocolConfig() {
         // Regression for the version-config leak (issue #8).
         ObjectNode authA = mapper.createObjectNode();
-        authA.putObject("customJWTAuthorizer").put("discoveryUrl", "A");
+        authA.putObject("customJWTAuthorizer").put("discoveryUrl", "https://a/.well-known/openid-configuration");
         ObjectNode authB = mapper.createObjectNode();
-        authB.putObject("customJWTAuthorizer").put("discoveryUrl", "B");
+        authB.putObject("customJWTAuthorizer").put("discoveryUrl", "https://b/.well-known/openid-configuration");
 
         AgentRuntime rt = service.createAgentRuntime("myAgent", artifact(), network(),
                 "arn:aws:iam::000000000000:role/agent", "d", null, authA, null, null, REGION);
@@ -240,9 +240,9 @@ class BedrockAgentCoreControlServiceTest {
                 "arn:aws:iam::000000000000:role/agent", "d", null, authB, null, REGION);
 
         AgentRuntime fresh = service.getAgentRuntime(id, REGION);
-        assertEquals("A", service.resolveVersion(fresh, "1").getAuthorizerConfiguration()
+        assertEquals("https://a/.well-known/openid-configuration", service.resolveVersion(fresh, "1").getAuthorizerConfiguration()
                 .path("customJWTAuthorizer").path("discoveryUrl").asText());
-        assertEquals("B", service.resolveVersion(fresh, "2").getAuthorizerConfiguration()
+        assertEquals("https://b/.well-known/openid-configuration", service.resolveVersion(fresh, "2").getAuthorizerConfiguration()
                 .path("customJWTAuthorizer").path("discoveryUrl").asText());
     }
 

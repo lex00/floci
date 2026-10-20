@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -128,6 +129,35 @@ class AgentRuntimeSessionsTest {
     }
 
     @Test
+    void runtimeLifecycleSetsTheIdleTimeoutAndMaximumLifetime() throws Exception {
+        sessions = new AgentRuntimeSessions(launcher, Duration.ofMinutes(5), Duration.ofSeconds(10));
+        AgentRuntimeSessions.Target target = target("HTTP");
+        target.version().setLifecycleConfiguration(
+                mapper.readTree("{\"idleRuntimeSessionTimeout\":600,\"maxLifetime\":1}"));
+
+        read(sessions.invoke(target, "session-l", Map.of(), new byte[0]).body());
+        Thread.sleep(1100);
+        read(sessions.invoke(target, "session-l", Map.of(), new byte[0]).body());
+
+        assertEquals(2, launcher.launches.size());
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (launcher.stopped.isEmpty() && System.nanoTime() < deadline) {
+            Thread.sleep(100);
+        }
+        assertEquals(1, launcher.stopped.size());
+    }
+
+    @Test
+    void allowlistedHeadersReachTheRuntime() throws Exception {
+        sessions = new AgentRuntimeSessions(launcher, Duration.ofMinutes(5), Duration.ofSeconds(10));
+
+        read(sessions.invoke(target("HTTP"), "session-h",
+                Map.of("X-Amzn-Bedrock-AgentCore-Runtime-Custom-Tenant", "acme"), new byte[0]).body());
+
+        assertEquals("acme", launcher.lastHeaders.get("x-amzn-bedrock-agentcore-runtime-custom-tenant"));
+    }
+
+    @Test
     void stoppingARuntimeStopsEachOfItsSessions() throws Exception {
         sessions = new AgentRuntimeSessions(launcher, Duration.ofMinutes(5), Duration.ofSeconds(10));
         read(sessions.invoke(target("HTTP"), "session-a", Map.of(), new byte[0]).body());
@@ -172,6 +202,7 @@ class AgentRuntimeSessionsTest {
         private final List<RunningRuntime> stopped = new CopyOnWriteArrayList<>();
         private final List<HttpServer> servers = new CopyOnWriteArrayList<>();
         private volatile int pingStatus = 200;
+        private final Map<String, String> lastHeaders = new ConcurrentHashMap<>();
 
         @Override
         public RunningRuntime start(Launch launch) {
@@ -206,6 +237,7 @@ class AgentRuntimeSessionsTest {
                 return;
             }
             String payload = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            exchange.getRequestHeaders().forEach((name, values) -> lastHeaders.put(name.toLowerCase(), values.getFirst()));
             if ("fail".equals(payload)) {
                 exchange.sendResponseHeaders(500, -1);
                 exchange.close();

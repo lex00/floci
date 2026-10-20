@@ -93,9 +93,18 @@ public class AgentRuntimeSessions implements ContainerTeardown {
         private final AtomicInteger inFlight = new AtomicInteger();
         private final AtomicLong lastUsed = new AtomicLong(System.nanoTime());
         private final AtomicBoolean alive = new AtomicBoolean(true);
+        private final long createdAt = System.nanoTime();
+        private final long idleNanos;
+        private final long maxLifetimeNanos;
 
-        private Session(String key) {
+        private Session(String key, Duration idle, Duration maxLifetime) {
             this.key = key;
+            this.idleNanos = idle.toNanos();
+            this.maxLifetimeNanos = maxLifetime.toNanos();
+        }
+
+        private boolean expired(long now) {
+            return now - createdAt >= maxLifetimeNanos;
         }
 
         private void reserve() {
@@ -108,6 +117,8 @@ public class AgentRuntimeSessions implements ContainerTeardown {
             inFlight.decrementAndGet();
         }
     }
+
+    private static final Duration DEFAULT_MAX_LIFETIME = Duration.ofHours(8);
 
     private final AgentRuntimeLauncher launcher;
     private final Duration idleTimeout;
@@ -153,12 +164,11 @@ public class AgentRuntimeSessions implements ContainerTeardown {
         HttpRequest.Builder request = HttpRequest.newBuilder(uri(running, contract.invokePath()))
                 .timeout(INVOKE_TIMEOUT)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(payload == null ? new byte[0] : payload));
-        for (String name : FORWARDED_REQUEST_HEADERS) {
-            String value = requestHeaders.get(name);
+        requestHeaders.forEach((name, value) -> {
             if (value != null && !value.isEmpty()) {
                 request.header(name, value);
             }
-        }
+        });
         request.setHeader(SESSION_HEADER, sessionId);
         HttpResponse<InputStream> response;
         try {
@@ -194,16 +204,26 @@ public class AgentRuntimeSessions implements ContainerTeardown {
         String key = sessionKey(target.accountId(), target.region(), target.runtime().getAgentRuntimeId())
                 + target.version().getVersion() + "|" + sessionId;
         AtomicBoolean starter = new AtomicBoolean();
+        JsonNode lifecycle = target.version().getLifecycleConfiguration();
+        Duration idle = lifecycle != null && lifecycle.hasNonNull("idleRuntimeSessionTimeout")
+                ? Duration.ofSeconds(lifecycle.get("idleRuntimeSessionTimeout").asLong()) : idleTimeout;
+        Duration maxLifetime = lifecycle != null && lifecycle.hasNonNull("maxLifetime")
+                ? Duration.ofSeconds(lifecycle.get("maxLifetime").asLong()) : DEFAULT_MAX_LIFETIME;
+        List<Session> replaced = new ArrayList<>();
         Session session = sessions.compute(key, (k, current) -> {
-            if (current != null && current.alive.get()) {
+            if (current != null && current.alive.get() && !current.expired(System.nanoTime())) {
                 current.reserve();
                 return current;
             }
-            Session started = new Session(k);
+            if (current != null) {
+                replaced.add(current);
+            }
+            Session started = new Session(k, idle, maxLifetime);
             started.reserve();
             starter.set(true);
             return started;
         });
+        replaced.forEach(old -> reaper.execute(() -> retire(old, "has reached its maximum lifetime")));
         if (starter.get()) {
             start(session, target, contract);
         }
@@ -295,30 +315,37 @@ public class AgentRuntimeSessions implements ContainerTeardown {
         }
     }
 
+    /** Stops each session idle past its runtime's idle timeout, or past its maximum lifetime. */
     private void reapIdle() {
-        long idleNanos = idleTimeout.toNanos();
         for (Session session : new ArrayList<>(sessions.values())) {
-            AtomicReference<Session> idle = new AtomicReference<>();
+            AtomicReference<String> reason = new AtomicReference<>();
             sessions.computeIfPresent(session.key, (key, current) -> {
-                if (current == session && session.ready.isDone() && session.inFlight.get() == 0
-                        && System.nanoTime() - session.lastUsed.get() >= idleNanos) {
-                    idle.set(session);
-                    return null;
-                }
-                return current;
-            });
-            if (idle.get() != null) {
-                LOG.infov("Stopping the idle AgentCore runtime session {0}", session.key);
-                try {
-                    session.alive.set(false);
-                    RunningRuntime running = session.ready.getNow(null);
-                    if (running != null) {
-                        launcher.stop(running);
+                long now = System.nanoTime();
+                if (current == session && session.ready.isDone() && session.inFlight.get() == 0) {
+                    if (now - session.lastUsed.get() >= session.idleNanos) {
+                        reason.set("is idle");
+                    } else if (session.expired(now)) {
+                        reason.set("has reached its maximum lifetime");
                     }
-                } catch (RuntimeException e) {
-                    LOG.warnv(e, "Could not stop the idle AgentCore runtime session {0}", session.key);
                 }
+                return reason.get() != null ? null : current;
+            });
+            if (reason.get() != null) {
+                retire(session, reason.get());
             }
+        }
+    }
+
+    private void retire(Session session, String reason) {
+        LOG.infov("Stopping the AgentCore runtime session {0}, which {1}", session.key, reason);
+        try {
+            session.alive.set(false);
+            RunningRuntime running = session.ready.getNow(null);
+            if (running != null) {
+                launcher.stop(running);
+            }
+        } catch (RuntimeException e) {
+            LOG.warnv(e, "Could not stop the AgentCore runtime session {0}", session.key);
         }
     }
 

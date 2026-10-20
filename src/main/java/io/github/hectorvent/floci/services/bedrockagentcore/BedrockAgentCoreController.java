@@ -30,7 +30,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -54,6 +56,7 @@ public class BedrockAgentCoreController {
 
     private static final Logger LOG = Logger.getLogger(BedrockAgentCoreController.class);
     private static final String SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id";
+    private static final int MAX_PAYLOAD_BYTES = 100 * 1024 * 1024;
 
     private final BedrockAgentCoreService service;
     private final BedrockAgentCoreHarnessService harnessService;
@@ -64,6 +67,7 @@ public class BedrockAgentCoreController {
     private final boolean runInDocker;
     private final AgentRuntimeSessions sessions;
     private final AgentRuntimeSpanWriter spanWriter;
+    private final AgentRuntimeInboundAuth inboundAuth;
 
     @Inject
     public BedrockAgentCoreController(BedrockAgentCoreService service,
@@ -73,7 +77,8 @@ public class BedrockAgentCoreController {
                                       ObjectMapper objectMapper,
                                       EmulatorConfig config,
                                       AgentRuntimeSessions sessions,
-                                      AgentRuntimeSpanWriter spanWriter) {
+                                      AgentRuntimeSpanWriter spanWriter,
+                                      AgentRuntimeInboundAuth inboundAuth) {
         this.service = service;
         this.harnessService = harnessService;
         this.controlService = controlService;
@@ -83,6 +88,7 @@ public class BedrockAgentCoreController {
         this.runInDocker = "docker".equalsIgnoreCase(config.services().bedrockAgentCore().runtimeMode());
         this.sessions = sessions;
         this.spanWriter = spanWriter;
+        this.inboundAuth = inboundAuth;
     }
 
     @POST
@@ -95,9 +101,15 @@ public class BedrockAgentCoreController {
                                        @QueryParam("accountId") String accountId,
                                        byte[] payload) {
         String region = regionResolver.resolveRegion(headers);
+        if (payload != null && payload.length > MAX_PAYLOAD_BYTES) {
+            throw new AwsException("ValidationException", "The payload exceeds the 100 MB limit", 400);
+        }
         if (runInDocker) {
             return invokeInContainer(headers, region, agentRuntimeArn, qualifier, payload);
         }
+        controlService.findRuntimeByInvokeArn(region, agentRuntimeArn).ifPresent(runtime ->
+                inboundAuth.authorize(resolveVersion(region, runtime, qualifier).getAuthorizerConfiguration(),
+                        headers.getHeaderString("Authorization")));
         if (validateRuntimeExists && !controlService.runtimeArnExists(region, agentRuntimeArn)) {
             return Response.status(404)
                     .type(MediaType.APPLICATION_JSON)
@@ -147,12 +159,19 @@ public class BedrockAgentCoreController {
             }
         }
         AgentRuntimeVersion resolved = controlService.resolveVersion(runtime, version);
+        inboundAuth.authorize(resolved.getAuthorizerConfiguration(), headers.getHeaderString("Authorization"));
         String sessionId = headers.getHeaderString(SESSION_HEADER);
         if (sessionId == null || sessionId.isBlank()) {
             sessionId = UUID.randomUUID().toString();
         }
         Map<String, String> forwarded = new HashMap<>();
-        for (String name : AgentRuntimeSessions.FORWARDED_REQUEST_HEADERS) {
+        List<String> forwardedNames = new ArrayList<>(AgentRuntimeSessions.FORWARDED_REQUEST_HEADERS);
+        JsonNode allowlist = resolved.getRequestHeaderConfiguration() == null ? null
+                : resolved.getRequestHeaderConfiguration().path("requestHeaderAllowlist");
+        if (allowlist != null && allowlist.isArray()) {
+            allowlist.forEach(name -> forwardedNames.add(name.asText()));
+        }
+        for (String name : forwardedNames) {
             String value = headers.getHeaderString(name);
             if (value != null) {
                 forwarded.put(name, value);
@@ -182,6 +201,16 @@ public class BedrockAgentCoreController {
             builder.header("Content-Type", MediaType.APPLICATION_OCTET_STREAM);
         }
         return builder.build();
+    }
+
+    /** The version an invocation's qualifier names: an endpoint name, a version number, or DEFAULT. */
+    private AgentRuntimeVersion resolveVersion(String region, AgentRuntime runtime, String qualifier) {
+        String version = null;
+        if (qualifier != null && !qualifier.isBlank() && !"DEFAULT".equals(qualifier)) {
+            version = qualifier.chars().allMatch(Character::isDigit) ? qualifier
+                    : controlService.getEndpoint(runtime.getAgentRuntimeId(), qualifier, region).getLiveVersion();
+        }
+        return controlService.resolveVersion(runtime, version);
     }
 
     /** The runtime id an ARN's {@code runtime/<id>} or {@code agent/<id>} resource names. */

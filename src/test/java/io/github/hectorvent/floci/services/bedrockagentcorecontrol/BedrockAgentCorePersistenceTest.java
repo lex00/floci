@@ -40,7 +40,7 @@ class BedrockAgentCorePersistenceTest {
         ObjectNode network = mapper.createObjectNode();
         network.put("networkMode", "PUBLIC");
         ObjectNode authorizer = mapper.createObjectNode();
-        authorizer.putObject("customJWTAuthorizer").put("discoveryUrl", "https://issuer/.well-known");
+        authorizer.putObject("customJWTAuthorizer").put("discoveryUrl", "https://issuer/.well-known/openid-configuration");
 
         AgentRuntime created = svc.createAgentRuntime("persistAgent", artifact, network,
                 "arn:aws:iam::000000000000:role/agent", "v1", Map.of("K", "V"),
@@ -71,7 +71,7 @@ class BedrockAgentCorePersistenceTest {
         // JsonNode config blobs survive.
         assertEquals("x:latest", loaded.getAgentRuntimeArtifact()
                 .path("containerConfiguration").path("containerUri").asText());
-        assertEquals("https://issuer/.well-known", loaded.getAuthorizerConfiguration()
+        assertEquals("https://issuer/.well-known/openid-configuration", loaded.getAuthorizerConfiguration()
                 .path("customJWTAuthorizer").path("discoveryUrl").asText());
         // Per-version snapshot JsonNode survives.
         assertNotNull(loaded.getVersions().get(0).getAgentRuntimeArtifact());

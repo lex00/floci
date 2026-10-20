@@ -194,15 +194,27 @@ and forwards the call to it:
   default) and `AGUI` listen on 8080, answer `GET /ping` and take `POST /invocations`; `MCP`
   listens on 8000 at `/mcp`; `A2A` listens on 9000 at `/`.
 - The container receives the payload with the `runtimeSessionId` and content type, along with the
-  `Accept`, MCP session and trace headers. Its answer streams back with its own content type, so
-  a `text/event-stream` reply arrives event by event.
-- Each `runtimeSessionId` gets its own warm container, kept until it has been unused for
-  `FLOCI_SERVICES_BEDROCK_AGENT_CORE_RUNTIME_IDLE_TIMEOUT_SECONDS`. Deleting the runtime, or
-  stopping Floci, stops its containers.
+  `Accept`, MCP session and trace headers and the headers the version's
+  `requestHeaderConfiguration.requestHeaderAllowlist` names. Its answer streams back with its own
+  content type, so a `text/event-stream` reply arrives event by event.
+- Each `runtimeSessionId` gets its own warm container. It stops once unused for the version's
+  `lifecycleConfiguration.idleRuntimeSessionTimeout`, and once it has run for `maxLifetime`, after
+  which the session's next call starts a new container. Deleting the runtime, or stopping Floci,
+  stops its containers.
+- A `VPC` runtime's container joins the Docker network of its first subnet's VPC when
+  `FLOCI_SERVICES_EC2_VPC_NETWORKS_ENABLED` gives VPCs their own networks, the default.
 - `qualifier` selects a runtime endpoint by name or a version by number. Without one, the latest
   version runs.
 - A container that does not answer its readiness probe in time, or that answers with an error
   status, is a `RuntimeClientError` (424). An unknown runtime ARN is `ResourceNotFoundException`.
+
+Inbound authorization applies in both modes to a runtime Floci holds. A version with
+`authorizerConfiguration.customJWTAuthorizer` takes `Authorization: Bearer <token>` and refuses a
+SigV4 call, and a version without one refuses a bearer token, each with `AccessDeniedException`
+(403) and AWS's "Authorization method mismatch" message. The token must verify against the keys the
+`discoveryUrl` publishes and must not have expired. Its `aud` must be in `allowedAudience`, its
+`client_id` in `allowedClients`, and its `scope` must hold one of `allowedScopes`, each when the list
+is set, and each `customClaims` entry must match. A payload over 100 MB is a `ValidationException`.
 
 ## Data plane — `InvokeHarness`
 
@@ -273,6 +285,12 @@ block is ever produced even when a request supplies `tools`.
 - `networkConfiguration.networkMode` must be `PUBLIC` or `VPC` and
   `protocolConfiguration.serverProtocol` must be `MCP`, `HTTP`, `A2A` or `AGUI`; anything else returns
   the API's `ValidationException`.
+- `VPC` mode needs `networkModeConfig` with 1 to 16 `subnets` and `securityGroups`, which `PUBLIC`
+  mode refuses. A `customJWTAuthorizer.discoveryUrl` must end in `/.well-known/openid-configuration`.
+  `requestHeaderAllowlist` takes up to 20 headers, `Authorization` or ones starting with
+  `X-Amzn-Bedrock-AgentCore-Runtime-Custom-`.
+- `lifecycleConfiguration` defaults to 900 seconds idle and 28800 seconds in all. Each is between
+  60 and 28800 seconds, and the idle timeout may not exceed `maxLifetime`.
 - Timestamps (`createdAt`, `lastUpdatedAt`) are ISO-8601 strings.
 - Config blobs (`agentRuntimeArtifact`, `networkConfiguration`, …) are otherwise stored opaquely
   and echoed back; they are not deeply validated.
