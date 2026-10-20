@@ -119,6 +119,19 @@ PUT, PATCH and DELETE).
 | `DeleteKeyGroup` | DELETE | `/2020-05-31/key-group/{Id}` |
 | `ListKeyGroups` | GET | `/2020-05-31/key-group` |
 
+### Anycast Static IP Lists
+
+| Operation | Method | Path |
+|---|---|---|
+| `CreateAnycastIpList` | POST | `/2020-05-31/anycast-ip-list` |
+| `GetAnycastIpList` | GET | `/2020-05-31/anycast-ip-list/{Id}` |
+| `UpdateAnycastIpList` | PUT | `/2020-05-31/anycast-ip-list/{Id}` |
+| `DeleteAnycastIpList` | DELETE | `/2020-05-31/anycast-ip-list/{Id}` |
+| `ListAnycastIpLists` | GET | `/2020-05-31/anycast-ip-list` |
+
+An Anycast static IP list is `Deployed` on create. `IpCount` must be 3 or 21, and the list's
+addresses come from the documentation ranges `198.51.100.0/24` and `2001:db8::/32`.
+
 ### Tagging
 
 | Operation | Method | Path |
