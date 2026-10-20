@@ -3,6 +3,7 @@ package io.github.hectorvent.floci.services.ec2;
 import io.github.hectorvent.floci.services.ec2.model.IpPermission;
 import io.github.hectorvent.floci.services.ec2.model.IpRange;
 import io.github.hectorvent.floci.services.ec2.model.SecurityGroup;
+import io.github.hectorvent.floci.services.ec2.model.UserIdGroupPair;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -100,6 +101,64 @@ class SecurityGroupNftCompilerTest {
                 nft);
         assertFalse(nft.contains("daddr 169.254.170.2 accept"), "only the credentials listener is allowed");
         assertFalse(nft.contains("saddr 169.254.170.2"), "replies ride the established rule, nothing opens ingress");
+    }
+
+    @Test
+    void loadBalancerGroupReferenceAdmitsTheDataPlaneSource() {
+        SecurityGroup group = new SecurityGroup();
+        group.setVpcId("vpc-1");
+        group.setOwnerId("000000000000");
+        IpPermission fromAlb = new IpPermission();
+        fromAlb.setIpProtocol("tcp");
+        fromAlb.setFromPort(80);
+        fromAlb.setToPort(80);
+        UserIdGroupPair albGroup = new UserIdGroupPair();
+        albGroup.setGroupId("sg-alb");
+        fromAlb.getUserIdGroupPairs().add(albGroup);
+        group.getIpPermissions().add(fromAlb);
+        IpPermission fromOther = new IpPermission();
+        fromOther.setIpProtocol("tcp");
+        fromOther.setFromPort(9000);
+        fromOther.setToPort(9000);
+        UserIdGroupPair otherGroup = new UserIdGroupPair();
+        otherGroup.setGroupId("sg-other");
+        fromOther.getUserIdGroupPairs().add(otherGroup);
+        group.getIpPermissions().add(fromOther);
+
+        DataPlanePeerSource.DataPlanePeer alb = new DataPlanePeerSource.DataPlanePeer(
+                "000000000000", "us-east-1", "vpc-1", Set.of("sg-alb"), List.of("10.0.0.0"));
+        String nft = SecurityGroupNftCompiler.compile(endpoint("eni-a", "10.0.0.2", "172.17.0.2", group),
+                List.of(), Map.of(), List.of(), List.of(alb), "172.17.0.1");
+
+        assertTrue(nft.contains("add rule inet floci_sg ingress ip saddr 172.17.0.1 tcp dport 80 accept"), nft);
+        assertFalse(nft.contains("tcp dport 9000"), nft);
+    }
+
+    @Test
+    void loadBalancerInAnotherVpcIsNotAdmitted() {
+        SecurityGroup group = new SecurityGroup();
+        group.setVpcId("vpc-1");
+        group.setOwnerId("000000000000");
+        IpPermission fromVpc = new IpPermission();
+        fromVpc.setIpProtocol("tcp");
+        fromVpc.setFromPort(80);
+        fromVpc.setToPort(80);
+        IpRange vpcCidr = new IpRange();
+        vpcCidr.setCidrIp("10.0.0.0/16");
+        fromVpc.getIpRanges().add(vpcCidr);
+        group.getIpPermissions().add(fromVpc);
+
+        DataPlanePeerSource.DataPlanePeer sameVpc = new DataPlanePeerSource.DataPlanePeer(
+                "000000000000", "us-east-1", "vpc-1", Set.of("sg-alb"), List.of("10.0.1.0"));
+        DataPlanePeerSource.DataPlanePeer otherVpc = new DataPlanePeerSource.DataPlanePeer(
+                "000000000000", "us-east-1", "vpc-2", Set.of("sg-alb"), List.of("10.0.1.0"));
+
+        assertTrue(SecurityGroupNftCompiler.compile(endpoint("eni-a", "10.0.0.2", "172.17.0.2", group),
+                List.of(), Map.of(), List.of(), List.of(sameVpc), "172.17.0.1")
+                .contains("ip saddr 172.17.0.1 tcp dport 80 accept"));
+        assertFalse(SecurityGroupNftCompiler.compile(endpoint("eni-a", "10.0.0.2", "172.17.0.2", group),
+                List.of(), Map.of(), List.of(), List.of(otherVpc), "172.17.0.1")
+                .contains("ip saddr 172.17.0.1 "));
     }
 
     private static SecurityGroupNftCompiler.Endpoint endpoint(String eni, String logical,
