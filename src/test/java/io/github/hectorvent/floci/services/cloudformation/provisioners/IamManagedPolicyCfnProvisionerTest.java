@@ -65,6 +65,22 @@ class IamManagedPolicyCfnProvisionerTest {
     }
 
     @Test
+    void createPassesTheDeclaredDescription() throws Exception {
+        IamPolicy policy = mock(IamPolicy.class);
+        when(policy.getArn()).thenReturn(ARN);
+        when(iam.createPolicy(eq("app-policy"), eq("/"), eq("App access"), any(), eq(Map.of())))
+                .thenReturn(policy);
+
+        StackResource r = resource();
+        provisioner.provision(r, props("""
+                {"ManagedPolicyName": "app-policy", "Description": "App access",
+                 "PolicyDocument": {"Version": "2012-10-17", "Statement": []}}
+                """), ctx(null));
+
+        assertEquals(ARN, r.getPhysicalId());
+    }
+
+    @Test
     void deleteDetachesRolesThenRemovesThePolicy() {
         StackResource r = resource();
         r.setPhysicalId(ARN);

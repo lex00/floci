@@ -35,7 +35,8 @@ Cloud Control.
 - **`ListResources` / `GetResource` type coverage**: the read side lists
   `AWS::S3::Bucket`, `AWS::EC2::VPC`, `AWS::EC2::Subnet`, `AWS::EC2::SecurityGroup`,
   `AWS::EC2::Instance`, `AWS::EC2::LaunchTemplate`, `AWS::IAM::Role`, `AWS::IAM::User`,
-  and `AWS::IAM::InstanceProfile`. `CreateResource` accepts any type the underlying
+  `AWS::IAM::InstanceProfile`, and `AWS::IAM::ManagedPolicy` (identified by its ARN). A role's
+  model carries its `AssumeRolePolicyDocument` and `ManagedPolicyArns`. `CreateResource` accepts any type the underlying
   CloudFormation resource provisioner supports (the same set stacks can provision),
   which is broader than the read side. A resource created through Cloud Control but
   outside the read-side type list is still readable via `GetResource`, from

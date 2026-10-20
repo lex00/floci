@@ -55,6 +55,7 @@ public class IamManagedPolicyCfnProvisioner implements CfnResourceProvisioner {
         }
         String document = ctx.resolvePolicyDocument(props);
         List<String> roleNames = ctx.resolveStringList(props, "Roles");
+        String description = ctx.resolveOptional(props, "Description");
         String existingArn = r.getPhysicalId();
 
         IamPolicy policy;
@@ -64,7 +65,7 @@ public class IamManagedPolicyCfnProvisioner implements CfnResourceProvisioner {
         List<PolicyVersion> prunedVersionsForRollback = new ArrayList<>();
         List<String> detachedObsoleteRoles = new ArrayList<>();
         try {
-            policy = iamService.createPolicy(policyName, "/", null, document, Map.of());
+            policy = iamService.createPolicy(policyName, "/", description, document, Map.of());
             createdPolicy = true;
         } catch (AwsException e) {
             // Stack UPDATE with an unchanged policy name: the policy this stack provisioned on a

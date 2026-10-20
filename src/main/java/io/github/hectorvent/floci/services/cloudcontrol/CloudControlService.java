@@ -23,6 +23,7 @@ import io.github.hectorvent.floci.services.ec2.model.Subnet;
 import io.github.hectorvent.floci.services.ec2.model.Tag;
 import io.github.hectorvent.floci.services.ec2.model.Vpc;
 import io.github.hectorvent.floci.services.iam.IamService;
+import io.github.hectorvent.floci.services.iam.model.IamPolicy;
 import io.github.hectorvent.floci.services.iam.model.IamRole;
 import io.github.hectorvent.floci.services.iam.model.IamUser;
 import io.github.hectorvent.floci.services.iam.model.InstanceProfile;
@@ -33,6 +34,8 @@ import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -481,6 +484,7 @@ public class CloudControlService {
             case "AWS::EC2::RouteTable" -> "RouteTableId";
             case "AWS::EC2::LaunchTemplate" -> "LaunchTemplateId";
             case "AWS::ApiGatewayV2::ApiMapping" -> "ApiMappingId";
+            case "AWS::IAM::ManagedPolicy" -> "PolicyArn";
             default -> "Id";
         };
     }
@@ -647,6 +651,7 @@ public class CloudControlService {
             case "AWS::EC2::Subnet" -> subnets(region);
             case "AWS::EC2::SecurityGroup" -> securityGroups(region);
             case "AWS::IAM::Role" -> roles();
+            case "AWS::IAM::ManagedPolicy" -> managedPolicies();
             case "AWS::IAM::User" -> users();
             case "AWS::EC2::Instance" -> instances(region);
             case "AWS::EC2::LaunchTemplate" -> launchTemplates(region);
@@ -778,9 +783,63 @@ public class CloudControlService {
             properties.put("Arn", role.getArn());
             properties.put("RoleName", role.getRoleName());
             properties.put("Path", role.getPath());
+            putJsonDocument(properties, "AssumeRolePolicyDocument", role.getAssumeRolePolicyDocument());
+            List<String> attached = role.getAttachedPolicyArns();
+            if (attached != null && !attached.isEmpty()) {
+                ArrayNode arns = properties.putArray("ManagedPolicyArns");
+                attached.forEach(arns::add);
+            }
             resources.add(new ResourceDescription(role.getRoleName(), propertiesString(properties)));
         }
         return resources;
+    }
+
+    /** Lists customer managed policies by ARN, with the CloudFormation property names. */
+    private List<ResourceDescription> managedPolicies() {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (IamPolicy policy : iamService.listPolicies("Local", "/")) {
+            ObjectNode properties = mapper.createObjectNode();
+            properties.put("PolicyArn", policy.getArn());
+            properties.put("ManagedPolicyName", policy.getPolicyName());
+            properties.put("Path", policy.getPath());
+            putIfPresent(properties, "Description", policy.getDescription());
+            putJsonDocument(properties, "PolicyDocument", policy.getDefaultDocument());
+            resources.add(new ResourceDescription(policy.getArn(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    /**
+     * Puts a policy document as a JSON object. IAM may hold the document URL-encoded, so the
+     * decoded form is tried second; a document that parses neither way is kept as text.
+     */
+    private void putJsonDocument(ObjectNode properties, String field, String document) {
+        if (document == null || document.isBlank()) {
+            return;
+        }
+        JsonNode parsed = readJson(document);
+        if (parsed == null) {
+            try {
+                parsed = readJson(URLDecoder.decode(document, StandardCharsets.UTF_8));
+            } catch (IllegalArgumentException ignored) {
+                // Not URL-encoded either; the document stays as text below.
+            }
+        }
+        if (parsed != null) {
+            properties.set(field, parsed);
+            return;
+        }
+        properties.put(field, document);
+    }
+
+    private JsonNode readJson(String text) {
+        try {
+            JsonNode node = mapper.readTree(text);
+            return node != null && node.isObject() ? node : null;
+        } catch (JsonProcessingException ignored) {
+            // Callers fall back to another form of the document.
+            return null;
+        }
     }
 
     private List<ResourceDescription> users() {

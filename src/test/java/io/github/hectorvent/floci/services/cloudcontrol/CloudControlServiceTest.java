@@ -10,6 +10,8 @@ import io.github.hectorvent.floci.services.ec2.Ec2Service;
 import io.github.hectorvent.floci.services.ec2.model.Tag;
 import io.github.hectorvent.floci.services.ec2.model.Vpc;
 import io.github.hectorvent.floci.services.iam.IamService;
+import io.github.hectorvent.floci.services.iam.model.IamPolicy;
+import io.github.hectorvent.floci.services.iam.model.IamRole;
 import io.github.hectorvent.floci.services.s3.S3Service;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -388,5 +390,50 @@ class CloudControlServiceTest {
         }
         assertEquals("SUCCESS", status.operationStatus(),
                 requestToken + " ended " + status.operationStatus() + ": " + status.statusMessage());
+    }
+
+    @Test
+    void roleReadModelCarriesTrustPolicyAndAttachments() throws Exception {
+        IamService iamService = mock(IamService.class);
+        IamRole role = new IamRole("AROATEST", "qa-role", "/",
+                "arn:aws:iam::000000000000:role/qa-role",
+                "%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%7D%5D%7D");
+        role.getAttachedPolicyArns().add("arn:aws:iam::aws:policy/ReadOnlyAccess");
+        when(iamService.listRoles("/")).thenReturn(List.of(role));
+        ObjectMapper mapper = new ObjectMapper();
+        CloudControlService service = track(new CloudControlService(
+                mock(S3Service.class), mock(Ec2Service.class), iamService,
+                mock(CfnResourceDispatcher.class), mapper));
+
+        JsonNode props = mapper.readTree(
+                service.listResources("us-east-1", "AWS::IAM::Role").getFirst().properties());
+
+        assertEquals("2012-10-17", props.path("AssumeRolePolicyDocument").path("Version").asText());
+        assertEquals("Allow",
+                props.path("AssumeRolePolicyDocument").path("Statement").get(0).path("Effect").asText());
+        assertEquals("arn:aws:iam::aws:policy/ReadOnlyAccess",
+                props.path("ManagedPolicyArns").get(0).asText());
+    }
+
+    @Test
+    void managedPoliciesListWithArnAsIdentifier() throws Exception {
+        IamService iamService = mock(IamService.class);
+        IamPolicy policy = new IamPolicy("ANPATEST", "app-read", "/",
+                "arn:aws:iam::000000000000:policy/app-read",
+                "Read access", "{\"Version\":\"2012-10-17\",\"Statement\":[]}");
+        when(iamService.listPolicies("Local", "/")).thenReturn(List.of(policy));
+        ObjectMapper mapper = new ObjectMapper();
+        CloudControlService service = track(new CloudControlService(
+                mock(S3Service.class), mock(Ec2Service.class), iamService,
+                mock(CfnResourceDispatcher.class), mapper));
+
+        CloudControlService.ResourceDescription described = service.getResource(
+                "us-east-1", "AWS::IAM::ManagedPolicy", "arn:aws:iam::000000000000:policy/app-read");
+
+        assertEquals("arn:aws:iam::000000000000:policy/app-read", described.identifier());
+        JsonNode props = mapper.readTree(described.properties());
+        assertEquals("app-read", props.path("ManagedPolicyName").asText());
+        assertEquals("Read access", props.path("Description").asText());
+        assertEquals("2012-10-17", props.path("PolicyDocument").path("Version").asText());
     }
 }
