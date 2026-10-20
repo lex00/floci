@@ -26,6 +26,7 @@ import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -514,18 +515,27 @@ public class DataZoneEnvironmentService implements Resettable {
         return publicProfile(profile);
     }
 
+    /** The id of the user profile for a user identifier or profile id, or the identifier itself. */
+    public String userId(String region, String domainId, String userIdentifier) {
+        return findUserProfile(region, domainId, userIdentifier).map(p -> p.path("id").asText()).orElse(userIdentifier);
+    }
+
     private ObjectNode requireUserProfile(String region, String domainId, String userIdentifier) {
+        return findUserProfile(region, domainId, userIdentifier)
+                .orElseThrow(() -> notFound("User profile " + userIdentifier + " not found."));
+    }
+
+    private Optional<ObjectNode> findUserProfile(String region, String domainId, String userIdentifier) {
         DataZoneDomain domain = domains.getDomain(region, domainId);
         ObjectNode byIdentifier = records.get(key(USER_PROFILE, region, domain.getId(), userIdentifier)).orElse(null);
         if (byIdentifier != null) {
-            return byIdentifier;
+            return Optional.of(byIdentifier);
         }
         return list(USER_PROFILE, region, domain.getId(), "id").stream()
                 .filter(p -> userIdentifier.equals(p.path("id").asText()))
                 .findFirst()
-                .map(p -> records.get(key(USER_PROFILE, region, domain.getId(), p.path("userIdentifier").asText()))
-                        .orElseThrow())
-                .orElseThrow(() -> notFound("User profile " + userIdentifier + " not found."));
+                .flatMap(p -> records.get(key(USER_PROFILE, region, domain.getId(),
+                        p.path("userIdentifier").asText())));
     }
 
     private static ObjectNode publicProfile(ObjectNode profile) {

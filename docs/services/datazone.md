@@ -55,6 +55,21 @@ and projects that hold them.
 | `GetGlossaryTerm` | Get a glossary term |
 | `UpdateGlossaryTerm` | Change a term, or move it to another glossary |
 | `DeleteGlossaryTerm` | Delete a disabled term |
+| `CreateDomainUnit` | Create a domain unit under a parent unit |
+| `GetDomainUnit` | Get a domain unit, including the root unit |
+| `UpdateDomainUnit` | Change a domain unit's name or description |
+| `DeleteDomainUnit` | Delete a domain unit with no child units or projects |
+| `ListDomainUnitsForParent` | List a unit's child domain units |
+| `UpdateRootDomainUnitOwner` | Replace an owner of the domain's root unit |
+| `AddEntityOwner` | Add a user or group owner to a domain unit |
+| `RemoveEntityOwner` | Remove an owner from a domain unit |
+| `ListEntityOwners` | List a domain unit's owners |
+| `CreateProjectMembership` | Add a user or group to a project, or change its designation |
+| `DeleteProjectMembership` | Remove a user or group from a project |
+| `ListProjectMemberships` | List a project's members |
+| `AddPolicyGrant` | Grant a managed policy on a domain unit, profile, configuration or asset type |
+| `RemovePolicyGrant` | Remove a policy grant by principal or grant id |
+| `ListPolicyGrants` | List an entity's grants of one policy type |
 <!-- floci:actions:end -->
 
 Tagging rides the shared `/tags/{resourceArn}` routes, so `ListTagsForResource`,
@@ -71,11 +86,17 @@ returns and provisions no AWS resources. It takes its account, region and bluepr
 environment profile. A form type or asset type created again under the same name gets the next
 revision.
 
+Each domain has a root domain unit, named after the domain, whose id is the domain's
+`rootDomainUnitId`. New domain units and projects start with no owners or members; add them with
+`AddEntityOwner` and `CreateProjectMembership`. A user given by an identifier that has a user
+profile is reported by the profile id, and otherwise by the identifier itself. Policy grants are
+recorded and listed but do not limit what callers can do.
+
 ## Not emulated
 
 - Assets, data products, listings and subscriptions
 - Data sources and their runs, connections and lineage
-- Domain units, project profiles, project memberships, rules and policy grants
+- Project profiles and rules
 
 ## AWS-compatible failures
 
@@ -89,6 +110,12 @@ and per glossary for terms; a duplicate returns `ConflictException`.
 `ConflictException`. Set the status with `UpdateGlossary` or `UpdateGlossaryTerm` first.
 `DeleteProject` refuses a project that still owns glossaries or environments unless
 `skipDeletionCheck` is set, in which case the glossaries and their terms go with it.
+
+Domain unit names are unique among siblings. `DeleteDomainUnit` returns `ConflictException` for the
+root unit and for a unit that still has child units or projects. `AddEntityOwner` returns
+`ConflictException` for an existing owner, and `RemoveEntityOwner` and `DeleteProjectMembership`
+return `ResourceNotFoundException` for one that is absent. `AddPolicyGrant` needs the `detail`
+member that matches `policyType`, such as `createGlossary` for `CREATE_GLOSSARY`.
 
 ## Configuration
 

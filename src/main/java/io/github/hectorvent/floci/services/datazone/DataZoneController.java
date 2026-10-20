@@ -10,6 +10,7 @@ import io.github.hectorvent.floci.services.datazone.model.DataZoneDomain;
 import io.github.hectorvent.floci.services.datazone.model.DataZoneGlossary;
 import io.github.hectorvent.floci.services.datazone.model.DataZoneGlossaryTerm;
 import io.github.hectorvent.floci.services.datazone.model.DataZoneProject;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
@@ -47,13 +48,18 @@ public class DataZoneController {
 
     private final DataZoneService service;
     private final DataZoneEnvironmentService environments;
+    private final DataZoneGovernanceService governance;
+    private final Instance<DataZoneRecords> stores;
     private final RegionResolver regionResolver;
 
     @Inject
     public DataZoneController(DataZoneService service, DataZoneEnvironmentService environments,
+                              DataZoneGovernanceService governance, Instance<DataZoneRecords> stores,
                               RegionResolver regionResolver) {
         this.service = service;
         this.environments = environments;
+        this.governance = governance;
+        this.stores = stores;
         this.regionResolver = regionResolver;
     }
 
@@ -93,6 +99,7 @@ public class DataZoneController {
         String domainId = service.getDomain(region, identifier).getId();
         service.deleteDomain(region, identifier);
         environments.deleteDomainResources(region, domainId);
+        stores.forEach(store -> store.deleteDomainResources(region, domainId));
         return Response.status(202).entity(Map.of("status", "DELETING")).build();
     }
 
@@ -157,6 +164,7 @@ public class DataZoneController {
             throw new AwsException("ConflictException", "Project " + identifier + " still has environments.", 409);
         }
         service.deleteProject(region, domainId, identifier, skipDeletionCheck);
+        governance.deleteProjectResources(region, project.getDomainId(), project.getId());
         return Response.noContent().build();
     }
 
