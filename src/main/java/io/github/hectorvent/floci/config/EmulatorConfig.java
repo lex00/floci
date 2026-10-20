@@ -916,6 +916,14 @@ public interface EmulatorConfig {
     interface CodeCommitServiceConfig {
         @WithDefault("true")
         boolean enabled();
+
+        /**
+         * Image that holds the repositories and runs Git for the clone URLs. It needs
+         * {@code git upload-pack} and {@code git receive-pack} and a POSIX shell.
+         * Env: FLOCI_SERVICES_CODECOMMIT_GIT_IMAGE
+         */
+        @WithDefault("alpine/git:v2.52.0")
+        String gitImage();
     }
 
     interface CodeConnectionsServiceConfig {

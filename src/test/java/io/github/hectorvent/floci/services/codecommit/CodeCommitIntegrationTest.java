@@ -31,7 +31,7 @@ class CodeCommitIntegrationTest {
                 .statusCode(200)
                 .body("repositoryMetadata.repositoryName", equalTo("it-repo"))
                 .body("repositoryMetadata.accountId", equalTo("000000000000"))
-                .body("repositoryMetadata.cloneUrlHttp", startsWith("https://git-codecommit.us-east-1."))
+                .body("repositoryMetadata.cloneUrlHttp", startsWith("http://git-codecommit.us-east-1.localhost:"))
                 .body("repositoryMetadata.creationDate", notNullValue())
                 .extract().path("repositoryMetadata.Arn");
 

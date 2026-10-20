@@ -1,6 +1,7 @@
 package io.github.hectorvent.floci.services.codecommit;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.AwsRegions;
@@ -11,15 +12,17 @@ import io.github.hectorvent.floci.services.codecommit.model.Repository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
+import java.net.URI;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
-/** Stores CodeCommit repository records and tags. No Git server answers at the clone URLs. */
+/** Stores CodeCommit repository records and tags; {@link CodeCommitGitServer} serves their Git data. */
 @ApplicationScoped
 public class CodeCommitService implements Resettable {
 
@@ -27,15 +30,31 @@ public class CodeCommitService implements Resettable {
     private static final int MAX_DESCRIPTION = 1000;
 
     private final AccountAwareStorageBackend<Repository> store;
+    private final String baseUrl;
+    private final CodeCommitGitServer gitServer;
 
     @Inject
-    public CodeCommitService(StorageFactory storageFactory) {
+    public CodeCommitService(StorageFactory storageFactory, EmulatorConfig config, CodeCommitGitServer gitServer) {
         this(storageFactory.create("codecommit", "codecommit-repositories.json",
-                new TypeReference<Map<String, Repository>>() {}));
+                new TypeReference<Map<String, Repository>>() {}), config.effectiveBaseUrl(), gitServer);
     }
 
     CodeCommitService(AccountAwareStorageBackend<Repository> store) {
+        this(store, "http://localhost:4566", null);
+    }
+
+    CodeCommitService(AccountAwareStorageBackend<Repository> store, String baseUrl, CodeCommitGitServer gitServer) {
         this.store = store;
+        this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        this.gitServer = gitServer;
+    }
+
+    /** The repository a Git request names, in the account and region the request resolved to. */
+    public Optional<Repository> findRepository(String accountId, String region, String name) {
+        if (name == null || !NAME.matcher(name).matches()) {
+            return Optional.empty();
+        }
+        return store.getForAccount(accountId, key(region, name));
     }
 
     @Override
@@ -72,7 +91,9 @@ public class CodeCommitService implements Resettable {
 
     public Repository getRepository(String region, String name) {
         validateName(name);
-        return store.get(key(region, name)).orElseThrow(() -> doesNotExist(name));
+        Repository repository = store.get(key(region, name)).orElseThrow(() -> doesNotExist(name));
+        applyCloneUrls(repository, region);
+        return repository;
     }
 
     public void updateRepositoryDescription(String region, String name, String description) {
@@ -106,6 +127,9 @@ public class CodeCommitService implements Resettable {
             return null;
         }
         store.delete(key(region, name));
+        if (gitServer != null) {
+            gitServer.delete(repository.getRepositoryId());
+        }
         return repository.getRepositoryId();
     }
 
@@ -166,10 +190,22 @@ public class CodeCommitService implements Resettable {
                 .orElseThrow(() -> doesNotExist(parsed.resource()));
     }
 
-    private static void applyCloneUrls(Repository repository, String region) {
+    /**
+     * The HTTP clone URL is Floci's Git endpoint, {@code http://git-codecommit.<region>.localhost:<port>/v1/repos/<name>}
+     * when Floci answers on localhost, so the host names the region as AWS's does; another base URL
+     * is used as it stands, and its repositories are in the default region. The SSH URL keeps the
+     * AWS form: Floci runs no SSH server.
+     */
+    private void applyCloneUrls(Repository repository, String region) {
+        URI base = URI.create(baseUrl);
+        String path = "/v1/repos/" + repository.getRepositoryName();
+        String httpUrl = "localhost".equals(base.getHost())
+                ? base.getScheme() + "://git-codecommit." + region + ".localhost"
+                        + (base.getPort() > 0 ? ":" + base.getPort() : "") + path
+                : baseUrl + path;
+        repository.setCloneUrlHttp(httpUrl);
         String host = "git-codecommit." + region + "." + AwsRegions.dnsSuffixFor(region);
-        repository.setCloneUrlHttp("https://" + host + "/v1/repos/" + repository.getRepositoryName());
-        repository.setCloneUrlSsh("ssh://" + host + "/v1/repos/" + repository.getRepositoryName());
+        repository.setCloneUrlSsh("ssh://" + host + path);
     }
 
     private static void validateName(String name) {

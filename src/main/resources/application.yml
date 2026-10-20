@@ -1097,6 +1097,7 @@ floci:
       enabled: true
     codecommit:
       enabled: true
+      git-image: alpine/git:v2.52.0  # Holds the repositories and runs Git for the clone URLs
     codeconnections:
       enabled: true
     ecr-public:
