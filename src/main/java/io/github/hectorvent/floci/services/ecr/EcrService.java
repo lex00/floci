@@ -257,6 +257,9 @@ public class EcrService implements ResourceProvider {
             String[] parts = registryRepositoryName.split("/", 3);
             boolean namespaced = parts.length == 3 && parts[0].matches("[0-9]{12}")
                     && parts[1].matches("[a-z0-9-]+");
+            if (namespaced && EcrRegistryManager.PUBLIC_NAMESPACE.equals(parts[1])) {
+                continue;
+            }
             String account = namespaced ? parts[0] : defaultAccount;
             String region = namespaced ? parts[1] : defaultRegion;
             String repoName = namespaced ? parts[2] : registryRepositoryName;

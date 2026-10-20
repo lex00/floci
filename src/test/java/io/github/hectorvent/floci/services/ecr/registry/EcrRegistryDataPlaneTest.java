@@ -68,6 +68,29 @@ class EcrRegistryDataPlaneTest {
     }
 
     @Test
+    void publicHostMapsTheAliasToThePublicNamespace() {
+        EcrRegistryDataPlane.RegistryRequest request = EcrRegistryDataPlane.requestFor(
+                "public.ecr.localhost:4566", "/v2/000000000000/team/app/blobs/uploads/", null, "hostname")
+                .orElseThrow();
+
+        assertEquals("000000000000", request.accountId());
+        assertEquals("public", request.region());
+        assertEquals("team/app", request.repositoryName());
+        assertEquals("000000000000/public/team/app", request.storageRepositoryName());
+        assertEquals("/v2/000000000000/public/team/app/blobs/uploads/", request.backendUri());
+        assertEquals("/v2/000000000000/team/app/blobs/uploads/abc",
+                EcrRegistryDataPlane.externalLocation("/v2/000000000000/public/team/app/blobs/uploads/abc", request));
+
+        EcrRegistryDataPlane.RegistryRequest manifest = EcrRegistryDataPlane.requestFor(
+                "public.ecr.localhost.floci.io:4566", "/v2/000000000000/app/manifests/latest", null, "hostname")
+                .orElseThrow();
+        assertEquals("latest", manifest.tag());
+        assertEquals("/v2/000000000000/public/app/manifests/latest", manifest.backendUri());
+        assertFalse(EcrRegistryDataPlane.requestFor(
+                "public.ecr.localhost:4566", "/v2/not-an-alias/app/manifests/latest", null, "hostname").isPresent());
+    }
+
+    @Test
     void hostnameStyleWithTlsDomainMatchesAndCapturesAccountAndRegion() {
         EcrRegistryDataPlane.RegistryRequest request = EcrRegistryDataPlane.requestFor(
                 "123456789012.dkr.ecr.eu-west-1.localhost.floci.io:4566",

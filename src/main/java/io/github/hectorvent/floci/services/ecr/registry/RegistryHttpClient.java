@@ -6,9 +6,11 @@ import org.jboss.logging.Logger;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -204,6 +206,95 @@ public class RegistryHttpClient {
         String digest = resp.headers().firstValue("Docker-Content-Digest").orElse(null);
         String mediaType = resp.headers().firstValue("Content-Type").orElse(null);
         return new ManifestResult(digest, resp.body(), mediaType);
+    }
+
+    /** Result of {@link #putManifest}: the status, the digest the registry assigned, and its error body. */
+    public record PutManifestResult(int status, String digest, String error) {
+        public boolean created() {
+            return status == 201;
+        }
+    }
+
+    /** PUT a manifest under a tag or digest. */
+    public PutManifestResult putManifest(String name, String reference, String body, String mediaType)
+            throws IOException, InterruptedException {
+        HttpResponse<String> resp = http.send(
+                HttpRequest.newBuilder(URI.create(baseUrl + "/v2/" + name + "/manifests/" + reference))
+                        .timeout(Duration.ofSeconds(30))
+                        .header("Content-Type", mediaType)
+                        .PUT(HttpRequest.BodyPublishers.ofString(body))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        return new PutManifestResult(resp.statusCode(),
+                resp.headers().firstValue("Docker-Content-Digest").orElse(null), resp.body());
+    }
+
+    /** HEAD a blob, returning its size, or {@code null} when the registry does not hold it. */
+    public Long headBlobSize(String name, String digest) throws IOException, InterruptedException {
+        HttpResponse<Void> resp = http.send(
+                HttpRequest.newBuilder(URI.create(baseUrl + "/v2/" + name + "/blobs/" + digest))
+                        .timeout(Duration.ofSeconds(10))
+                        .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                        .build(),
+                HttpResponse.BodyHandlers.discarding());
+        if (resp.statusCode() >= 400) {
+            return null;
+        }
+        return resp.headers().firstValueAsLong("Content-Length").orElse(0L);
+    }
+
+    /** Starts a blob upload and returns the absolute upload location. */
+    public String startBlobUpload(String name) throws IOException, InterruptedException {
+        HttpResponse<Void> resp = http.send(
+                HttpRequest.newBuilder(URI.create(baseUrl + "/v2/" + name + "/blobs/uploads/"))
+                        .timeout(Duration.ofSeconds(10))
+                        .POST(HttpRequest.BodyPublishers.noBody())
+                        .build(),
+                HttpResponse.BodyHandlers.discarding());
+        return uploadLocation(resp, "start upload for " + name);
+    }
+
+    /** Sends one chunk of a blob upload and returns the location for the next request. */
+    public String uploadBlobChunk(String location, byte[] chunk, long firstByte)
+            throws IOException, InterruptedException {
+        HttpResponse<Void> resp = http.send(
+                HttpRequest.newBuilder(URI.create(location))
+                        .timeout(Duration.ofSeconds(60))
+                        .header("Content-Type", "application/octet-stream")
+                        .header("Content-Range", firstByte + "-" + (firstByte + chunk.length - 1))
+                        .method("PATCH", HttpRequest.BodyPublishers.ofByteArray(chunk))
+                        .build(),
+                HttpResponse.BodyHandlers.discarding());
+        return uploadLocation(resp, "upload chunk");
+    }
+
+    /** Completes a blob upload under its digest, returning the digest the registry stored. */
+    public String completeBlobUpload(String location, String digest) throws IOException, InterruptedException {
+        String separator = location.contains("?") ? "&" : "?";
+        HttpResponse<String> resp = http.send(
+                HttpRequest.newBuilder(URI.create(location + separator + "digest="
+                                + URLEncoder.encode(digest, StandardCharsets.UTF_8)))
+                        .timeout(Duration.ofSeconds(60))
+                        .PUT(HttpRequest.BodyPublishers.noBody())
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() != 201) {
+            throw new IOException("Registry complete upload returned " + resp.statusCode() + ": " + resp.body());
+        }
+        return resp.headers().firstValue("Docker-Content-Digest").orElse(digest);
+    }
+
+    private String uploadLocation(HttpResponse<Void> resp, String what) throws IOException {
+        if (resp.statusCode() != 202) {
+            throw new IOException("Registry " + what + " returned " + resp.statusCode());
+        }
+        String location = resp.headers().firstValue("Location")
+                .orElseThrow(() -> new IOException("Registry " + what + " returned no Location"));
+        URI resolved = URI.create(baseUrl + "/").resolve(location);
+        URI base = URI.create(baseUrl);
+        // The registry names the location by the host it was called on; keep the base URL's host.
+        return base.getScheme() + "://" + base.getRawAuthority() + resolved.getRawPath()
+                + (resolved.getRawQuery() != null ? "?" + resolved.getRawQuery() : "");
     }
 
     /** DELETE a manifest by digest. Returns true on 202/200, false on 404. */

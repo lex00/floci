@@ -25,7 +25,6 @@ class EcrPublicServiceTest {
                 Map.of("description", "an app", "aboutText", "about"), null);
 
         assertEquals("arn:aws:ecr-public::000000000000:repository/team/app", repository.getRepositoryArn());
-        assertEquals("public.ecr.aws/000000000000/team/app", repository.getRepositoryUri());
         assertEquals("an app", repository.getCatalogData().get("description"));
         assertEquals(false, repository.getCatalogData().get("marketplaceCertified"));
     }

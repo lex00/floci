@@ -162,6 +162,31 @@ public class EcrRegistryManager {
         }
     }
 
+    /**
+     * The registry namespace segment ECR Public repositories live under, in place of a region:
+     * {@code <account>/public/<name>}. No AWS region has this name.
+     */
+    public static final String PUBLIC_NAMESPACE = "public";
+
+    /**
+     * The docker-pullable URI of an ECR Public repository: {@code public.ecr.localhost:<port>/<alias>/<name>},
+     * or {@code localhost:<port>/<account>/public/<name>} with the path URI style. The registry alias is the
+     * account id.
+     */
+    public String getPublicRepositoryUri(String accountId, String repoName) {
+        return getPublicRegistryUri(accountId) + "/" + repoName;
+    }
+
+    /** The URI of an account's ECR Public registry, the repository URIs without their name. */
+    public String getPublicRegistryUri(String accountId) {
+        String domain = tlsUriEnabled() ? "localhost.floci.io" : "localhost";
+        int port = advertisedPort();
+        if ("path".equalsIgnoreCase(config.services().ecr().uriStyle())) {
+            return domain + ":" + port + "/" + accountId + "/" + PUBLIC_NAMESPACE;
+        }
+        return "public.ecr." + domain + ":" + port + "/" + accountId;
+    }
+
     /** Returns the docker-pullable repository URI for the given account/region/name. */
     public String getRepositoryUri(String accountId, String region, String repoName) {
         return repositoryUri(accountId, region, repoName, tlsUriEnabled() ? "localhost.floci.io" : "localhost");
