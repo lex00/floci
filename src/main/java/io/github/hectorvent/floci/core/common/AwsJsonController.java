@@ -10,6 +10,7 @@ import io.github.hectorvent.floci.services.arcregionswitch.ArcRegionSwitchJsonHa
 import io.github.hectorvent.floci.services.bcmpricingcalculator.BcmPricingCalculatorJsonHandler;
 import io.github.hectorvent.floci.services.cloudcontrol.CloudControlJsonHandler;
 import io.github.hectorvent.floci.services.cloudwatch.metrics.CloudWatchMetricsJsonHandler;
+import io.github.hectorvent.floci.services.codeconnections.CodeConnectionsJsonHandler;
 import io.github.hectorvent.floci.services.dynamodb.DynamoDbJsonHandler;
 import io.github.hectorvent.floci.services.dynamodb.DynamoDbRequestShapes;
 import io.github.hectorvent.floci.services.dynamodb.DynamoDbResponses;
@@ -64,6 +65,7 @@ public class AwsJsonController {
     private final AppRunnerJsonHandler appRunnerJsonHandler;
     private final OpenSearchServerlessJsonHandler openSearchServerlessJsonHandler;
     private final ArcRegionSwitchJsonHandler arcRegionSwitchJsonHandler;
+    private final CodeConnectionsJsonHandler codeConnectionsJsonHandler;
 
     @Inject
     public AwsJsonController(ObjectMapper objectMapper, ResolvedServiceCatalog catalog,
@@ -82,7 +84,8 @@ public class AwsJsonController {
                              TimestreamInfluxDbJsonHandler timestreamInfluxDbJsonHandler,
                              AppRunnerJsonHandler appRunnerJsonHandler,
                              OpenSearchServerlessJsonHandler openSearchServerlessJsonHandler,
-                             ArcRegionSwitchJsonHandler arcRegionSwitchJsonHandler) {
+                             ArcRegionSwitchJsonHandler arcRegionSwitchJsonHandler,
+                             CodeConnectionsJsonHandler codeConnectionsJsonHandler) {
         this.objectMapper = objectMapper;
         this.strictBodyReader = objectMapper.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         this.catalog = catalog;
@@ -103,6 +106,7 @@ public class AwsJsonController {
         this.appRunnerJsonHandler = appRunnerJsonHandler;
         this.openSearchServerlessJsonHandler = openSearchServerlessJsonHandler;
         this.arcRegionSwitchJsonHandler = arcRegionSwitchJsonHandler;
+        this.codeConnectionsJsonHandler = codeConnectionsJsonHandler;
     }
 
     /**
@@ -191,6 +195,8 @@ public class AwsJsonController {
                 case "apprunner" -> appRunnerJsonHandler.handle(action, request, region);
                 case "aoss" -> openSearchServerlessJsonHandler.handle(action, request, region);
                 case "arc-region-switch" -> arcRegionSwitchJsonHandler.handle(action, request);
+                case "codeconnections" -> codeConnectionsJsonHandler.handle(
+                        action, request, region, regionResolver.getAccountId());
                 default -> null;
             };
             // catalog.matchTarget is protocol-agnostic: a JSON 1.1 target

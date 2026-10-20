@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.services.codebuild.model.Build;
+import io.github.hectorvent.floci.services.codebuild.model.Fleet;
 import io.github.hectorvent.floci.services.codebuild.model.Project;
 import io.github.hectorvent.floci.services.codebuild.model.ProjectArtifacts;
 import io.github.hectorvent.floci.services.codebuild.model.ProjectEnvironment;
@@ -44,6 +45,11 @@ public class CodeBuildJsonHandler {
             case "DeleteReportGroup" -> deleteReportGroup(request, region);
             case "BatchGetReportGroups" -> batchGetReportGroups(request, region);
             case "ListReportGroups" -> listReportGroups(region);
+            case "CreateFleet" -> createFleet(request, region, account);
+            case "UpdateFleet" -> updateFleet(request, region);
+            case "DeleteFleet" -> deleteFleet(request, region);
+            case "BatchGetFleets" -> batchGetFleets(request, region);
+            case "ListFleets" -> listFleets(request, region);
             case "ImportSourceCredentials" -> importSourceCredentials(request, region, account);
             case "ListSourceCredentials" -> listSourceCredentials(region);
             case "DeleteSourceCredentials" -> deleteSourceCredentials(request, region);
@@ -168,6 +174,58 @@ public class CodeBuildJsonHandler {
 
     private Response listReportGroups(String region) {
         return Response.ok(Map.of("reportGroups", service.listReportGroups(region))).build();
+    }
+
+    private Response createFleet(JsonNode req, String region, String account) throws Exception {
+        Fleet fleet = parseFleet(req);
+        fleet.setName(req.path("name").asText(null));
+        return Response.ok(Map.of("fleet", service.createFleet(region, account, fleet))).build();
+    }
+
+    private Response updateFleet(JsonNode req, String region) throws Exception {
+        String arn = req.path("arn").asText(null);
+        return Response.ok(Map.of("fleet", service.updateFleet(region, arn, parseFleet(req)))).build();
+    }
+
+    private Response deleteFleet(JsonNode req, String region) {
+        service.deleteFleet(region, req.path("arn").asText(null));
+        return Response.ok(Map.of()).build();
+    }
+
+    private Response batchGetFleets(JsonNode req, String region) {
+        List<String> names = new ArrayList<>();
+        req.path("names").forEach(n -> names.add(n.asText()));
+        List<Fleet> found = service.batchGetFleets(region, names);
+        List<String> notFound = names.stream()
+                .filter(n -> found.stream().noneMatch(f -> n.equals(f.getArn()) || n.equals(f.getName())))
+                .toList();
+        return Response.ok(Map.of("fleets", found, "fleetsNotFound", notFound)).build();
+    }
+
+    private Response listFleets(JsonNode req, String region) {
+        List<String> arns = service.listFleets(region,
+                req.path("sortBy").asText(null), req.path("sortOrder").asText(null));
+        return Response.ok(Map.of("fleets", arns)).build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Fleet parseFleet(JsonNode req) throws Exception {
+        Fleet fleet = new Fleet();
+        fleet.setBaseCapacity(req.has("baseCapacity") ? req.path("baseCapacity").asInt() : null);
+        fleet.setEnvironmentType(req.path("environmentType").asText(null));
+        fleet.setComputeType(req.path("computeType").asText(null));
+        fleet.setComputeConfiguration(req.has("computeConfiguration")
+                ? mapper.treeToValue(req.get("computeConfiguration"), Map.class) : null);
+        fleet.setScalingConfiguration(req.has("scalingConfiguration")
+                ? mapper.treeToValue(req.get("scalingConfiguration"), Map.class) : null);
+        fleet.setOverflowBehavior(req.path("overflowBehavior").asText(null));
+        fleet.setVpcConfig(req.has("vpcConfig") ? mapper.treeToValue(req.get("vpcConfig"), Map.class) : null);
+        fleet.setProxyConfiguration(req.has("proxyConfiguration")
+                ? mapper.treeToValue(req.get("proxyConfiguration"), Map.class) : null);
+        fleet.setImageId(req.path("imageId").asText(null));
+        fleet.setFleetServiceRole(req.path("fleetServiceRole").asText(null));
+        fleet.setTags(req.has("tags") ? parseTags(req) : null);
+        return fleet;
     }
 
     private Response importSourceCredentials(JsonNode req, String region, String account) {

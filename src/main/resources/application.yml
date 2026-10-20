@@ -1073,3 +1073,9 @@ floci:
       enabled: true
     dms:
       enabled: true
+    codecommit:
+      enabled: true
+    codeconnections:
+      enabled: true
+    ecr-public:
+      enabled: true

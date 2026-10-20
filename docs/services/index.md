@@ -92,6 +92,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [Lightsail](lightsail.md) | `POST /` + `X-Amz-Target: Lightsail_20161128.*` | JSON 1.1 | 79 local responses; 161 recognized actions |
 | [ACM](acm.md) | `POST /` + `X-Amz-Target: CertificateManager.*` | JSON 1.1 | 16 |
 | [ECR](ecr.md) | `POST /` + `X-Amz-Target: AmazonEC2ContainerRegistry_V20150921.*` (control plane) and `/v2/...` (data plane proxied to `registry:2`) | JSON 1.1 + OCI Distribution | 17 |
+| [ECR Public](ecr-public.md) | `POST /` + `X-Amz-Target: SpencerFrontendService.*` | JSON 1.1 | 11 |
 | [Resource Groups Tagging API](resource-groups-tagging.md) | `POST /` + `X-Amz-Target: ResourceGroupsTaggingAPI_20170126.*` | JSON 1.1 | 5 |
 | [Resource Explorer](resource-explorer.md) | `POST /{OperationName}`, rewritten to `/_re2/*` for the four paths S3 Vectors also claims | REST JSON | 32 |
 | [SES](ses.md) | `POST /` with `Action=` param | Query | 16 |
@@ -113,7 +114,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [Auto Scaling](autoscaling.md) | `POST /` with `Action=` param | Query | 33 |
 | [Application Auto Scaling](applicationautoscaling.md) | `POST /` + `X-Amz-Target: AnyScaleFrontendService.*` | JSON 1.1 | 10 |
 | [Elastic Beanstalk](elastic-beanstalk.md) | `POST /` with `Action=` or `Operation=` param | Query | 14 |
-| [CodeBuild](codebuild.md) | `POST /` + `X-Amz-Target: CodeBuild_20161006.*` | JSON 1.1 | 20 |
+| [CodeBuild](codebuild.md) | `POST /` + `X-Amz-Target: CodeBuild_20161006.*` | JSON 1.1 | 25 |
 | [AWS Batch](batch.md) | `/v1/...` | REST JSON | 10 |
 | [CodeDeploy](codedeploy.md) | `POST /` + `X-Amz-Target: CodeDeploy_20141006.*` | JSON 1.1 | 30 |
 | [CodePipeline](codepipeline.md) | `POST /` + `X-Amz-Target: CodePipeline_20150709.*` | JSON 1.1 | 44 |
@@ -134,6 +135,8 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [Amazon IVS Chat](ivschat.md) | `POST /{OperationName}` | REST JSON | 6 |
 | [CodeGuru Reviewer](codegurureviewer.md) | `/associations`, `/associations/{associationArn}`, `/tags/*` | REST JSON | 7 |
 | [CodeArtifact](codeartifact.md) | `/v1/domain*`, `/v1/repository*`, `/v1/package`, `/v1/package/version*`, `/v1/tag*`, `/v1/authorization-token`, `/codeartifact/maven/*`, `/codeartifact/npm/*`, `/codeartifact/pypi/*` | REST JSON | 32 |
+| [CodeCommit](codecommit.md) | `POST /` + `X-Amz-Target: CodeCommit_20150413.*` | JSON 1.1 | 10 |
+| [CodeConnections](codeconnections.md) | `POST /` + `X-Amz-Target: com.amazonaws.codeconnections.CodeConnections_20231201.*` | JSON 1.0 | 11 |
 | [CloudFront](cloudfront.md) | `/2020-05-31/distribution/*`, `/2020-05-31/cache-policy/*`, `/2020-05-31/function/*` | REST XML | 50 |
 | [Route53](route53.md) | `/2013-04-01/hostedzone/*`, `/2013-04-01/healthcheck/*`, `/2013-04-01/change/*` | REST XML | 27 |
 | [Route 53 Resolver](route53resolver.md) | `POST /` + `X-Amz-Target: Route53Resolver.*` | JSON 1.1 | 19 |

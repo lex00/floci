@@ -14,6 +14,7 @@ codegurureviewer	no non-commercial partition publishes the service, so a case wo
 cognitoidentity	identity pool ARN is never returned and ARN lookup ignores the partition, nothing to assert
 detective	the graph exists only once an organization admin is designated, and nothing removes it, so a case would leak state into the shared emulator
 docdb	CreateDBCluster starts a container under the test config and the package has no lighter resource; its parameter and subnet groups are RDS's, covered there
+ecrpublic	no non-commercial partition publishes the service, so a case would be skipped in every partition
 globalaccelerator	no non-commercial partition publishes the service, so a case would be skipped in every partition
 iam	covered by IamPartitionArnIntegrationTest (all partitions)
 ivs	no non-commercial partition publishes the service, so a case would be skipped in every partition

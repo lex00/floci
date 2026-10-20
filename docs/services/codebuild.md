@@ -10,8 +10,9 @@ Floci implements the CodeBuild API — stored-state management plus real build e
 - `arn:aws:codebuild:<region>:<account>:report-group/<name>`
 - `arn:aws:codebuild:<region>:<account>:token/<type>-<uuid>`
 - `arn:aws:codebuild:<region>:<account>:build/<project>:<uuid>`
+- `arn:aws:codebuild:<region>:<account>:fleet/<name>:<uuid>`
 
-## Supported Operations (20 total)
+## Supported Operations (25 total)
 
 ### Projects
 
@@ -43,6 +44,18 @@ Floci implements the CodeBuild API — stored-state management plus real build e
 | `DeleteReportGroup` | Removes report group by ARN |
 | `BatchGetReportGroups` | Returns found report groups and a `reportGroupsNotFound` list |
 | `ListReportGroups` | Returns all report group ARNs in the region |
+
+### Fleets
+
+| Operation | Notes |
+|---|---|
+| `CreateFleet` | Stores the fleet, `ACTIVE` immediately; requires `name`, `baseCapacity`, `environmentType` and `computeType` |
+| `UpdateFleet` | Partial update by ARN; supplied `tags` replace the fleet's tags |
+| `DeleteFleet` | Removes the fleet by ARN |
+| `BatchGetFleets` | Accepts fleet names or ARNs; returns found fleets and a `fleetsNotFound` list |
+| `ListFleets` | Returns fleet ARNs, sorted by `sortBy` and `sortOrder` |
+
+Fleets are stored state only. Builds still run in their own container whatever fleet a project names.
 
 ### Source Credentials
 

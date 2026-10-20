@@ -5,6 +5,7 @@ import io.github.hectorvent.floci.testing.PartitionMatrix;
 import io.github.hectorvent.floci.testing.PartitionMatrix.PartitionCase;
 import io.github.hectorvent.floci.testing.RestAssuredJsonUtils;
 import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.path.json.JsonPath;
 import io.restassured.path.json.config.JsonPathConfig;
 import io.restassured.response.Response;
 import io.restassured.specification.RequestSpecification;
@@ -44,6 +45,9 @@ class PartitionCrossServiceSmokeIntegrationTest {
             "aps", "autoscaling", "backup", "batch", "bcmdataexports", "bedrock", "bedrockagentcore", "bedrockagentcorecontrol", "ce",
             "cloudfront", "cloudmap", "cloudwatch", "codebuild", "codedeploy", "codepipeline", "cognito",
             "configservice", "connect", "controlcatalog", "controltower", "datasync", "datazone", "dlm", "dms", "dynamodb", "ec2",
+            "cloudfront", "cloudmap", "cloudwatch", "codebuild", "codecommit", "codeconnections", "codedeploy",
+            "codepipeline", "cognito",
+            "configservice", "connect", "controlcatalog", "controltower", "datasync", "dlm", "dms", "dynamodb", "ec2",
             "ecr", "ecs", "efs", "eks", "elasticache", "elasticbeanstalk", "elbv2", "emr", "emrserverless",
             "eventbridge", "firehose", "fis", "glue", "guardduty", "iot", "kinesis", "kinesisanalytics", "lambda",
             "lambdamicrovms", "lambdaweb", "medialive", "mediapackage", "memorydb", "msk", "mwaa", "networkfirewall",
@@ -1314,6 +1318,36 @@ class PartitionCrossServiceSmokeIntegrationTest {
             .extract().jsonPath().getString("Endpoint.EndpointArn");
         cleanup.register(() -> json11(region, "dms", "AmazonDMSv20160101.DeleteEndpoint",
                 "{\"EndpointArn\":\"" + arn + "\"}").when().post("/"));
+        PartitionMatrix.assertArnIn(partitionCase, arn);
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void codeCommitRepositoryArnAndCloneUrl(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "codecommit");
+        String name = unique("smoke-cc", partitionCase);
+        JsonPath metadata = json11(region, "codecommit",
+                "CodeCommit_20150413.CreateRepository", "{\"repositoryName\":\"" + name + "\"}")
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath();
+        cleanup.register(() -> json11(region, "codecommit", "CodeCommit_20150413.DeleteRepository",
+                "{\"repositoryName\":\"" + name + "\"}").when().post("/"));
+        PartitionMatrix.assertArnIn(partitionCase, metadata.getString("repositoryMetadata.Arn"));
+        assertTrue(metadata.getString("repositoryMetadata.cloneUrlHttp")
+                .contains("." + region + "." + partitionCase.dnsSuffix() + "/"));
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void codeConnectionsConnectionArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "codeconnections");
+        String target = "com.amazonaws.codeconnections.CodeConnections_20231201.";
+        String arn = json10(region, "codeconnections", target + "CreateConnection",
+                "{\"ConnectionName\":\"smoke\",\"ProviderType\":\"GitHub\"}")
+        .when().post("/").then().statusCode(200)
+            .extract().jsonPath().getString("ConnectionArn");
+        cleanup.register(() -> json10(region, "codeconnections", target + "DeleteConnection",
+                "{\"ConnectionArn\":\"" + arn + "\"}").when().post("/"));
         PartitionMatrix.assertArnIn(partitionCase, arn);
     }
 

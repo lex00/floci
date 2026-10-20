@@ -19,6 +19,7 @@ import io.github.hectorvent.floci.services.cloudmap.CloudMapHandler;
 import io.github.hectorvent.floci.services.cloudtrail.CloudTrailJsonHandler;
 import io.github.hectorvent.floci.services.cloudwatch.logs.CloudWatchLogsHandler;
 import io.github.hectorvent.floci.services.codebuild.CodeBuildJsonHandler;
+import io.github.hectorvent.floci.services.codecommit.CodeCommitJsonHandler;
 import io.github.hectorvent.floci.services.codedeploy.CodeDeployJsonHandler;
 import io.github.hectorvent.floci.services.codepipeline.CodePipelineJsonHandler;
 import io.github.hectorvent.floci.services.cognito.CognitoJsonHandler;
@@ -29,6 +30,7 @@ import io.github.hectorvent.floci.services.cur.CurJsonHandler;
 import io.github.hectorvent.floci.services.datasync.DataSyncJsonHandler;
 import io.github.hectorvent.floci.services.dms.DmsJsonHandler;
 import io.github.hectorvent.floci.services.ecr.EcrJsonHandler;
+import io.github.hectorvent.floci.services.ecrpublic.EcrPublicJsonHandler;
 import io.github.hectorvent.floci.services.ecs.EcsJsonHandler;
 import io.github.hectorvent.floci.services.emr.EmrHandler;
 import io.github.hectorvent.floci.services.eventbridge.EventBridgeHandler;
@@ -150,6 +152,8 @@ public class AwsJson11Controller {
     private final MarketplaceMeteringController marketplaceMeteringController;
     private final SageMakerJsonHandler sageMakerJsonHandler;
     private final DmsJsonHandler dmsJsonHandler;
+    private final CodeCommitJsonHandler codeCommitJsonHandler;
+    private final EcrPublicJsonHandler ecrPublicJsonHandler;
 
     @Inject
     public AwsJson11Controller(ObjectMapper objectMapper, ResolvedServiceCatalog catalog,
@@ -208,7 +212,9 @@ public class AwsJson11Controller {
                                MarketplaceEntitlementController marketplaceEntitlementController,
                                MarketplaceMeteringController marketplaceMeteringController,
                                SageMakerJsonHandler sageMakerJsonHandler,
-                               DmsJsonHandler dmsJsonHandler) {
+                               DmsJsonHandler dmsJsonHandler,
+                               CodeCommitJsonHandler codeCommitJsonHandler,
+                               EcrPublicJsonHandler ecrPublicJsonHandler) {
         this.objectMapper = objectMapper;
         this.strictBodyReader = objectMapper.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         this.catalog = catalog;
@@ -272,6 +278,8 @@ public class AwsJson11Controller {
         this.marketplaceMeteringController = marketplaceMeteringController;
         this.sageMakerJsonHandler = sageMakerJsonHandler;
         this.dmsJsonHandler = dmsJsonHandler;
+        this.codeCommitJsonHandler = codeCommitJsonHandler;
+        this.ecrPublicJsonHandler = ecrPublicJsonHandler;
     }
 
     @POST
@@ -395,6 +403,10 @@ public class AwsJson11Controller {
                 }
                 case "sagemaker" -> sageMakerJsonHandler.handle(action, request, region);
                 case "dms" -> dmsJsonHandler.handle(action, request, region);
+                case "codecommit" -> codeCommitJsonHandler.handle(
+                        action, request, region, regionResolver.getAccountId());
+                case "ecr-public" -> ecrPublicJsonHandler.handle(
+                        action, request, region, regionResolver.getAccountId());
                 default -> null;
             };
             // catalog.matchTarget is protocol-agnostic: a JSON 1.0 target

@@ -891,9 +891,27 @@ public interface EmulatorConfig {
         CodeArtifactServiceConfig codeartifact();
         MarketplaceServiceConfig marketplace();
         DmsServiceConfig dms();
+        CodeCommitServiceConfig codecommit();
+        CodeConnectionsServiceConfig codeconnections();
+        EcrPublicServiceConfig ecrPublic();
     }
 
     interface DmsServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface CodeCommitServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface CodeConnectionsServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface EcrPublicServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }

@@ -1,7 +1,9 @@
 package io.github.hectorvent.floci.services.codebuild;
 
 import io.github.hectorvent.floci.config.EmulatorConfig;
+import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.services.codebuild.model.Build;
+import io.github.hectorvent.floci.services.codebuild.model.Fleet;
 import io.github.hectorvent.floci.services.codebuild.model.Project;
 import io.github.hectorvent.floci.services.codebuild.model.ProjectArtifacts;
 import io.github.hectorvent.floci.services.codebuild.model.ProjectEnvironment;
@@ -13,6 +15,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -47,5 +51,33 @@ class CodeBuildServiceTest {
         verify(runner, times(2)).startBuild(eq(REGION), any(Build.class), any(Project.class),
                 buildspecOverrides.capture());
         assertEquals(List.of(buildspec, buildspec), buildspecOverrides.getAllValues());
+    }
+
+    @Test
+    void fleetLifecycleResolvesByNameAndArn() {
+        CodeBuildService service = new CodeBuildService(mock(CodeBuildRunner.class), mock(EmulatorConfig.class), null);
+        Fleet request = new Fleet();
+        request.setName("build-fleet");
+        request.setBaseCapacity(1);
+        request.setEnvironmentType("LINUX_CONTAINER");
+        request.setComputeType("BUILD_GENERAL1_SMALL");
+
+        Fleet created = service.createFleet(REGION, ACCOUNT, request);
+
+        assertTrue(created.getArn().startsWith("arn:aws:codebuild:us-east-1:000000000000:fleet/build-fleet:"));
+        assertEquals("ACTIVE", created.getStatus().get("statusCode"));
+        assertEquals("QUEUE", created.getOverflowBehavior());
+        assertEquals(List.of(created.getArn()), service.listFleets(REGION, null, null));
+        assertEquals(1, service.batchGetFleets(REGION, List.of("build-fleet")).size());
+
+        Fleet changes = new Fleet();
+        changes.setBaseCapacity(3);
+        assertEquals(3, service.updateFleet(REGION, created.getArn(), changes).getBaseCapacity());
+
+        AwsException duplicate = assertThrows(AwsException.class, () -> service.createFleet(REGION, ACCOUNT, request));
+        assertEquals("ResourceAlreadyExistsException", duplicate.getErrorCode());
+
+        service.deleteFleet(REGION, created.getArn());
+        assertTrue(service.listFleets(REGION, null, null).isEmpty());
     }
 }

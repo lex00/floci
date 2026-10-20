@@ -446,6 +446,19 @@
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>ecr</artifactId>
         </dependency>
+        <!-- ECR Public, CodeCommit and CodeConnections clients -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>ecrpublic</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>codecommit</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>codeconnections</artifactId>
+        </dependency>
         <!-- EventBridge Pipes client -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>

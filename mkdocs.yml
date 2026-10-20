@@ -178,6 +178,7 @@ nav:
     - ACM: services/acm.md
     - ECS: services/ecs.md
     - ECR: services/ecr.md
+    - ECR Public: services/ecr-public.md
     - Resource Groups Tagging API: services/resource-groups-tagging.md
     - Resource Explorer 2: services/resource-explorer.md
     - EKS: services/eks.md
@@ -202,6 +203,8 @@ nav:
     - CodeDeploy: services/codedeploy.md
     - CodeGuru Reviewer: services/codegurureviewer.md
     - CodeArtifact: services/codeartifact.md
+    - CodeCommit: services/codecommit.md
+    - CodeConnections: services/codeconnections.md
     - CodePipeline: services/codepipeline.md
     - Service Quotas: services/servicequotas.md
     - AWS RAM: services/ram.md

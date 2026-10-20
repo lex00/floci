@@ -42,6 +42,8 @@ import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
 import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
 import software.amazon.awssdk.services.codeartifact.CodeartifactClient;
 import software.amazon.awssdk.services.codebuild.CodeBuildClient;
+import software.amazon.awssdk.services.codecommit.CodeCommitClient;
+import software.amazon.awssdk.services.codeconnections.CodeConnectionsClient;
 import software.amazon.awssdk.services.codedeploy.CodeDeployClient;
 import software.amazon.awssdk.services.codepipeline.CodePipelineClient;
 import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityProviderClient;
@@ -55,6 +57,7 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsClient;
 import software.amazon.awssdk.services.ec2.Ec2Client;
 import software.amazon.awssdk.services.ecr.EcrClient;
+import software.amazon.awssdk.services.ecrpublic.EcrPublicClient;
 import software.amazon.awssdk.services.ecs.EcsClient;
 import software.amazon.awssdk.services.efs.EfsClient;
 import software.amazon.awssdk.services.eks.EksClient;
@@ -1375,6 +1378,30 @@ public final class TestFixtures {
 
     public static AcmClient acmClient() {
         return AcmClient.builder()
+                .endpointOverride(ENDPOINT)
+                .region(REGION)
+                .credentialsProvider(CREDENTIALS)
+                .build();
+    }
+
+    public static EcrPublicClient ecrPublicClient() {
+        return EcrPublicClient.builder()
+                .endpointOverride(ENDPOINT)
+                .region(REGION)
+                .credentialsProvider(CREDENTIALS)
+                .build();
+    }
+
+    public static CodeCommitClient codeCommitClient() {
+        return CodeCommitClient.builder()
+                .endpointOverride(ENDPOINT)
+                .region(REGION)
+                .credentialsProvider(CREDENTIALS)
+                .build();
+    }
+
+    public static CodeConnectionsClient codeConnectionsClient() {
+        return CodeConnectionsClient.builder()
                 .endpointOverride(ENDPOINT)
                 .region(REGION)
                 .credentialsProvider(CREDENTIALS)
