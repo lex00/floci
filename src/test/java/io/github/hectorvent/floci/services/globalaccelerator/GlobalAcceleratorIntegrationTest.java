@@ -19,6 +19,7 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -812,5 +813,162 @@ class GlobalAcceleratorIntegrationTest {
         .then()
             .statusCode(400)
             .body("__type", equalTo("InvalidArgumentException"));
+    }
+
+    // Cross-account resources
+
+    private static final String OWNER_AUTH =
+            "AWS4-HMAC-SHA256 Credential=111122223333/20260215/us-west-2/globalaccelerator/aws4_request";
+    private static final String CONSUMER_AUTH =
+            "AWS4-HMAC-SHA256 Credential=444455556666/20260215/us-west-2/globalaccelerator/aws4_request";
+
+    private static String sharedAttachmentArn;
+
+    @Test
+    @Order(80)
+    void ownerSharesResourcesWithConsumerAccount() {
+        sharedAttachmentArn = signedCall(OWNER_AUTH, "CreateCrossAccountAttachment", """
+                {"Name":"shared","Principals":["444455556666"],
+                 "Resources":[{"EndpointId":"arn:aws:elasticloadbalancing:us-east-1:111122223333:loadbalancer/app/a/1",
+                               "Region":"us-east-1"},
+                              {"Cidr":"203.0.113.0/24"}]}""")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("CrossAccountAttachment.AttachmentArn");
+
+        signedCall(OWNER_AUTH, "CreateCrossAccountAttachment", """
+                {"Name":"private","Principals":["999999999999"],"Resources":[{"Cidr":"198.51.100.0/24"}]}""")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+    }
+
+    @Test
+    @Order(81)
+    void listCrossAccountResourceAccountsNamesTheOwner() {
+        signedCall(CONSUMER_AUTH, "ListCrossAccountResourceAccounts", "{}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("ResourceOwnerAwsAccountIds", contains("111122223333"));
+
+        signedCall(OWNER_AUTH, "ListCrossAccountResourceAccounts", "{}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("ResourceOwnerAwsAccountIds", hasSize(0));
+    }
+
+    @Test
+    @Order(82)
+    void listCrossAccountResourcesReturnsSharedResourcesInPages() {
+        String token = signedCall(CONSUMER_AUTH, "ListCrossAccountResources",
+                "{\"ResourceOwnerAwsAccountId\":\"111122223333\",\"MaxResults\":1}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("CrossAccountResources", hasSize(1))
+            .body("CrossAccountResources[0].AttachmentArn", equalTo(sharedAttachmentArn))
+            .body("NextToken", notNullValue())
+            .extract().path("NextToken");
+
+        signedCall(CONSUMER_AUTH, "ListCrossAccountResources",
+                "{\"ResourceOwnerAwsAccountId\":\"111122223333\",\"MaxResults\":1,\"NextToken\":\"" + token + "\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("CrossAccountResources", hasSize(1))
+            .body("NextToken", nullValue());
+
+        signedCall(CONSUMER_AUTH, "ListCrossAccountResources", "{\"ResourceOwnerAwsAccountId\":\"111122223333\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("CrossAccountResources.Cidr", hasItem("203.0.113.0/24"))
+            .body("CrossAccountResources.Cidr", not(hasItem("198.51.100.0/24")));
+    }
+
+    @Test
+    @Order(83)
+    void listCrossAccountResourcesRejectsBadArguments() {
+        signedCall(CONSUMER_AUTH, "ListCrossAccountResources", "{}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("__type", equalTo("InvalidArgumentException"));
+
+        signedCall(CONSUMER_AUTH, "ListCrossAccountResources",
+                "{\"ResourceOwnerAwsAccountId\":\"111122223333\",\"NextToken\":\"bogus\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("__type", equalTo("InvalidNextTokenException"));
+
+        signedCall(CONSUMER_AUTH, "ListCrossAccountResources",
+                "{\"ResourceOwnerAwsAccountId\":\"111122223333\",\"AcceleratorArn\":"
+                        + "\"arn:aws:globalaccelerator::444455556666:accelerator/missing\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("__type", equalTo("AcceleratorNotFoundException"));
+    }
+
+    @Test
+    @Order(84)
+    void acceleratorPrincipalLimitsResourcesToThatAccelerator() {
+        String acceleratorArn = signedCall(CONSUMER_AUTH, "CreateAccelerator", "{\"Name\":\"consumer\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("Accelerator.AcceleratorArn");
+        String otherArn = signedCall(CONSUMER_AUTH, "CreateAccelerator", "{\"Name\":\"other\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("Accelerator.AcceleratorArn");
+
+        signedCall(OWNER_AUTH, "CreateCrossAccountAttachment", """
+                {"Name":"by-accelerator","Principals":["%s"],"Resources":[{"Cidr":"192.0.2.0/24"}]}"""
+                .formatted(acceleratorArn))
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        signedCall(CONSUMER_AUTH, "ListCrossAccountResources",
+                "{\"ResourceOwnerAwsAccountId\":\"111122223333\",\"AcceleratorArn\":\"" + acceleratorArn + "\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("CrossAccountResources.Cidr", hasItem("192.0.2.0/24"));
+
+        signedCall(OWNER_AUTH, "UpdateCrossAccountAttachment", """
+                {"AttachmentArn":"%s","RemovePrincipals":["444455556666"]}""".formatted(sharedAttachmentArn))
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        signedCall(CONSUMER_AUTH, "ListCrossAccountResources",
+                "{\"ResourceOwnerAwsAccountId\":\"111122223333\",\"AcceleratorArn\":\"" + otherArn + "\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("CrossAccountResources", hasSize(0));
     }
 }

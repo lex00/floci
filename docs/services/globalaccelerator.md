@@ -36,6 +36,8 @@ emulated, so the static IP addresses and DNS names Floci hands out route no traf
 | `UpdateCrossAccountAttachment` | Rename an attachment, or add and remove its principals and resources |
 | `DeleteCrossAccountAttachment` | Delete a cross-account attachment |
 | `ListCrossAccountAttachments` | List the account's cross-account attachments |
+| `ListCrossAccountResourceAccounts` | List the accounts whose attachments name the caller or its accelerators |
+| `ListCrossAccountResources` | List the resources an owner account's attachments share with the caller, paginated |
 | `TagResource` | Tag an accelerator, listener, endpoint group or cross-account attachment |
 | `UntagResource` | Remove tags from an accelerator, listener, endpoint group or cross-account attachment |
 | `ListTagsForResource` | List the tags on an accelerator, listener, endpoint group or cross-account attachment |
@@ -128,14 +130,13 @@ These operations return `UnknownOperationException` rather than a stub success:
 - BYOIP address pools (`ProvisionByoipCidr`, `AdvertiseByoipCidr`, `DeprovisionByoipCidr`,
   `WithdrawByoipCidr`, `ListByoipCidrs`). `CreateAccelerator` still honours an `IpAddresses`
   list, so a BYOIP address can be pinned without provisioning a pool.
-- Cross-account attachments (`CreateCrossAccountAttachment` and friends)
 
 Two more gaps are worth calling out:
 
 - `IdempotencyToken` is accepted but not deduplicated, so repeating a create produces a
   second resource.
-- The list operations ignore `MaxResults` and return every resource in one page with no
-  `NextToken`. A paginator terminates after the first call.
+- The list operations other than `ListCrossAccountResources` ignore `MaxResults` and return
+  every resource in one page with no `NextToken`. A paginator terminates after the first call.
 - `AddEndpoints` returns the endpoint group's whole endpoint list rather than only the
   endpoints the call added.
 

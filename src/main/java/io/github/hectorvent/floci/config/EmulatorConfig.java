@@ -1105,6 +1105,15 @@ public interface EmulatorConfig {
          */
         Optional<String> endpointAddress();
 
+        /**
+         * Confirm an HTTP topic rule destination on create, so it reaches ENABLED with no call to
+         * ConfirmTopicRuleDestination. Set to false to post the confirmation message to the
+         * destination's URL and wait in IN_PROGRESS.
+         * Env: FLOCI_SERVICES_IOT_AUTO_CONFIRM_DESTINATIONS
+         */
+        @WithDefault("true")
+        boolean autoConfirmDestinations();
+
         MqttConfig mqtt();
     }
 
@@ -1591,6 +1600,14 @@ public interface EmulatorConfig {
     interface SnsServiceConfig {
         @WithDefault("true")
         boolean enabled();
+
+        /**
+         * Seconds a deleted topic stays visible to ListTopics, GetTopicAttributes and
+         * ListTagsForResource, as AWS's eventually consistent DeleteTopic does. Zero deletes at once.
+         * Env: FLOCI_SERVICES_SNS_DELETE_VISIBLE_SECONDS
+         */
+        @WithDefault("0")
+        int deleteVisibleSeconds();
     }
 
     interface ApiGatewayServiceConfig {
@@ -1616,6 +1633,14 @@ public interface EmulatorConfig {
     interface IamServiceConfig {
         @WithDefault("true")
         boolean enabled();
+
+        /**
+         * Seconds a deleted user, role or customer managed policy stays visible to its Get, List
+         * and List*Tags reads, as IAM's eventually consistent deletes do. Zero deletes at once.
+         * Env: FLOCI_SERVICES_IAM_DELETE_VISIBLE_SECONDS
+         */
+        @WithDefault("0")
+        int deleteVisibleSeconds();
 
         @WithDefault("false")
         boolean enforcementEnabled();

@@ -1946,6 +1946,7 @@ of the role it was issued for, whatever region later calls are signed for. See [
 | `FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED` | `false` | Enforce IAM policies on all inbound requests |
 | `FLOCI_SERVICES_IAM_SEED_DEPLOYER_PRINCIPAL` | `false` | Seed the optional `floci-deployer` user and `floci` / `floci` access key |
 | `FLOCI_SERVICES_IAM_ACCOUNT_ALIAS` | _(unset)_ | Seed an account alias at startup; unset means the account has no alias |
+| `FLOCI_SERVICES_IAM_DELETE_VISIBLE_SECONDS` | `0` | Seconds a deleted user, role or customer managed policy stays visible to `GetUser`, `GetRole`, `GetPolicy`, their `List` calls and their tag lists, as IAM's eventually consistent deletes do. `0` deletes at once |
 
 ## Examples
 

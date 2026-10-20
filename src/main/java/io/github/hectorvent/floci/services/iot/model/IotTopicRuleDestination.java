@@ -19,6 +19,7 @@ public class IotTopicRuleDestination {
     private Instant createdAt;
     private Instant lastUpdatedAt;
     private String confirmationUrl;
+    private String confirmationToken;
     private List<String> subnetIds = new ArrayList<>();
     private List<String> securityGroups = new ArrayList<>();
     private String vpcId;
@@ -43,6 +44,9 @@ public class IotTopicRuleDestination {
     public String getConfirmationUrl() { return confirmationUrl; }
     public void setConfirmationUrl(String confirmationUrl) { this.confirmationUrl = confirmationUrl; }
 
+    public String getConfirmationToken() { return confirmationToken; }
+    public void setConfirmationToken(String confirmationToken) { this.confirmationToken = confirmationToken; }
+
     public List<String> getSubnetIds() { return subnetIds; }
     public void setSubnetIds(List<String> subnetIds) { this.subnetIds = subnetIds; }
 
@@ -57,4 +61,21 @@ public class IotTopicRuleDestination {
 
     public Map<String, String> getInfluxDb() { return influxDb; }
     public void setInfluxDb(Map<String, String> influxDb) { this.influxDb = influxDb; }
+
+    public IotTopicRuleDestination copy() {
+        IotTopicRuleDestination copy = new IotTopicRuleDestination();
+        copy.arn = arn;
+        copy.status = status;
+        copy.statusReason = statusReason;
+        copy.createdAt = createdAt;
+        copy.lastUpdatedAt = lastUpdatedAt;
+        copy.confirmationUrl = confirmationUrl;
+        copy.confirmationToken = confirmationToken;
+        copy.subnetIds = new ArrayList<>(subnetIds);
+        copy.securityGroups = new ArrayList<>(securityGroups);
+        copy.vpcId = vpcId;
+        copy.roleArn = roleArn;
+        copy.influxDb = influxDb;
+        return copy;
+    }
 }

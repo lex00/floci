@@ -3468,5 +3468,44 @@ class IamServiceTest {
         Optional<String> nullOpt = iamService.resolveCallerUserId("ASIATOKENCHECKKEY", null);
         assertTrue(nullOpt.isEmpty());
     }
+
+    @Test
+    void deletedUserRoleAndPolicyStayVisibleToReadsForTheConfiguredWindow() {
+        iamService.setDeleteVisibleFor(Duration.ofSeconds(60));
+        iamService.createUser("lagging-user", "/");
+        iamService.tagUser("lagging-user", Map.of("owner", "estate"));
+        iamService.createRole("lagging-role", "/", "{}", null, 0, Map.of("owner", "estate"), null);
+        IamPolicy policy = iamService.createPolicy("lagging-policy", "/", null,
+                "{\"Version\":\"2012-10-17\",\"Statement\":[]}", Map.of("owner", "estate"));
+
+        iamService.deleteUser("lagging-user");
+        iamService.deleteRole("lagging-role");
+        iamService.deletePolicy(policy.getArn());
+
+        assertEquals("lagging-user", iamService.readUser("lagging-user").getUserName());
+        assertTrue(iamService.readUsers(null).stream().anyMatch(u -> u.getUserName().equals("lagging-user")));
+        assertEquals(Map.of("owner", "estate"), iamService.readUserTags("lagging-user"));
+        assertEquals("lagging-role", iamService.readRole("lagging-role").getRoleName());
+        assertTrue(iamService.readRoles(null).stream().anyMatch(r -> r.getRoleName().equals("lagging-role")));
+        assertEquals(Map.of("owner", "estate"), iamService.readRoleTags("lagging-role"));
+        assertEquals(policy.getArn(), iamService.readPolicy(policy.getArn()).getArn());
+        assertTrue(iamService.readPolicies("Local", null).stream().anyMatch(p -> p.getArn().equals(policy.getArn())));
+        assertEquals(Map.of("owner", "estate"), iamService.readPolicyTags(policy.getArn()));
+
+        assertThrows(AwsException.class, () -> iamService.getUser("lagging-user"));
+        assertThrows(AwsException.class, () -> iamService.deleteRole("lagging-role"));
+        iamService.createRole("lagging-role", "/", "{}", null, 0, Map.of(), null);
+        assertEquals(Map.of(), iamService.readRoleTags("lagging-role"));
+    }
+
+    @Test
+    void deletedRoleDisappearsAtOnceByDefault() {
+        iamService.createRole("immediate-role", "/", "{}", null, 0, Map.of(), null);
+
+        iamService.deleteRole("immediate-role");
+
+        assertThrows(AwsException.class, () -> iamService.readRole("immediate-role"));
+        assertTrue(iamService.readRoles(null).isEmpty());
+    }
 }
 
