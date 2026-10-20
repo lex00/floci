@@ -90,4 +90,33 @@ class WorkSpacesWebServiceTest {
                 () -> service.get(WorkSpacesWebService.KINDS.get("trustStores"), "arn:aws:workspaces-web:x"));
         assertEquals("ResourceNotFoundException", missing.getErrorCode());
     }
+
+    @Test
+    void identityProvidersBelongToTheirPortal() throws Exception {
+        String portalArn = service.createPortal(json("{}"), REGION).path("portalArn").asText();
+        String portalId = portalArn.substring(portalArn.lastIndexOf('/') + 1);
+        String arn = service.createIdentityProvider(json("{\"portalArn\":\"" + portalArn + "\","
+                + "\"identityProviderName\":\"idp\",\"identityProviderType\":\"SAML\","
+                + "\"identityProviderDetails\":{\"MetadataURL\":\"https://idp.example.com/metadata\"}}"));
+
+        assertTrue(arn.startsWith("arn:aws:workspaces-web:us-east-1:000000000000:identityProvider/" + portalId + "/"));
+        assertEquals(1, service.listIdentityProviders(portalArn).size());
+        ObjectNode updated = service.updateIdentityProvider(arn, json("{\"identityProviderName\":\"renamed\"}"));
+        assertEquals("renamed", updated.path("identityProviderName").asText());
+        assertFalse(updated.has("portalArn"));
+
+        service.deletePortal(portalArn);
+        AwsException missing = assertThrows(AwsException.class, () -> service.getIdentityProvider(arn));
+        assertEquals("ResourceNotFoundException", missing.getErrorCode());
+    }
+
+    @Test
+    void portalHasNoSessions() throws Exception {
+        String portalArn = service.createPortal(json("{}"), REGION).path("portalArn").asText();
+        String portalId = portalArn.substring(portalArn.lastIndexOf('/') + 1);
+
+        assertTrue(service.listSessions(portalId, REGION).isEmpty());
+        assertThrows(AwsException.class, () -> service.getSession(portalId, "s-1", REGION));
+        assertThrows(AwsException.class, () -> service.listSessions("missing", REGION));
+    }
 }

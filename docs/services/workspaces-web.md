@@ -61,6 +61,15 @@ associates with up to eight settings resources. No browser sessions run.
 | `GetPortal` | Get a portal |
 | `UpdatePortal` | Update a portal |
 | `DeletePortal` | Delete a portal and release its associations |
+| `GetPortalServiceProviderMetadata` | Return the portal's SAML service provider metadata |
+| `CreateIdentityProvider` | Create an identity provider on a portal |
+| `GetIdentityProvider` | Get an identity provider |
+| `UpdateIdentityProvider` | Update an identity provider |
+| `DeleteIdentityProvider` | Delete an identity provider |
+| `ListIdentityProviders` | List a portal's identity providers |
+| `ListSessions` | List a portal's sessions, always empty |
+| `GetSession` | Answer ResourceNotFoundException, since no sessions run |
+| `ExpireSession` | Answer ResourceNotFoundException, since no sessions run |
 | `AssociateBrowserSettings` | Associate browser settings with a portal |
 | `AssociateDataProtectionSettings` | Associate data protection settings with a portal |
 | `AssociateIpAccessSettings` | Associate IP access settings with a portal |
@@ -93,8 +102,10 @@ Tagging rides the shared `/tags/{resourceArn}` routes, so `TagResource`, `UntagR
   subject, issuer and validity dates.
 - User settings store `brandingConfigurationInput` as `brandingConfiguration`, with image metadata
   derived from each image's S3 URI.
+- An identity provider's ARN carries its portal's id, and deleting a portal deletes its identity
+  providers.
+- No browser sessions run, so `ListSessions` returns an empty list for an existing portal.
 
 ## Not emulated
 
-- Identity providers and the portal service provider metadata
-- Sessions
+- Browser sessions

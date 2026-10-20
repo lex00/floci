@@ -97,12 +97,17 @@ public class WorkSpacesWebService implements TagHandler, Resettable {
             "userAccessLoggingSettings", KINDS.get("userAccessLoggingSettings"),
             "userSettings", KINDS.get("userSettings"));
 
+    private static final String PORTAL_ARN = "portalArn";
+    private static final Set<String> IDENTITY_PROVIDER_TYPES =
+            Set.of("SAML", "Facebook", "Google", "LoginWithAmazon", "SignInWithApple", "OIDC");
+
     private static final List<String> PORTAL_SUMMARY_EXCLUDED =
             List.of("statusReason", "customerManagedKey", "additionalEncryptionContext");
 
     private final Map<String, StorageBackend<String, ObjectNode>> stores = new LinkedHashMap<>();
     private final StorageBackend<String, ObjectNode> portals;
     private final StorageBackend<String, ObjectNode> certificates;
+    private final StorageBackend<String, ObjectNode> identityProviders;
     private final StorageBackend<String, ObjectNode> tags;
     private final RegionResolver regionResolver;
 
@@ -120,6 +125,7 @@ public class WorkSpacesWebService implements TagHandler, Resettable {
         }
         this.portals = storeFor.apply("portals");
         this.certificates = storeFor.apply("certificates");
+        this.identityProviders = storeFor.apply("identity-providers");
         this.tags = storeFor.apply("tags");
     }
 
@@ -128,6 +134,7 @@ public class WorkSpacesWebService implements TagHandler, Resettable {
         stores.values().forEach(StorageBackend::clear);
         portals.clear();
         certificates.clear();
+        identityProviders.clear();
         tags.clear();
     }
 
@@ -313,8 +320,119 @@ public class WorkSpacesWebService implements TagHandler, Resettable {
                 unlink(kind, associated, arn);
             }
         }
+        for (ObjectNode provider : identityProviders.scan(k -> true)) {
+            if (arn.equals(provider.path(PORTAL_ARN).asText())) {
+                String providerArn = provider.path("identityProviderArn").asText();
+                identityProviders.delete(providerArn);
+                tags.delete(providerArn);
+            }
+        }
         portals.delete(arn);
         tags.delete(arn);
+    }
+
+    public ObjectNode getPortalServiceProviderMetadata(String arn) {
+        ObjectNode portal = requirePortal(arn);
+        String endpoint = "https://" + portal.path("portalEndpoint").asText();
+        String metadata = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                + "<md:EntityDescriptor xmlns:md=\"urn:oasis:names:tc:SAML:2.0:metadata\" entityID=\""
+                + endpoint + "/saml\"><md:SPSSODescriptor AuthnRequestsSigned=\"false\" "
+                + "protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\">"
+                + "<md:AssertionConsumerService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" "
+                + "Location=\"" + endpoint + "/saml\" index=\"1\"/></md:SPSSODescriptor></md:EntityDescriptor>";
+        return JSON.objectNode().put("portalArn", arn).put("serviceProviderSamlMetadata", metadata);
+    }
+
+    // ──────────────────────────── Identity providers ────────────────────────────
+
+    public synchronized String createIdentityProvider(JsonNode request) {
+        requireMember(request, PORTAL_ARN);
+        requireMember(request, "identityProviderName");
+        requireMember(request, "identityProviderType");
+        requireMember(request, "identityProviderDetails");
+        String portalArn = request.path(PORTAL_ARN).asText();
+        requirePortal(portalArn);
+        String type = request.path("identityProviderType").asText();
+        if (!IDENTITY_PROVIDER_TYPES.contains(type)) {
+            throw new AwsException("ValidationException", "Invalid identityProviderType " + type, 400);
+        }
+        String portalId = portalArn.substring(portalArn.lastIndexOf('/') + 1);
+        String region = regionOf(portalArn);
+        String arn = regionResolver.buildArn("workspaces-web", region,
+                "identityProvider/" + portalId + "/" + UUID.randomUUID());
+        ObjectNode provider = JSON.objectNode();
+        provider.put("identityProviderArn", arn);
+        provider.put("identityProviderName", request.path("identityProviderName").asText());
+        provider.put("identityProviderType", type);
+        provider.set("identityProviderDetails", request.path("identityProviderDetails").deepCopy());
+        provider.put(PORTAL_ARN, portalArn);
+        identityProviders.put(arn, provider);
+        writeTags(arn, request.path("tags"));
+        return arn;
+    }
+
+    public ObjectNode getIdentityProvider(String arn) {
+        ObjectNode provider = requireIdentityProvider(arn).deepCopy();
+        provider.remove(PORTAL_ARN);
+        return provider;
+    }
+
+    public synchronized ObjectNode updateIdentityProvider(String arn, JsonNode request) {
+        ObjectNode provider = requireIdentityProvider(arn);
+        if (request.hasNonNull("identityProviderType")) {
+            String type = request.path("identityProviderType").asText();
+            if (!IDENTITY_PROVIDER_TYPES.contains(type)) {
+                throw new AwsException("ValidationException", "Invalid identityProviderType " + type, 400);
+            }
+            provider.put("identityProviderType", type);
+        }
+        if (request.hasNonNull("identityProviderName")) {
+            provider.put("identityProviderName", request.path("identityProviderName").asText());
+        }
+        if (request.get("identityProviderDetails") instanceof ObjectNode details) {
+            provider.set("identityProviderDetails", details.deepCopy());
+        }
+        identityProviders.put(arn, provider);
+        return getIdentityProvider(arn);
+    }
+
+    public synchronized void deleteIdentityProvider(String arn) {
+        requireIdentityProvider(arn);
+        identityProviders.delete(arn);
+        tags.delete(arn);
+    }
+
+    public List<ObjectNode> listIdentityProviders(String portalArn) {
+        requirePortal(portalArn);
+        return identityProviders.scan(k -> true).stream()
+                .filter(p -> portalArn.equals(p.path(PORTAL_ARN).asText()))
+                .sorted(Comparator.comparing((ObjectNode n) -> n.path("identityProviderArn").asText()))
+                .map(p -> JSON.objectNode()
+                        .put("identityProviderArn", p.path("identityProviderArn").asText())
+                        .put("identityProviderName", p.path("identityProviderName").asText())
+                        .put("identityProviderType", p.path("identityProviderType").asText()))
+                .toList();
+    }
+
+    private ObjectNode requireIdentityProvider(String arn) {
+        return identityProviders.get(arn == null ? "" : arn).orElseThrow(() -> notFound(arn));
+    }
+
+    // ──────────────────────────── Sessions ────────────────────────────
+
+    /** No browser sessions run, so a portal never has sessions to list. */
+    public List<ObjectNode> listSessions(String portalId, String region) {
+        requirePortalById(portalId, region);
+        return List.of();
+    }
+
+    public ObjectNode getSession(String portalId, String sessionId, String region) {
+        requirePortalById(portalId, region);
+        throw notFound(sessionId);
+    }
+
+    private ObjectNode requirePortalById(String portalId, String region) {
+        return requirePortal(regionResolver.buildArn("workspaces-web", region, "portal/" + portalId));
     }
 
     public synchronized void associate(String portalArn, Kind kind, String resourceArn) {
@@ -430,7 +548,7 @@ public class WorkSpacesWebService implements TagHandler, Resettable {
     }
 
     private void requireTaggable(String arn) {
-        boolean exists = arn != null && (portals.get(arn).isPresent()
+        boolean exists = arn != null && (portals.get(arn).isPresent() || identityProviders.get(arn).isPresent()
                 || stores.values().stream().anyMatch(store -> store.get(arn).isPresent()));
         if (!exists) {
             throw notFound(arn);

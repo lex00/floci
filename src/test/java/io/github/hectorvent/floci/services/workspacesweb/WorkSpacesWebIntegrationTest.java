@@ -124,4 +124,45 @@ class WorkSpacesWebIntegrationTest {
         request().when().delete("/trustStores/" + trustStoreArn)
             .then().statusCode(200);
     }
+
+    @Test
+    void identityProviderLifecycleAndSessions() {
+        String portalArn = request().body("{}")
+            .when().post("/portals")
+            .then().statusCode(200).extract().path("portalArn");
+        String portalId = portalArn.substring(portalArn.lastIndexOf('/') + 1);
+
+        String providerArn = request().body("{\"portalArn\":\"" + portalArn + "\",\"identityProviderName\":\"it-idp\","
+                        + "\"identityProviderType\":\"SAML\",\"identityProviderDetails\":{\"MetadataFile\":\"<xml/>\"}}")
+            .when().post("/identityProviders")
+            .then().statusCode(200)
+                .body("identityProviderArn", startsWith("arn:aws:workspaces-web:us-east-1:000000000000:identityProvider/"))
+                .extract().path("identityProviderArn");
+        request().when().get("/identityProviders/" + providerArn)
+            .then().statusCode(200)
+                .body("identityProvider.identityProviderName", equalTo("it-idp"))
+                .body("identityProvider.identityProviderDetails.MetadataFile", equalTo("<xml/>"));
+        request().body("{\"identityProviderName\":\"it-idp-2\"}")
+            .when().patch("/identityProviders/" + providerArn)
+            .then().statusCode(200)
+                .body("identityProvider.identityProviderName", equalTo("it-idp-2"));
+        request().when().get("/portals/" + portalArn + "/identityProviders")
+            .then().statusCode(200)
+                .body("identityProviders", hasSize(1))
+                .body("identityProviders[0].identityProviderType", equalTo("SAML"));
+        request().when().get("/portalIdp/" + portalArn)
+            .then().statusCode(200)
+                .body("serviceProviderSamlMetadata", startsWith("<?xml"));
+
+        request().when().get("/portals/" + portalId + "/sessions")
+            .then().statusCode(200)
+                .body("sessions", hasSize(0));
+        request().when().get("/portals/" + portalId + "/sessions/missing")
+            .then().statusCode(404)
+                .body("__type", equalTo("ResourceNotFoundException"));
+
+        request().when().delete("/identityProviders/" + providerArn).then().statusCode(200);
+        request().when().get("/identityProviders/" + providerArn).then().statusCode(404);
+        request().when().delete("/portals/" + portalArn).then().statusCode(200);
+    }
 }

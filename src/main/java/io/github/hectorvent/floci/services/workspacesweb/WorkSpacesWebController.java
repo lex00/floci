@@ -120,10 +120,52 @@ public class WorkSpacesWebController {
         return dispatch("ListPortals", null, null, null, null, headers);
     }
 
+    /** GetPortal, ListIdentityProviders, ListSessions or GetSession, told apart by the trailing segments. */
     @GET
     @Path("/portals/{arn: .+}")
     public Response getPortalRoute(@PathParam("arn") String arn, @Context HttpHeaders headers) {
+        if (arn.endsWith("/identityProviders")) {
+            return dispatch("ListIdentityProviders", null,
+                    arn.substring(0, arn.length() - "/identityProviders".length()), null, null, headers);
+        }
+        String[] parts = arn.split("/");
+        if (parts.length == 2 && "sessions".equals(parts[1])) {
+            return dispatch("ListSessions", null, parts[0], null, null, headers);
+        }
+        if (parts.length == 3 && "sessions".equals(parts[1])) {
+            return dispatch("GetSession", null, parts[0], null, parts[2], headers);
+        }
         return dispatch("GetPortal", null, arn, null, null, headers);
+    }
+
+    @GET
+    @Path("/portalIdp/{arn: .+}")
+    public Response getPortalServiceProviderMetadata(@PathParam("arn") String arn, @Context HttpHeaders headers) {
+        return dispatch("GetPortalServiceProviderMetadata", null, arn, null, null, headers);
+    }
+
+    @POST
+    @Path("/identityProviders")
+    public Response postIdentityProvider(@Context HttpHeaders headers, String body) {
+        return dispatch("CreateIdentityProvider", null, null, body, null, headers);
+    }
+
+    @GET
+    @Path("/identityProviders/{arn: .+}")
+    public Response getIdentityProviderRoute(@PathParam("arn") String arn, @Context HttpHeaders headers) {
+        return dispatch("GetIdentityProvider", null, arn, null, null, headers);
+    }
+
+    @PATCH
+    @Path("/identityProviders/{arn: .+}")
+    public Response patchIdentityProvider(@PathParam("arn") String arn, @Context HttpHeaders headers, String body) {
+        return dispatch("UpdateIdentityProvider", null, arn, body, null, headers);
+    }
+
+    @DELETE
+    @Path("/identityProviders/{arn: .+}")
+    public Response deleteIdentityProviderRoute(@PathParam("arn") String arn, @Context HttpHeaders headers) {
+        return dispatch("DeleteIdentityProvider", null, arn, null, null, headers);
     }
 
     /** UpdatePortal, or an Associate operation when the path ends in a settings segment. */
@@ -140,10 +182,14 @@ public class WorkSpacesWebController {
                 uriInfo.getQueryParameters().getFirst(kind.arnMember()), headers);
     }
 
-    /** DeletePortal, or a Disassociate operation when the path ends in a settings segment. */
+    /** DeletePortal, ExpireSession, or a Disassociate operation when the path ends in a settings segment. */
     @DELETE
     @Path("/portals/{path: .+}")
     public Response deletePortalRoute(@PathParam("path") String path, @Context HttpHeaders headers) {
+        String[] parts = path.split("/");
+        if (parts.length == 3 && "sessions".equals(parts[1])) {
+            return dispatch("ExpireSession", null, parts[0], null, parts[2], headers);
+        }
         int slash = path.lastIndexOf('/');
         Kind kind = slash < 0 ? null : WorkSpacesWebService.ASSOCIATION_PATHS.get(path.substring(slash + 1));
         if (kind == null) {
@@ -212,6 +258,22 @@ public class WorkSpacesWebController {
             case "UpdatePortal" -> wrap("portal", service.updatePortal(arn, readTree(body)));
             case "DeletePortal" -> {
                 service.deletePortal(arn);
+                yield ok(objectMapper.createObjectNode());
+            }
+            case "GetPortalServiceProviderMetadata" -> ok(service.getPortalServiceProviderMetadata(arn));
+            case "CreateIdentityProvider" -> ok(objectMapper.createObjectNode()
+                    .put("identityProviderArn", service.createIdentityProvider(readTree(body))));
+            case "GetIdentityProvider" -> wrap("identityProvider", service.getIdentityProvider(arn));
+            case "UpdateIdentityProvider" -> wrap("identityProvider", service.updateIdentityProvider(arn, readTree(body)));
+            case "DeleteIdentityProvider" -> {
+                service.deleteIdentityProvider(arn);
+                yield ok(objectMapper.createObjectNode());
+            }
+            case "ListIdentityProviders" -> list("identityProviders", service.listIdentityProviders(arn));
+            case "ListSessions" -> list("sessions", service.listSessions(arn, region));
+            case "GetSession" -> wrap("session", service.getSession(arn, argument, region));
+            case "ExpireSession" -> {
+                service.getSession(arn, argument, region);
                 yield ok(objectMapper.createObjectNode());
             }
             case "AssociateBrowserSettings", "AssociateDataProtectionSettings", "AssociateIpAccessSettings",
