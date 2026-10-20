@@ -18,6 +18,7 @@ public class ProjectEnvironment {
     private Boolean privilegedMode;
     private String certificate;
     private String imagePullCredentialsType;
+    private Map<String, String> fleet;
 
     public String getType() { return type; }
     public void setType(String type) { this.type = type; }
@@ -39,4 +40,8 @@ public class ProjectEnvironment {
 
     public String getImagePullCredentialsType() { return imagePullCredentialsType; }
     public void setImagePullCredentialsType(String imagePullCredentialsType) { this.imagePullCredentialsType = imagePullCredentialsType; }
+
+    /** The compute fleet the build runs on, as {@code {"fleetArn": ...}}. */
+    public Map<String, String> getFleet() { return fleet; }
+    public void setFleet(Map<String, String> fleet) { this.fleet = fleet; }
 }

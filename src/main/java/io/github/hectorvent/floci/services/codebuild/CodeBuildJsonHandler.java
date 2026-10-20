@@ -264,8 +264,11 @@ public class CodeBuildJsonHandler {
         String imageOverride = req.has("imageOverride") ? req.path("imageOverride").asText(null) : null;
         String computeTypeOverride = req.has("computeTypeOverride") ? req.path("computeTypeOverride").asText(null) : null;
 
+        String fleetOverride = req.path("fleetOverride").path("fleetArn").asText(null);
+
         Build build = service.startBuild(region, account, projectName, buildspecOverride,
-                envOverride, artifactsOverride, sourceVersion, timeout, imageOverride, computeTypeOverride);
+                envOverride, artifactsOverride, sourceVersion, timeout, imageOverride, computeTypeOverride,
+                fleetOverride);
         return Response.ok(Map.of("build", build)).build();
     }
 

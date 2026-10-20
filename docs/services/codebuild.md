@@ -55,7 +55,13 @@ Floci implements the CodeBuild API — stored-state management plus real build e
 | `BatchGetFleets` | Accepts fleet names or ARNs; returns found fleets and a `fleetsNotFound` list |
 | `ListFleets` | Returns fleet ARNs, sorted by `sortBy` and `sortOrder` |
 
-Fleets are stored state only. Builds still run in their own container whatever fleet a project names.
+A project whose `environment.fleet.fleetArn` names a fleet, or a `StartBuild` with
+`fleetOverride`, runs its builds on that fleet. The fleet must exist and run the project's
+environment type, or the call is an `InvalidInputException`, and the build reports the fleet's ARN
+and compute type in its `environment`. A fleet runs `baseCapacity` builds at once. A build that
+finds it full waits in the `QUEUED` phase until a slot frees, up to `queuedTimeoutInMinutes`, after
+which it ends `TIMED_OUT`. With `overflowBehavior` set to `ON_DEMAND` it runs at once instead.
+Each build still runs in its own container.
 
 ### Source Credentials
 

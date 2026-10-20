@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -79,5 +80,68 @@ class CodeBuildServiceTest {
 
         service.deleteFleet(REGION, created.getArn());
         assertTrue(service.listFleets(REGION, null, null).isEmpty());
+    }
+
+    @Test
+    void buildOnAFleetRunsOnTheFleetsSlots() {
+        CodeBuildRunner runner = mock(CodeBuildRunner.class);
+        CodeBuildService service = new CodeBuildService(runner, mock(EmulatorConfig.class), null);
+        Fleet request = new Fleet();
+        request.setName("slots");
+        request.setBaseCapacity(2);
+        request.setEnvironmentType("LINUX_CONTAINER");
+        request.setComputeType("BUILD_GENERAL1_SMALL");
+        Fleet fleet = service.createFleet(REGION, ACCOUNT, request);
+        ProjectSource source = new ProjectSource();
+        source.setType("NO_SOURCE");
+        ProjectArtifacts artifacts = new ProjectArtifacts();
+        artifacts.setType("NO_ARTIFACTS");
+        ProjectEnvironment environment = new ProjectEnvironment();
+        environment.setType("LINUX_CONTAINER");
+        environment.setImage("aws/codebuild/standard:7.0");
+        environment.setFleet(Map.of("fleetArn", "slots"));
+
+        Project project = service.createProject(REGION, ACCOUNT, "fleet-project", null, source, null, null,
+                artifacts, null, environment, "arn:aws:iam::000000000000:role/codebuild",
+                null, null, null, null, null, null, null);
+        assertEquals(fleet.getArn(), project.getEnvironment().getFleet().get("fleetArn"));
+        assertEquals("BUILD_GENERAL1_SMALL", project.getEnvironment().getComputeType());
+
+        Build build = service.startBuild(REGION, ACCOUNT, "fleet-project", null, null, null, null, null, null, null);
+        assertEquals(fleet.getArn(), build.getEnvironment().getFleet().get("fleetArn"));
+        ArgumentCaptor<CodeBuildRunner.FleetLease> lease = ArgumentCaptor.forClass(CodeBuildRunner.FleetLease.class);
+        verify(runner).startBuild(eq(REGION), any(Build.class), any(Project.class), any(), lease.capture());
+        assertEquals(fleet.getArn(), lease.getValue().fleetArn());
+        assertEquals(2, lease.getValue().capacity().getAsInt());
+        assertEquals(false, lease.getValue().onDemand());
+    }
+
+    @Test
+    void fleetMustExistAndRunTheProjectsEnvironmentType() {
+        CodeBuildService service = new CodeBuildService(mock(CodeBuildRunner.class), mock(EmulatorConfig.class), null);
+        Fleet request = new Fleet();
+        request.setName("arm");
+        request.setBaseCapacity(1);
+        request.setEnvironmentType("ARM_CONTAINER");
+        request.setComputeType("BUILD_GENERAL1_SMALL");
+        service.createFleet(REGION, ACCOUNT, request);
+        ProjectSource source = new ProjectSource();
+        source.setType("NO_SOURCE");
+        ProjectArtifacts artifacts = new ProjectArtifacts();
+        artifacts.setType("NO_ARTIFACTS");
+        ProjectEnvironment linux = new ProjectEnvironment();
+        linux.setType("LINUX_CONTAINER");
+        linux.setFleet(Map.of("fleetArn", "arm"));
+        ProjectEnvironment missing = new ProjectEnvironment();
+        missing.setFleet(Map.of("fleetArn", "nope"));
+
+        assertEquals("InvalidInputException", assertThrows(AwsException.class, () -> service.createProject(REGION,
+                ACCOUNT, "mismatch", null, source, null, null, artifacts, null, linux,
+                "arn:aws:iam::000000000000:role/codebuild", null, null, null, null, null, null, null))
+                .getErrorCode());
+        assertEquals("InvalidInputException", assertThrows(AwsException.class, () -> service.createProject(REGION,
+                ACCOUNT, "missing", null, source, null, null, artifacts, null, missing,
+                "arn:aws:iam::000000000000:role/codebuild", null, null, null, null, null, null, null))
+                .getErrorCode());
     }
 }
