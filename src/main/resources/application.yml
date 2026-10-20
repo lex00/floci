@@ -1024,6 +1024,10 @@ floci:
       enabled: true
       # invoke-response: '{"output":"yes"}'   # Body returned by InvokeAgentRuntime
       # validate-runtime-exists: false        # true = reject unknown runtime ARNs
+      # runtime-mode: stub                   # docker = run the runtime's artifact and forward invocations
+      # runtime-idle-timeout-seconds: 900     # Stop a session's container after this long unused
+      # runtime-startup-timeout-seconds: 60   # Time a new container has to answer its readiness probe
+      # code-runtime-image: python:{version}-slim
       # harness-echo-prefix: 'You said: '      # Prefix on the reply InvokeHarness streams back
       # harness-empty-reply: 'No user message was supplied.'
       # evaluation-score: 1.0                 # Canned score on Evaluate and batch evaluation results

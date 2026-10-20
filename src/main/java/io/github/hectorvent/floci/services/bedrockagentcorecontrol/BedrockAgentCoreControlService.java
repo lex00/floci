@@ -23,7 +23,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.BiConsumer;
 import java.util.regex.Pattern;
 
 /**
@@ -55,6 +57,7 @@ public class BedrockAgentCoreControlService {
     // DeletedTokenLedger.TTL, after which a replay 404s like an unknown token.
     private final DeletedTokenLedger deletedRuntimeTokens;
     private final DeletedTokenLedger deletedEndpointTokens;
+    private final List<BiConsumer<String, AgentRuntime>> deleteListeners = new CopyOnWriteArrayList<>();
 
     @Inject
     public BedrockAgentCoreControlService(StorageFactory storageFactory, RegionResolver regionResolver,
@@ -238,12 +241,40 @@ public class BedrockAgentCoreControlService {
         }
         AgentRuntime runtime = found.get();
         storage.delete(key(region, id));
+        deleteListeners.forEach(listener -> listener.accept(region, runtime));
         if (clientToken != null) {
             deletedRuntimeTokens.record(tokenKey(region, clientToken));
         }
         runtime.setStatus(STATUS_DELETING);
         LOG.infov("Deleted AgentCore runtime {0}", id);
         return runtime;
+    }
+
+    /** Registers a callback that receives the region and the runtime of every deleted runtime. */
+    public void onRuntimeDeleted(BiConsumer<String, AgentRuntime> listener) {
+        deleteListeners.add(listener);
+    }
+
+    /**
+     * The runtime an invoke ARN names, either Floci's {@code agent/<uuid>:<version>} form or the
+     * {@code runtime/<agentRuntimeId>} form, or empty when no runtime in the region matches.
+     */
+    public Optional<AgentRuntime> findRuntimeByInvokeArn(String region, String arn) {
+        String[] parts = arn == null ? new String[0] : arn.split(":");
+        if (parts.length < 6) {
+            return Optional.empty();
+        }
+        String prefix = keyPrefix(region);
+        if (parts[5].startsWith("agent/")) {
+            String uuid = parts[5].substring("agent/".length());
+            return storage.scan(k -> k.startsWith(prefix)).stream()
+                    .filter(r -> uuid.equals(r.getUuid()))
+                    .findFirst();
+        }
+        if (parts[5].startsWith("runtime/")) {
+            return storage.get(key(region, parts[5].substring("runtime/".length())));
+        }
+        return Optional.empty();
     }
 
     private static String tokenKey(String region, String clientToken) {

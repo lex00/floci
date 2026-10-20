@@ -6,8 +6,8 @@
 Emulates the Amazon Bedrock AgentCore **control plane** (`bedrock-agentcore-control`)
 as a stateful local registry across runtimes, endpoints, gateways, memories, browser/code-interpreter
 resources, credential providers, gateway rules, resource policies, and AgentCore Evaluations
-evaluators and online evaluation configurations. No real agent execution:
-runtimes reach `READY` immediately and hold metadata only. See
+evaluators and online evaluation configurations. Runtimes reach `READY` immediately. By default
+no agent runs; the `docker` runtime mode runs a runtime's artifact on `InvokeAgentRuntime`. See
 [the design note](../design/bedrock-agentcore.md) for scope and protocol details.
 
 ## Supported Actions
@@ -163,11 +163,39 @@ The data-plane operations are canned, in the same spirit as `InvokeAgentRuntime`
 
 ## Data plane — `InvokeAgentRuntime`
 
-`POST /runtimes/{agentRuntimeArn}/invocations` returns a fixed, configurable JSON
-body (default `{"output":"yes"}`) and echoes the
-`X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` header. The request payload (opaque
-binary, up to 100 MB) is never parsed. This operation returns a single non-streaming
-`200`; `InvokeHarness` below is the streaming one.
+`POST /runtimes/{agentRuntimeArn}/invocations` has two modes, chosen with
+`FLOCI_SERVICES_BEDROCK_AGENT_CORE_RUNTIME_MODE`.
+
+In the default `stub` mode it returns a fixed, configurable JSON body (default
+`{"output":"yes"}`) and echoes the `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` header. The
+request payload (opaque binary, up to 100 MB) is never parsed.
+
+In `docker` mode Floci runs the runtime's artifact in Docker, the way it runs Lambda functions,
+and forwards the call to it:
+
+- A `containerConfiguration` artifact runs its `containerUri` image. ECR image URIs resolve to
+  Floci's registry.
+- A `codeConfiguration` artifact's S3 zip is unpacked into `/var/task` of a Python image
+  (`FLOCI_SERVICES_BEDROCK_AGENT_CORE_CODE_RUNTIME_IMAGE`, with `{version}` set from the
+  artifact's `runtime`), and its `entryPoint` runs there. A first element ending in `.py` runs
+  under `python`.
+- The container gets the runtime version's `environmentVariables`, the AWS SDK settings that
+  point at Floci, and session credentials for the execution role. Its output goes to the log
+  group `/aws/bedrock-agentcore/runtimes/<agentRuntimeId>-<endpoint>`, in streams named
+  `YYYY/MM/DD/[runtime-logs]<uuid>`.
+- The server follows the AgentCore runtime contract for its `serverProtocol`: `HTTP` (the
+  default) and `AGUI` listen on 8080, answer `GET /ping` and take `POST /invocations`; `MCP`
+  listens on 8000 at `/mcp`; `A2A` listens on 9000 at `/`.
+- The container receives the payload with the `runtimeSessionId` and content type, along with the
+  `Accept`, MCP session and trace headers. Its answer streams back with its own content type, so
+  a `text/event-stream` reply arrives event by event.
+- Each `runtimeSessionId` gets its own warm container, kept until it has been unused for
+  `FLOCI_SERVICES_BEDROCK_AGENT_CORE_RUNTIME_IDLE_TIMEOUT_SECONDS`. Deleting the runtime, or
+  stopping Floci, stops its containers.
+- `qualifier` selects a runtime endpoint by name or a version by number. Without one, the latest
+  version runs.
+- A container that does not answer its readiness probe in time, or that answers with an error
+  status, is a `RuntimeClientError` (424). An unknown runtime ARN is `ResourceNotFoundException`.
 
 ## Data plane — `InvokeHarness`
 
@@ -203,6 +231,10 @@ block is ever produced even when a request supplies `tools`.
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_CONTROL_ENABLED` | `true` | Enable/disable the control plane |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_ENABLED` | `true` | Enable/disable the data plane (invoke) |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_INVOKE_RESPONSE` | `{"output":"yes"}` | Canned `InvokeAgentRuntime` response body |
+| `FLOCI_SERVICES_BEDROCK_AGENT_CORE_RUNTIME_MODE` | `stub` | `docker` runs the runtime's artifact and forwards `InvokeAgentRuntime` to it |
+| `FLOCI_SERVICES_BEDROCK_AGENT_CORE_RUNTIME_IDLE_TIMEOUT_SECONDS` | `900` | Seconds a session's container may sit unused before it is stopped |
+| `FLOCI_SERVICES_BEDROCK_AGENT_CORE_RUNTIME_STARTUP_TIMEOUT_SECONDS` | `60` | Seconds a new container has to answer its readiness probe |
+| `FLOCI_SERVICES_BEDROCK_AGENT_CORE_CODE_RUNTIME_IMAGE` | `python:{version}-slim` | Image a `codeConfiguration` artifact runs in |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_VALIDATE_RUNTIME_EXISTS` | `false` | When `true`, `InvokeAgentRuntime` returns `ResourceNotFoundException` for an unknown runtime ARN instead of the canned response |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_HARNESS_ECHO_PREFIX` | `You said: ` | Prefix on the reply `InvokeHarness` streams back |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_HARNESS_EMPTY_REPLY` | `No user message was supplied.` | Reply used when a request carries no user message |
@@ -212,7 +244,9 @@ block is ever produced even when a request supplies `tools`.
 > `bedrock-agentcore-control` and `bedrock-agentcore`, but the YAML property paths
 > use hyphenated words: `floci.services.bedrock-agent-core-control.enabled` and
 > `floci.services.bedrock-agent-core.enabled` (and `…bedrock-agent-core.invoke-response`,
-> `…bedrock-agent-core.validate-runtime-exists`, `…bedrock-agent-core.harness-echo-prefix`,
+> `…bedrock-agent-core.validate-runtime-exists`, `…bedrock-agent-core.runtime-mode`,
+> `…bedrock-agent-core.runtime-idle-timeout-seconds`,
+> `…bedrock-agent-core.runtime-startup-timeout-seconds`, `…bedrock-agent-core.code-runtime-image`, `…bedrock-agent-core.harness-echo-prefix`,
 > `…bedrock-agent-core.harness-empty-reply`, `…bedrock-agent-core.evaluation-score`). The
 > `FLOCI_*` environment variables above map to these paths directly and are the recommended way
 > to configure the service.

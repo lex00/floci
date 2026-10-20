@@ -3413,6 +3413,28 @@ public interface EmulatorConfig {
         boolean validateRuntimeExists();
 
         /**
+         * How {@code InvokeAgentRuntime} answers: {@code stub} returns {@link #invokeResponse()},
+         * {@code docker} runs the runtime's artifact in a container and forwards the call to it.
+         */
+        @WithDefault("stub")
+        String runtimeMode();
+
+        /** Seconds a session's container may sit unused before it is stopped. */
+        @WithDefault("900")
+        int runtimeIdleTimeoutSeconds();
+
+        /** Seconds a new container has to answer its readiness probe. */
+        @WithDefault("60")
+        int runtimeStartupTimeoutSeconds();
+
+        /**
+         * Image a {@code codeConfiguration} artifact runs in. {@code {version}} becomes the
+         * artifact's Python version, such as {@code 3.12} for {@code PYTHON_3_12}.
+         */
+        @WithDefault("python:{version}-slim")
+        String codeRuntimeImage();
+
+        /**
          * Prefix on the assistant reply InvokeHarness streams back. The reply echoes the caller's
          * last user message: there is no model, and echoing makes a chat UI visibly work while
          * keeping a request that failed to parse obvious.

@@ -8,13 +8,15 @@ import io.github.hectorvent.floci.core.common.AwsErrorResponse;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.services.bedrockagentcorecontrol.BedrockAgentCoreControlService;
+import io.github.hectorvent.floci.services.bedrockagentcorecontrol.model.AgentRuntime;
+import io.github.hectorvent.floci.services.bedrockagentcorecontrol.model.AgentRuntimeEndpoint;
+import io.github.hectorvent.floci.services.bedrockagentcorecontrol.model.AgentRuntimeVersion;
 import io.smallrye.common.annotation.Blocking;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
-import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.GenericEntity;
@@ -25,16 +27,21 @@ import jakarta.ws.rs.core.StreamingOutput;
 import org.jboss.logging.Logger;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 /**
- * Amazon Bedrock AgentCore data-plane stub ({@code InvokeAgentRuntime}).
+ * Amazon Bedrock AgentCore data plane ({@code InvokeAgentRuntime}).
  *
  * <p>Real endpoint: {@code POST /runtimes/{agentRuntimeArn}/invocations}. The ARN is
  * URL-encoded in the path, so the template regex captures the remaining path segments.
- * The payload (opaque binary, up to 100MB) is never parsed. Returns a fixed canned
- * body and echoes the runtime session id. Streaming is not emulated.
+ * In the default {@code stub} runtime mode the payload is never parsed: the call returns a
+ * fixed canned body and echoes the runtime session id. In {@code docker} mode the call goes to
+ * a container running the runtime's artifact, and its answer streams back.
  *
  * <p>By default any ARN is accepted (permissive). When
  * {@code floci.services.bedrock-agent-core.validate-runtime-exists=true}, an unknown
@@ -52,6 +59,8 @@ public class BedrockAgentCoreController {
     private final RegionResolver regionResolver;
     private final ObjectMapper objectMapper;
     private final boolean validateRuntimeExists;
+    private final boolean runInDocker;
+    private final AgentRuntimeSessions sessions;
 
     @Inject
     public BedrockAgentCoreController(BedrockAgentCoreService service,
@@ -59,25 +68,31 @@ public class BedrockAgentCoreController {
                                       BedrockAgentCoreControlService controlService,
                                       RegionResolver regionResolver,
                                       ObjectMapper objectMapper,
-                                      EmulatorConfig config) {
+                                      EmulatorConfig config,
+                                      AgentRuntimeSessions sessions) {
         this.service = service;
         this.harnessService = harnessService;
         this.controlService = controlService;
         this.regionResolver = regionResolver;
         this.objectMapper = objectMapper;
         this.validateRuntimeExists = config.services().bedrockAgentCore().validateRuntimeExists();
+        this.runInDocker = "docker".equalsIgnoreCase(config.services().bedrockAgentCore().runtimeMode());
+        this.sessions = sessions;
     }
 
     @POST
+    @Blocking
     @Path("/runtimes/{agentRuntimeArn:.+}/invocations")
     @Consumes(MediaType.WILDCARD)
-    @Produces(MediaType.APPLICATION_JSON)
     public Response invokeAgentRuntime(@Context HttpHeaders headers,
                                        @PathParam("agentRuntimeArn") String agentRuntimeArn,
                                        @QueryParam("qualifier") String qualifier,
                                        @QueryParam("accountId") String accountId,
                                        byte[] payload) {
         String region = regionResolver.resolveRegion(headers);
+        if (runInDocker) {
+            return invokeInContainer(headers, region, agentRuntimeArn, qualifier, payload);
+        }
         if (validateRuntimeExists && !controlService.runtimeArnExists(region, agentRuntimeArn)) {
             return Response.status(404)
                     .type(MediaType.APPLICATION_JSON)
@@ -96,6 +111,64 @@ public class BedrockAgentCoreController {
             builder.header(SESSION_HEADER, sessionId);
         }
         return builder.build();
+    }
+
+    private Response invokeInContainer(HttpHeaders headers, String region, String agentRuntimeArn,
+                                       String qualifier, byte[] payload) {
+        AgentRuntime runtime = controlService.findRuntimeByInvokeArn(region, agentRuntimeArn)
+                .orElseThrow(() -> new AwsException("ResourceNotFoundException",
+                        "AgentCore runtime not found: " + agentRuntimeArn, 404));
+        String endpointName = "DEFAULT";
+        String version = null;
+        if (qualifier != null && !qualifier.isBlank() && !"DEFAULT".equals(qualifier)) {
+            if (qualifier.chars().allMatch(Character::isDigit)) {
+                version = qualifier;
+            } else {
+                AgentRuntimeEndpoint endpoint = controlService.getEndpoint(
+                        runtime.getAgentRuntimeId(), qualifier, region);
+                endpointName = endpoint.getName();
+                version = endpoint.getLiveVersion();
+            }
+        }
+        AgentRuntimeVersion resolved = controlService.resolveVersion(runtime, version);
+        String sessionId = headers.getHeaderString(SESSION_HEADER);
+        if (sessionId == null || sessionId.isBlank()) {
+            sessionId = UUID.randomUUID().toString();
+        }
+        Map<String, String> forwarded = new HashMap<>();
+        for (String name : AgentRuntimeSessions.FORWARDED_REQUEST_HEADERS) {
+            String value = headers.getHeaderString(name);
+            if (value != null) {
+                forwarded.put(name, value);
+            }
+        }
+        AgentRuntimeSessions.Invocation invocation = sessions.invoke(
+                new AgentRuntimeSessions.Target(runtime.getAccountId(), region, runtime, resolved, endpointName),
+                sessionId, forwarded, payload);
+        LOG.debugv("InvokeAgentRuntime: runtime={0}, version={1}, session={2}, status={3}",
+                runtime.getAgentRuntimeId(), resolved.getVersion(), sessionId, invocation.status());
+        Response.ResponseBuilder builder = Response.status(invocation.status())
+                .entity(streaming(out -> relay(invocation.body(), out)))
+                .header(SESSION_HEADER, sessionId);
+        invocation.headers().forEach(builder::header);
+        if (!invocation.headers().containsKey("Content-Type")) {
+            builder.header("Content-Type", MediaType.APPLICATION_OCTET_STREAM);
+        }
+        return builder.build();
+    }
+
+    /** Copies the runtime's answer as it arrives, so event streams reach the caller event by event. */
+    private static void relay(InputStream body, OutputStream out) {
+        byte[] buffer = new byte[8192];
+        try (InputStream in = body) {
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                out.write(buffer, 0, read);
+                out.flush();
+            }
+        } catch (IOException e) {
+            LOG.debugv("The InvokeAgentRuntime stream ended early: {0}", e.getMessage());
+        }
     }
 
     /**
