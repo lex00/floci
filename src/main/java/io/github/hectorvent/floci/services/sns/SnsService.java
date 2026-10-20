@@ -11,6 +11,7 @@ import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.AwsRegions;
+import io.github.hectorvent.floci.core.common.DeleteLag;
 import io.github.hectorvent.floci.core.common.Digests;
 import io.github.hectorvent.floci.core.common.PaginatedResult;
 import io.github.hectorvent.floci.core.common.Pagination;
@@ -157,6 +158,8 @@ public class SnsService implements Resettable, ResourceProvider {
             "equals-ignore-case", "wildcard");
 
     private final StorageBackend<String, Topic> topicStore;
+    /** Topics deleted within the delete-visible window, which reads still return. */
+    private final DeleteLag<Topic> deletedTopics = DeleteLag.ofSeconds(0);
     private final StorageBackend<String, Subscription> subscriptionStore;
     private final StorageBackend<String, PlatformApplication> platformAppStore;
     private final StorageBackend<String, PlatformEndpoint> platformEndpointStore;
@@ -211,6 +214,20 @@ public class SnsService implements Resettable, ResourceProvider {
                 objectMapper,
                 messageSigner
         );
+        deletedTopics.setWindow(Duration.ofSeconds(config.services().sns().deleteVisibleSeconds()));
+    }
+
+    /** How long a deleted topic stays visible to reads, zero for an immediate delete. */
+    void setDeleteVisibleFor(Duration window) {
+        deletedTopics.setWindow(window);
+    }
+
+    private String lagKey(String topicKey) {
+        return regionResolver.getAccountId() + "/" + topicKey;
+    }
+
+    private Optional<Topic> liveOrRecentlyDeleted(String topicKey) {
+        return topicStore.get(topicKey).or(() -> deletedTopics.get(lagKey(topicKey)));
     }
 
     /**
@@ -348,6 +365,7 @@ public class SnsService implements Resettable, ResourceProvider {
     }
 
     public void clear() {
+        deletedTopics.clear();
         pushCapture.clear();
         fifoDeduplicationCache.clear();
     }
@@ -567,6 +585,7 @@ public class SnsService implements Resettable, ResourceProvider {
 
         Topic existing = topicStore.get(key).orElse(null);
         if (existing != null) return existing;
+        deletedTopics.forget(lagKey(key));
 
         Topic topic = new Topic(name, topicArn);
         if (attributes != null) topic.getAttributes().putAll(attributes);
@@ -588,7 +607,8 @@ public class SnsService implements Resettable, ResourceProvider {
 
     public void deleteTopic(String topicArn, String region) {
         String key = topicKey(region, topicArn);
-        if (topicStore.get(key).isEmpty()) {
+        Optional<Topic> deleting = topicStore.get(key);
+        if (deleting.isEmpty()) {
             throw new AwsException("NotFound", "Topic does not exist.", 404);
         }
         List<String> toDelete = new ArrayList<>();
@@ -602,12 +622,20 @@ public class SnsService implements Resettable, ResourceProvider {
         }
         toDelete.forEach(subscriptionStore::delete);
         topicStore.delete(key);
+        deletedTopics.deleted(lagKey(key), deleting.get());
         LOG.infov("Deleted SNS topic: {0}", topicArn);
     }
 
     public List<Topic> listTopics(String region) {
         String prefix = "topic::" + region + "::";
-        return topicStore.scan(k -> k.startsWith(prefix));
+        List<Topic> topics = topicStore.scan(k -> k.startsWith(prefix));
+        List<Topic> recentlyDeleted = deletedTopics.values(k -> k.startsWith(lagKey(prefix)));
+        if (recentlyDeleted.isEmpty()) {
+            return topics;
+        }
+        List<Topic> visible = new ArrayList<>(topics);
+        visible.addAll(recentlyDeleted);
+        return visible;
     }
 
     public boolean topicExists(String topicArn, String region) {
@@ -621,7 +649,7 @@ public class SnsService implements Resettable, ResourceProvider {
 
     public Map<String, String> getTopicAttributes(String topicArn, String region) {
         String key = topicKey(region, topicArn);
-        Topic topic = topicStore.get(key)
+        Topic topic = liveOrRecentlyDeleted(key)
                 .orElseThrow(() -> new AwsException("NotFound", "Topic does not exist.", 404));
         LinkedHashMap<String, String> attrs = new LinkedHashMap<>(topic.getAttributes());
         List<Subscription> subs = subscriptionsByTopic(topicArn, region);
@@ -1604,7 +1632,7 @@ public class SnsService implements Resettable, ResourceProvider {
 
     public Map<String, String> listTagsForResource(String resourceArn, String region) {
         String key = topicKey(region, resourceArn);
-        Topic topic = topicStore.get(key)
+        Topic topic = liveOrRecentlyDeleted(key)
                 .orElseThrow(() -> new AwsException("ResourceNotFoundException",
                         "Resource does not exist.", 404));
         return new java.util.LinkedHashMap<>(topic.getTags());

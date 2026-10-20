@@ -382,7 +382,7 @@ public class IamQueryHandler {
     private Response handleGetUser(MultivaluedMap<String, String> params, String authorization) {
         // UserName is optional per the IAM model: it defaults to the user owning the
         // access key that signed the request.
-        IamUser user = iamService.getUser(resolveUserName(params, authorization));
+        IamUser user = iamService.readUser(resolveUserName(params, authorization));
         String result = new XmlBuilder().start("User").raw(userXml(user, true)).end("User").build();
         return Response.ok(AwsQueryResponse.envelope("GetUser", AwsNamespaces.IAM, result)).build();
     }
@@ -395,7 +395,7 @@ public class IamQueryHandler {
 
     private Response handleListUsers(MultivaluedMap<String, String> params) {
         String pathPrefix = getParam(params, "PathPrefix");
-        List<IamUser> userList = iamService.listUsers(pathPrefix);
+        List<IamUser> userList = iamService.readUsers(pathPrefix);
         XmlBuilder xml = new XmlBuilder().start("Users");
         for (IamUser u : userList) {
             xml.start("member").raw(userXml(u, false)).end("member");
@@ -426,7 +426,7 @@ public class IamQueryHandler {
 
     private Response handleListUserTags(MultivaluedMap<String, String> params) {
         String userName = getParam(params, "UserName");
-        Map<String, String> tags = iamService.listUserTags(userName);
+        Map<String, String> tags = iamService.readUserTags(userName);
         String result = new XmlBuilder().start("Tags").raw(tagsXml(tags)).end("Tags")
                 .elem("IsTruncated", false).build();
         return Response.ok(AwsQueryResponse.envelope("ListUserTags", AwsNamespaces.IAM, result)).build();
@@ -1381,7 +1381,7 @@ public class IamQueryHandler {
     }
 
     private Response handleGetRole(MultivaluedMap<String, String> params) {
-        IamRole role = iamService.getValidatedRole(getParam(params, "RoleName"));
+        IamRole role = iamService.readRole(getParam(params, "RoleName"));
         String result = new XmlBuilder().start("Role").raw(roleXml(role, true)).end("Role").build();
         return Response.ok(AwsQueryResponse.envelope("GetRole", AwsNamespaces.IAM, result)).build();
     }
@@ -1413,7 +1413,7 @@ public class IamQueryHandler {
     }
 
     private Response handleListRoles(MultivaluedMap<String, String> params) {
-        Page<IamRole> page = paginate(iamService.listRoles(getParam(params, "PathPrefix")),
+        Page<IamRole> page = paginate(iamService.readRoles(getParam(params, "PathPrefix")),
                 IamRole::getRoleName, params);
         XmlBuilder xml = new XmlBuilder().start("Roles");
         for (IamRole r : page.items()) {
@@ -1450,7 +1450,7 @@ public class IamQueryHandler {
     }
 
     private Response handleListRoleTags(MultivaluedMap<String, String> params) {
-        Map<String, String> tags = iamService.listRoleTags(getParam(params, "RoleName"));
+        Map<String, String> tags = iamService.readRoleTags(getParam(params, "RoleName"));
         String result = new XmlBuilder().start("Tags").raw(tagsXml(tags)).end("Tags")
                 .elem("IsTruncated", false).build();
         return Response.ok(AwsQueryResponse.envelope("ListRoleTags", AwsNamespaces.IAM, result)).build();
@@ -1472,7 +1472,7 @@ public class IamQueryHandler {
     }
 
     private Response handleGetPolicy(MultivaluedMap<String, String> params) {
-        IamPolicy policy = iamService.getPolicy(getParam(params, "PolicyArn"));
+        IamPolicy policy = iamService.readPolicy(getParam(params, "PolicyArn"));
         String result = new XmlBuilder().start("Policy").raw(policyXml(policy, true)).end("Policy").build();
         return Response.ok(AwsQueryResponse.envelope("GetPolicy", AwsNamespaces.IAM, result)).build();
     }
@@ -1483,7 +1483,7 @@ public class IamQueryHandler {
     }
 
     private Response handleListPolicies(MultivaluedMap<String, String> params) {
-        Page<IamPolicy> page = paginate(iamService.listPolicies(
+        Page<IamPolicy> page = paginate(iamService.readPolicies(
                 getParam(params, "Scope"), getParam(params, "PathPrefix")),
                 IamQueryHandler::policyListKey, params);
         XmlBuilder xml = new XmlBuilder().start("Policies");
@@ -1788,7 +1788,7 @@ public class IamQueryHandler {
     }
 
     private Response handleListPolicyTags(MultivaluedMap<String, String> params) {
-        Map<String, String> tags = iamService.listPolicyTags(getParam(params, "PolicyArn"));
+        Map<String, String> tags = iamService.readPolicyTags(getParam(params, "PolicyArn"));
         String result = new XmlBuilder().start("Tags").raw(tagsXml(tags)).end("Tags")
                 .elem("IsTruncated", false).build();
         return Response.ok(AwsQueryResponse.envelope("ListPolicyTags", AwsNamespaces.IAM, result)).build();

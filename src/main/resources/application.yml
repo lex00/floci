@@ -418,6 +418,8 @@ floci:
       local-request-timeout-seconds: 10    # FLOCI_SERVICES_DYNAMODB_LOCAL_REQUEST_TIMEOUT_SECONDS
     sns:
       enabled: true
+      # Seconds a deleted topic stays visible to reads; 0 deletes at once.
+      delete-visible-seconds: 0
     lambda:
       enabled: true
       ephemeral: false
@@ -470,6 +472,8 @@ floci:
       enabled: true
     iam:
       enabled: true
+      # Seconds a deleted user, role or policy stays visible to reads; 0 deletes at once.
+      delete-visible-seconds: 0
       enforcement-enabled: false
       seed-deployer-principal: false
       # account-alias: ""  # When set, seeds the account alias at startup so callers can read one

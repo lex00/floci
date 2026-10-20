@@ -94,7 +94,7 @@ class IamQueryHandlerTest {
         role.setCreateDate(Instant.parse(stored));
         IamService service = mock(IamService.class);
         when(service.createRole(ROLE_NAME, "/", "{}", null, 3600, Map.of(), null)).thenReturn(role);
-        when(service.getValidatedRole(ROLE_NAME)).thenReturn(role);
+        when(service.readRole(ROLE_NAME)).thenReturn(role);
         IamQueryHandler handler = new IamQueryHandler(service, null, null, null, null, null, null, null, null);
 
         MultivaluedMap<String, String> params = new MultivaluedHashMap<>();
@@ -113,7 +113,7 @@ class IamQueryHandlerTest {
     @Test
     void listRolesPagesInNameOrderWhateverOrderTheServiceReturns() throws Exception {
         IamService service = mock(IamService.class);
-        when(service.listRoles(null)).thenReturn(List.of(role("c"), role("a"), role("b")));
+        when(service.readRoles(null)).thenReturn(List.of(role("c"), role("a"), role("b")));
         IamQueryHandler handler = new IamQueryHandler(service, null, null, null, null, null, null, null, null);
 
         MultivaluedMap<String, String> params = new MultivaluedHashMap<>();
@@ -137,7 +137,7 @@ class IamQueryHandlerTest {
         IamPolicy local = policy("arn:aws:iam::000000000000:policy/ReadOnlyAccess");
         IamPolicy managed = policy("arn:aws:iam::aws:policy/ReadOnlyAccess");
         IamService service = mock(IamService.class);
-        when(service.listPolicies(null, null)).thenReturn(List.of(managed, local));
+        when(service.readPolicies(null, null)).thenReturn(List.of(managed, local));
         IamQueryHandler handler = new IamQueryHandler(service, null, null, null, null, null, null, null, null);
 
         MultivaluedMap<String, String> params = new MultivaluedHashMap<>();

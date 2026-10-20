@@ -13,6 +13,7 @@ import io.github.hectorvent.floci.core.common.AwsPartition;
 import io.github.hectorvent.floci.core.common.AwsPartitions;
 import io.github.hectorvent.floci.core.common.AwsRegions;
 import io.github.hectorvent.floci.core.common.CertificateMaterialException;
+import io.github.hectorvent.floci.core.common.DeleteLag;
 import io.github.hectorvent.floci.core.common.Pem;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.common.ServicePrincipals;
@@ -85,6 +86,7 @@ import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -410,6 +412,10 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
     private final Object mfaDeviceLock = new Object();
     private final RegionResolver regionResolver;
     private final Clock clock;
+    /** Users, roles and policies deleted within the delete-visible window, which reads still return. */
+    private final DeleteLag<IamUser> deletedUsers = DeleteLag.ofSeconds(0);
+    private final DeleteLag<IamRole> deletedRoles = DeleteLag.ofSeconds(0);
+    private final DeleteLag<IamPolicy> deletedPolicies = DeleteLag.ofSeconds(0);
     private final boolean seedDeployerPrincipal;
     private final String seededAccountAlias;
     /** Guards case-insensitive IAM name uniqueness checks and their corresponding writes. */
@@ -467,6 +473,88 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
             config.services().iam().accountAlias().orElse(null),
             clock
         );
+        setDeleteVisibleFor(Duration.ofSeconds(config.services().iam().deleteVisibleSeconds()));
+    }
+
+    /** How long a deleted user, role or policy stays visible to reads, zero for an immediate delete. */
+    void setDeleteVisibleFor(Duration window) {
+        deletedUsers.setWindow(window);
+        deletedRoles.setWindow(window);
+        deletedPolicies.setWindow(window);
+    }
+
+    private String lagKey(String name) {
+        return regionResolver.getAccountId() + "/" + name;
+    }
+
+    private static <T> T orRecentlyDeleted(Supplier<T> live, DeleteLag<T> lag, String key) {
+        try {
+            return live.get();
+        } catch (AwsException e) {
+            if (!"NoSuchEntity".equals(e.getErrorCode())) {
+                throw e;
+            }
+            return lag.get(key).orElseThrow(() -> e);
+        }
+    }
+
+    // GetUser, GetRole, GetPolicy and their List and tag reads go through these, so a recent
+    // delete stays readable for the delete-visible window. Writes keep using the live lookups.
+
+    public IamUser readUser(String userName) {
+        return orRecentlyDeleted(() -> getUser(userName), deletedUsers, lagKey(userName));
+    }
+
+    public List<IamUser> readUsers(String pathPrefix) {
+        String prefix = pathPrefix != null ? pathPrefix : "/";
+        return withRecentlyDeleted(listUsers(pathPrefix), deletedUsers, u -> u.getPath().startsWith(prefix));
+    }
+
+    public Map<String, String> readUserTags(String userName) {
+        return readUser(userName).getTags();
+    }
+
+    public IamRole readRole(String roleName) {
+        return orRecentlyDeleted(() -> getValidatedRole(roleName), deletedRoles, lagKey(roleName));
+    }
+
+    public List<IamRole> readRoles(String pathPrefix) {
+        String prefix = pathPrefix != null ? pathPrefix : "/";
+        List<IamRole> visible = withRecentlyDeleted(listRoles(pathPrefix), deletedRoles,
+                r -> r.getPath().startsWith(prefix));
+        return visible.stream().sorted(Comparator.comparing(IamRole::getRoleName)).toList();
+    }
+
+    public Map<String, String> readRoleTags(String roleName) {
+        return readRole(roleName).getTags();
+    }
+
+    public IamPolicy readPolicy(String policyArn) {
+        return orRecentlyDeleted(() -> getPolicy(policyArn), deletedPolicies, lagKey(policyArn));
+    }
+
+    public List<IamPolicy> readPolicies(String scope, String pathPrefix) {
+        List<IamPolicy> live = listPolicies(scope, pathPrefix);
+        if (scope != null && "AWS".equalsIgnoreCase(scope)) {
+            return live;
+        }
+        String prefix = pathPrefix != null ? pathPrefix : "/";
+        return withRecentlyDeleted(live, deletedPolicies, p -> p.getPath().startsWith(prefix));
+    }
+
+    public Map<String, String> readPolicyTags(String policyArn) {
+        return orRecentlyDeleted(() -> requirePolicy(policyArn), deletedPolicies, lagKey(policyArn)).getTags();
+    }
+
+    private <T> List<T> withRecentlyDeleted(List<T> live, DeleteLag<T> lag, Predicate<T> filter) {
+        String accountPrefix = lagKey("");
+        List<T> recent = lag.values(k -> k.startsWith(accountPrefix)).stream().filter(filter).toList();
+        if (recent.isEmpty()) {
+            return live;
+        }
+        List<T> visible = new ArrayList<>(live);
+        visible.addAll(recent);
+        return visible;
     }
 
     IamService(StorageBackend<String, IamUser> users,
@@ -774,6 +862,7 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
             IamUser user = new IamUser(userId, userName, normalizedPath, arn);
             user.setPermissionsBoundaryArn(permissionsBoundaryArn);
             users.put(userName, user);
+            deletedUsers.forget(lagKey(userName));
             LOG.infov("Created IAM user: {0}", userName);
             return user;
         }
@@ -868,6 +957,7 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
                                         "Cannot delete entity, must deactivate MFA device first.", 409);
                             }
                             users.delete(userName);
+                            deletedUsers.deleted(lagKey(userName), user);
                         }
                     }
                 }
@@ -1162,6 +1252,7 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
                 role.setTags(mergeTagsWithinQuota(role.getTags(), tags, "TagsPerRole", true));
             }
             roles.put(roleName, role);
+            deletedRoles.forget(lagKey(roleName));
             LOG.infov("Created IAM role: {0}", roleName);
             return role;
         }
@@ -1270,6 +1361,7 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
                         "Cannot delete entity, must detach all policies first.", 409);
             }
             roles.delete(roleName);
+            deletedRoles.deleted(lagKey(roleName), role);
             LOG.infov("Deleted IAM role: {0}", roleName);
         }
     }
@@ -1468,6 +1560,7 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
             IamPolicy policy = new IamPolicy(policyId, policyName, normalizedPath, arn, description, document);
             if (tags != null) policy.getTags().putAll(tags);
             policies.put(arn, policy);
+            deletedPolicies.forget(lagKey(arn));
             LOG.infov("Created IAM policy: {0}", arn);
             return policy;
         }
@@ -1580,6 +1673,7 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
                     "Cannot delete a policy attached to entities. Detach it first.", 409);
         }
         policies.delete(policyArn);
+        deletedPolicies.deleted(lagKey(policyArn), policy);
         LOG.infov("Deleted IAM policy: {0}", policyArn);
     }
 

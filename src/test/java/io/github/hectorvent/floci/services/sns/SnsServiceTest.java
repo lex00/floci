@@ -23,6 +23,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -1484,5 +1485,31 @@ class SnsServiceTest {
         // Delivery error is logged and tolerated; publisher receives message ID
         String messageId = service.publish(topic.getTopicArn(), null, "msg", null, REGION);
         assertNotNull(messageId);
+    }
+
+    @Test
+    void deletedTopicStaysVisibleToReadsForTheConfiguredWindow() {
+        snsService.setDeleteVisibleFor(Duration.ofSeconds(60));
+        Topic topic = snsService.createTopic("lagging", null, Map.of("owner", "estate"), REGION);
+
+        snsService.deleteTopic(topic.getTopicArn(), REGION);
+
+        assertEquals(topic.getTopicArn(), snsService.getTopicAttributes(topic.getTopicArn(), REGION).get("TopicArn"));
+        assertTrue(snsService.listTopics(REGION).stream().anyMatch(t -> t.getTopicArn().equals(topic.getTopicArn())));
+        assertEquals(Map.of("owner", "estate"), snsService.listTagsForResource(topic.getTopicArn(), REGION));
+        assertThrows(AwsException.class, () -> snsService.deleteTopic(topic.getTopicArn(), REGION));
+
+        Topic recreated = snsService.createTopic("lagging", null, Map.of(), REGION);
+        assertEquals(Map.of(), snsService.listTagsForResource(recreated.getTopicArn(), REGION));
+    }
+
+    @Test
+    void deletedTopicDisappearsAtOnceByDefault() {
+        Topic topic = snsService.createTopic("immediate", null, null, REGION);
+
+        snsService.deleteTopic(topic.getTopicArn(), REGION);
+
+        assertThrows(AwsException.class, () -> snsService.getTopicAttributes(topic.getTopicArn(), REGION));
+        assertTrue(snsService.listTopics(REGION).isEmpty());
     }
 }

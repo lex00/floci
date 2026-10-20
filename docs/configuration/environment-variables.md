@@ -217,6 +217,7 @@ See [Initialization Hooks](./initialization-hooks.md) for lifecycle phases and s
 | Variable | Default | Description |
 |---|---|---|
 | `FLOCI_SERVICES_SNS_ENABLED` | `true` | Enable the SNS service |
+| `FLOCI_SERVICES_SNS_DELETE_VISIBLE_SECONDS` | `0` | Seconds a deleted topic stays visible to `ListTopics`, `GetTopicAttributes` and `ListTagsForResource`, as AWS's eventually consistent `DeleteTopic` does. `0` deletes at once |
 
 ### S3
 
@@ -286,6 +287,7 @@ See [Initialization Hooks](./initialization-hooks.md) for lifecycle phases and s
 | `FLOCI_SERVICES_IAM_ENABLED` | `true` | Enable the IAM service |
 | `FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED` | `false` | When `true`, enforce IAM policies on API calls. Leave `false` for most local development scenarios |
 | `FLOCI_SERVICES_IAM_SEED_DEPLOYER_PRINCIPAL` | `false` | Create a local `floci-deployer` IAM user with `AdministratorAccess` and static `floci`/`floci` credentials |
+| `FLOCI_SERVICES_IAM_DELETE_VISIBLE_SECONDS` | `0` | Seconds a deleted user, role or customer managed policy stays visible to `GetUser`, `GetRole`, `GetPolicy`, their `List` calls and their tag lists, as IAM's eventually consistent deletes do. `0` deletes at once |
 
 ### KMS
 

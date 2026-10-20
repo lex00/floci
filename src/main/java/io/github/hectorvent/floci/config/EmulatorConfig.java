@@ -1600,6 +1600,14 @@ public interface EmulatorConfig {
     interface SnsServiceConfig {
         @WithDefault("true")
         boolean enabled();
+
+        /**
+         * Seconds a deleted topic stays visible to ListTopics, GetTopicAttributes and
+         * ListTagsForResource, as AWS's eventually consistent DeleteTopic does. Zero deletes at once.
+         * Env: FLOCI_SERVICES_SNS_DELETE_VISIBLE_SECONDS
+         */
+        @WithDefault("0")
+        int deleteVisibleSeconds();
     }
 
     interface ApiGatewayServiceConfig {
@@ -1625,6 +1633,14 @@ public interface EmulatorConfig {
     interface IamServiceConfig {
         @WithDefault("true")
         boolean enabled();
+
+        /**
+         * Seconds a deleted user, role or customer managed policy stays visible to its Get, List
+         * and List*Tags reads, as IAM's eventually consistent deletes do. Zero deletes at once.
+         * Env: FLOCI_SERVICES_IAM_DELETE_VISIBLE_SECONDS
+         */
+        @WithDefault("0")
+        int deleteVisibleSeconds();
 
         @WithDefault("false")
         boolean enforcementEnabled();

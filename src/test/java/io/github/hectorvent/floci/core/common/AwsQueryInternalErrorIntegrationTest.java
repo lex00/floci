@@ -24,7 +24,7 @@ class AwsQueryInternalErrorIntegrationTest {
 
     @Test
     void unhandledHandlerExceptionRendersXmlInternalFailure() {
-        when(iamService.listUsers(any())).thenThrow(new RuntimeException("simulated handler bug"));
+        when(iamService.readUsers(any())).thenThrow(new RuntimeException("simulated handler bug"));
 
         given()
             .formParam("Action", "ListUsers")
@@ -44,7 +44,7 @@ class AwsQueryInternalErrorIntegrationTest {
     void messagelessHandlerExceptionNamesTheExceptionClass() {
         // On the native image an NPE carries no message; "Unexpected error: null" is what the
         // reporter of #3356 saw. The class name is the least a caller needs to file a report.
-        when(iamService.listUsers(any())).thenThrow(new NullPointerException());
+        when(iamService.readUsers(any())).thenThrow(new NullPointerException());
         given()
             .formParam("Action", "ListUsers")
             .header("Authorization",
