@@ -435,6 +435,8 @@ floci:
       enabled: true
     opensearchserverless:
       enabled: true
+    arcregionswitch:
+      enabled: true
     timestream-influxdb:
       enabled: true
       mock: true

@@ -136,6 +136,7 @@ quarkus:
       - --initialize-at-run-time=io.github.hectorvent.floci.services.kms.KmsService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.bedrockagentcore.BedrockAgentCoreEventService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.opensearchserverless.OpenSearchServerlessService
+      - --initialize-at-run-time=io.github.hectorvent.floci.services.arcregionswitch.ArcRegionSwitchService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.cloudfront.CloudFrontService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.emr.EmrService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.elasticbeanstalk.ElasticBeanstalkService
@@ -878,6 +879,8 @@ floci:
     bcm-pricing-calculator:
       enabled: true
     opensearchserverless:
+      enabled: true
+    arcregionswitch:
       enabled: true
     timestream-influxdb:
       enabled: true

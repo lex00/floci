@@ -828,6 +828,7 @@ public interface EmulatorConfig {
         MediaPackageV2ServiceConfig mediapackagev2();
         BcmPricingCalculatorServiceConfig bcmPricingCalculator();
         OpenSearchServerlessServiceConfig opensearchserverless();
+        ArcRegionSwitchServiceConfig arcregionswitch();
         TimestreamInfluxDbServiceConfig timestreamInfluxdb();
         ConfigServiceConfig configservice();
         CloudTrailServiceConfig cloudtrail();
@@ -2693,6 +2694,11 @@ public interface EmulatorConfig {
     }
 
     interface OpenSearchServerlessServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface ArcRegionSwitchServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }

@@ -204,6 +204,7 @@ nav:
     - AWS RAM: services/ram.md
     - AWS Backup: services/backup.md
     - AWS FIS: services/fis.md
+    - ARC Region switch: services/arc-region-switch.md
     - CloudTrail: services/cloudtrail.md
     - CloudFront: services/cloudfront.md
     - Route53: services/route53.md

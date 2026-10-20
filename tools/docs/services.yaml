@@ -34,6 +34,10 @@ services:
     doc: docs/services/opensearch-serverless.md
     sources:
       - { path: src/main/java/io/github/hectorvent/floci/services/opensearchserverless/OpenSearchServerlessJsonHandler.java, mode: switch }
+  - service: arcregionswitch
+    doc: docs/services/arc-region-switch.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/arcregionswitch/ArcRegionSwitchJsonHandler.java, mode: switch }
   - service: athena
     doc: docs/services/athena.md
     sources:

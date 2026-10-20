@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import io.github.hectorvent.floci.services.apprunner.AppRunnerJsonHandler;
+import io.github.hectorvent.floci.services.arcregionswitch.ArcRegionSwitchJsonHandler;
 import io.github.hectorvent.floci.services.bcmpricingcalculator.BcmPricingCalculatorJsonHandler;
 import io.github.hectorvent.floci.services.cloudcontrol.CloudControlJsonHandler;
 import io.github.hectorvent.floci.services.cloudwatch.metrics.CloudWatchMetricsJsonHandler;
@@ -62,6 +63,7 @@ public class AwsJsonController {
     private final TimestreamInfluxDbJsonHandler timestreamInfluxDbJsonHandler;
     private final AppRunnerJsonHandler appRunnerJsonHandler;
     private final OpenSearchServerlessJsonHandler openSearchServerlessJsonHandler;
+    private final ArcRegionSwitchJsonHandler arcRegionSwitchJsonHandler;
 
     @Inject
     public AwsJsonController(ObjectMapper objectMapper, ResolvedServiceCatalog catalog,
@@ -79,7 +81,8 @@ public class AwsJsonController {
                              BcmPricingCalculatorJsonHandler bcmPricingCalculatorJsonHandler,
                              TimestreamInfluxDbJsonHandler timestreamInfluxDbJsonHandler,
                              AppRunnerJsonHandler appRunnerJsonHandler,
-                             OpenSearchServerlessJsonHandler openSearchServerlessJsonHandler) {
+                             OpenSearchServerlessJsonHandler openSearchServerlessJsonHandler,
+                             ArcRegionSwitchJsonHandler arcRegionSwitchJsonHandler) {
         this.objectMapper = objectMapper;
         this.strictBodyReader = objectMapper.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         this.catalog = catalog;
@@ -99,6 +102,7 @@ public class AwsJsonController {
         this.timestreamInfluxDbJsonHandler = timestreamInfluxDbJsonHandler;
         this.appRunnerJsonHandler = appRunnerJsonHandler;
         this.openSearchServerlessJsonHandler = openSearchServerlessJsonHandler;
+        this.arcRegionSwitchJsonHandler = arcRegionSwitchJsonHandler;
     }
 
     /**
@@ -186,6 +190,7 @@ public class AwsJsonController {
                 case "timestream-influxdb" -> timestreamInfluxDbJsonHandler.handle(action, request, region);
                 case "apprunner" -> appRunnerJsonHandler.handle(action, request, region);
                 case "aoss" -> openSearchServerlessJsonHandler.handle(action, request, region);
+                case "arc-region-switch" -> arcRegionSwitchJsonHandler.handle(action, request);
                 default -> null;
             };
             // catalog.matchTarget is protocol-agnostic: a JSON 1.1 target

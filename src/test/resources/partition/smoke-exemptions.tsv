@@ -4,6 +4,7 @@
 # without a reason.
 appintegrations	no non-commercial partition publishes the service, so a case would be skipped in every partition
 apprunner	no non-commercial partition publishes the service, so a case would be skipped in every partition
+arcregionswitch	no non-commercial partition publishes the service, so a case would be skipped in every partition
 auditmanager	no non-commercial partition publishes the service, so a case would be skipped in every partition
 cloudformation	covered by PartitionArnMintingIntegrationTest (all partitions)
 cloudhsmv2	the only ARN on the wire is the automatic backup's, and a backup is never removed (DeleteBackup only marks it), so a case would leak state into the shared emulator
