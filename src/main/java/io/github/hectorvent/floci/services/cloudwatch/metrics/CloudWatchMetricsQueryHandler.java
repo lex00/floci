@@ -5,6 +5,8 @@ import io.github.hectorvent.floci.core.common.AwsQueryResponse;
 import io.github.hectorvent.floci.core.common.PaginatedResult;
 import io.github.hectorvent.floci.core.common.Pagination;
 import io.github.hectorvent.floci.core.common.XmlBuilder;
+import io.github.hectorvent.floci.services.cloudwatch.alarmmuterules.CloudWatchAlarmMuteRulesService;
+import io.github.hectorvent.floci.services.cloudwatch.alarmmuterules.model.AlarmMuteRule;
 import io.github.hectorvent.floci.services.cloudwatch.dashboards.CloudWatchDashboardsService;
 import io.github.hectorvent.floci.services.cloudwatch.dashboards.model.Dashboard;
 import io.github.hectorvent.floci.services.cloudwatch.metrics.model.AlarmMetricDataQuery;
@@ -36,14 +38,23 @@ public class CloudWatchMetricsQueryHandler {
     private CloudWatchMetricsService metricsService;
     private final CloudWatchDashboardsService dashboardsService;
     private final CloudWatchMetricStreamsService metricStreamsService;
+    private final CloudWatchAlarmMuteRulesService muteRulesService;
+
+    public CloudWatchMetricsQueryHandler(CloudWatchMetricsService metricsService,
+                                         CloudWatchDashboardsService dashboardsService,
+                                         CloudWatchMetricStreamsService metricStreamsService) {
+        this(metricsService, dashboardsService, metricStreamsService, null);
+    }
 
     @Inject
     public CloudWatchMetricsQueryHandler(CloudWatchMetricsService metricsService,
                                          CloudWatchDashboardsService dashboardsService,
-                                         CloudWatchMetricStreamsService metricStreamsService) {
+                                         CloudWatchMetricStreamsService metricStreamsService,
+                                         CloudWatchAlarmMuteRulesService muteRulesService) {
         this.metricsService = metricsService;
         this.dashboardsService = dashboardsService;
         this.metricStreamsService = metricStreamsService;
+        this.muteRulesService = muteRulesService;
     }
 
     public Response handle(String action, MultivaluedMap<String, String> params, String region) {
@@ -70,6 +81,10 @@ public class CloudWatchMetricsQueryHandler {
             case "DeleteMetricStream" -> handleDeleteMetricStream(params, region);
             case "StartMetricStreams" -> handleStartMetricStreams(params, region);
             case "StopMetricStreams" -> handleStopMetricStreams(params, region);
+            case "PutAlarmMuteRule" -> handlePutAlarmMuteRule(params, region);
+            case "GetAlarmMuteRule" -> handleGetAlarmMuteRule(params, region);
+            case "ListAlarmMuteRules" -> handleListAlarmMuteRules(params, region);
+            case "DeleteAlarmMuteRule" -> handleDeleteAlarmMuteRule(params, region);
             default -> AwsQueryResponse.error("UnsupportedOperation",
                     "Operation " + action + " is not supported by CloudWatch Query.", AwsNamespaces.CW, 400);
         };
@@ -285,6 +300,8 @@ public class CloudWatchMetricsQueryHandler {
             tags = dashboardsService.listTagsForResource(arn, region);
         } else if (CloudWatchMetricStreamsService.isMetricStreamArn(arn)) {
             tags = metricStreamsService.listTagsForResource(arn, region);
+        } else if (CloudWatchAlarmMuteRulesService.isAlarmMuteRuleArn(arn)) {
+            tags = muteRulesService.listTagsForResource(arn, region);
         } else {
             tags = metricsService.listTagsForResource(arn, region);
         }
@@ -306,6 +323,8 @@ public class CloudWatchMetricsQueryHandler {
             dashboardsService.tagResource(arn, tags, region);
         } else if (CloudWatchMetricStreamsService.isMetricStreamArn(arn)) {
             metricStreamsService.tagResource(arn, tags, region);
+        } else if (CloudWatchAlarmMuteRulesService.isAlarmMuteRuleArn(arn)) {
+            muteRulesService.tagResource(arn, tags, region);
         } else {
             metricsService.tagResource(arn, tags, region);
         }
@@ -327,6 +346,8 @@ public class CloudWatchMetricsQueryHandler {
             dashboardsService.untagResource(arn, keys, region);
         } else if (CloudWatchMetricStreamsService.isMetricStreamArn(arn)) {
             metricStreamsService.untagResource(arn, keys, region);
+        } else if (CloudWatchAlarmMuteRulesService.isAlarmMuteRuleArn(arn)) {
+            muteRulesService.untagResource(arn, keys, region);
         } else {
             metricsService.untagResource(arn, keys, region);
         }
@@ -463,6 +484,95 @@ public class CloudWatchMetricsQueryHandler {
             xml.elem("NextToken", page.nextToken());
         }
         return Response.ok(AwsQueryResponse.envelope("ListMetricStreams", null, xml.build())).build();
+    }
+
+    private Response handlePutAlarmMuteRule(MultivaluedMap<String, String> params, String region) {
+        AlarmMuteRule rule = new AlarmMuteRule();
+        rule.setName(params.getFirst("Name"));
+        rule.setDescription(params.getFirst("Description"));
+        rule.setExpression(params.getFirst("Rule.Schedule.Expression"));
+        rule.setDuration(params.getFirst("Rule.Schedule.Duration"));
+        rule.setTimezone(params.getFirst("Rule.Schedule.Timezone"));
+        for (int i = 1; params.getFirst("MuteTargets.AlarmNames.member." + i) != null; i++) {
+            rule.getAlarmNames().add(params.getFirst("MuteTargets.AlarmNames.member." + i));
+        }
+        String startDate = params.getFirst("StartDate");
+        rule.setStartDate(startDate == null ? null : Instant.parse(startDate).getEpochSecond());
+        String expireDate = params.getFirst("ExpireDate");
+        rule.setExpireDate(expireDate == null ? null : Instant.parse(expireDate).getEpochSecond());
+        for (int i = 1; params.getFirst("Tags.member." + i + ".Key") != null; i++) {
+            rule.getTags().put(params.getFirst("Tags.member." + i + ".Key"),
+                    params.getFirst("Tags.member." + i + ".Value"));
+        }
+        muteRulesService.putAlarmMuteRule(rule, region);
+        return Response.ok(AwsQueryResponse.envelopeNoResult("PutAlarmMuteRule", null)).build();
+    }
+
+    private Response handleGetAlarmMuteRule(MultivaluedMap<String, String> params, String region) {
+        AlarmMuteRule rule = muteRulesService.getAlarmMuteRule(params.getFirst("AlarmMuteRuleName"), region);
+        DateTimeFormatter fmt = DateTimeFormatter.ISO_INSTANT;
+        XmlBuilder xml = new XmlBuilder()
+                .elem("Name", rule.getName())
+                .elem("AlarmMuteRuleArn", rule.getArn());
+        if (rule.getDescription() != null) {
+            xml.elem("Description", rule.getDescription());
+        }
+        xml.start("Rule").start("Schedule")
+                .elem("Expression", rule.getExpression())
+                .elem("Duration", rule.getDuration());
+        if (rule.getTimezone() != null) {
+            xml.elem("Timezone", rule.getTimezone());
+        }
+        xml.end("Schedule").end("Rule");
+        if (!rule.getAlarmNames().isEmpty()) {
+            xml.start("MuteTargets").start("AlarmNames");
+            rule.getAlarmNames().forEach(n -> xml.elem("member", n));
+            xml.end("AlarmNames").end("MuteTargets");
+        }
+        if (rule.getStartDate() != null) {
+            xml.elem("StartDate", fmt.format(Instant.ofEpochSecond(rule.getStartDate())));
+        }
+        if (rule.getExpireDate() != null) {
+            xml.elem("ExpireDate", fmt.format(Instant.ofEpochSecond(rule.getExpireDate())));
+        }
+        xml.elem("Status", CloudWatchAlarmMuteRulesService.status(rule, Instant.now()))
+                .elem("LastUpdatedTimestamp", fmt.format(Instant.ofEpochSecond(rule.getLastUpdatedTimestamp())))
+                .elem("MuteType", CloudWatchAlarmMuteRulesService.muteType(rule));
+        return Response.ok(AwsQueryResponse.envelope("GetAlarmMuteRule", null, xml.build())).build();
+    }
+
+    private Response handleListAlarmMuteRules(MultivaluedMap<String, String> params, String region) {
+        List<String> statuses = new ArrayList<>();
+        for (int i = 1; params.getFirst("Statuses.member." + i) != null; i++) {
+            statuses.add(params.getFirst("Statuses.member." + i));
+        }
+        PaginatedResult<AlarmMuteRule> page = muteRulesService.listAlarmMuteRules(
+                params.getFirst("AlarmName"), statuses,
+                Pagination.parseMaxResults(params.getFirst("MaxRecords"), "InvalidParameterValue"),
+                params.getFirst("NextToken"), region);
+        DateTimeFormatter fmt = DateTimeFormatter.ISO_INSTANT;
+        Instant now = Instant.now();
+        XmlBuilder xml = new XmlBuilder().start("AlarmMuteRuleSummaries");
+        for (AlarmMuteRule rule : page.items()) {
+            xml.start("member").elem("AlarmMuteRuleArn", rule.getArn());
+            if (rule.getExpireDate() != null) {
+                xml.elem("ExpireDate", fmt.format(Instant.ofEpochSecond(rule.getExpireDate())));
+            }
+            xml.elem("Status", CloudWatchAlarmMuteRulesService.status(rule, now))
+                    .elem("MuteType", CloudWatchAlarmMuteRulesService.muteType(rule))
+                    .elem("LastUpdatedTimestamp", fmt.format(Instant.ofEpochSecond(rule.getLastUpdatedTimestamp())))
+                    .end("member");
+        }
+        xml.end("AlarmMuteRuleSummaries");
+        if (page.nextToken() != null) {
+            xml.elem("NextToken", page.nextToken());
+        }
+        return Response.ok(AwsQueryResponse.envelope("ListAlarmMuteRules", null, xml.build())).build();
+    }
+
+    private Response handleDeleteAlarmMuteRule(MultivaluedMap<String, String> params, String region) {
+        muteRulesService.deleteAlarmMuteRule(params.getFirst("AlarmMuteRuleName"), region);
+        return Response.ok(AwsQueryResponse.envelopeNoResult("DeleteAlarmMuteRule", null)).build();
     }
 
     private Response handleDeleteMetricStream(MultivaluedMap<String, String> params, String region) {

@@ -368,7 +368,7 @@ HTTP 404 `UnknownOperationException`. IAM policies use the `cloudwatch` action p
 | `ListMetrics` | List available metrics |
 | `GetMetricStatistics` | Get metric statistics (Average, Sum, etc.) |
 | `GetMetricData` | Query metrics with math expressions |
-| `PutMetricAlarm` | Create a metric alarm |
+| `PutMetricAlarm` | Create or update a metric alarm (tags apply on create only) |
 | `DescribeAlarms` | List alarms |
 | `DeleteAlarms` | Delete alarms |
 | `SetAlarmState` | Manually set alarm state |
@@ -378,16 +378,24 @@ HTTP 404 `UnknownOperationException`. IAM policies use the `cloudwatch` action p
 | `DeleteMetricStream` | Delete a metric stream |
 | `StartMetricStreams` | Move metric streams to `running` |
 | `StopMetricStreams` | Move metric streams to `stopped` |
+| `PutAlarmMuteRule` | Create or update an alarm mute rule (tags apply on create only) |
+| `GetAlarmMuteRule` | Read an alarm mute rule with its status and mute type |
+| `ListAlarmMuteRules` | List alarm mute rules, optionally by target alarm or status |
+| `DeleteAlarmMuteRule` | Delete an alarm mute rule |
 | `PutDashboard` | Create a dashboard, or replace its body when the name is taken (tags apply on create only) |
 | `GetDashboard` | Read a dashboard body and ARN |
 | `ListDashboards` | List dashboards, optionally by name prefix |
 | `DeleteDashboards` | Delete dashboards by name |
-| `TagResource` | Tag an alarm or dashboard by ARN |
-| `UntagResource` | Remove tags from an alarm or dashboard |
-| `ListTagsForResource` | List the tags of an alarm or dashboard |
+| `TagResource` | Tag an alarm, dashboard, metric stream or alarm mute rule by ARN |
+| `UntagResource` | Remove tags from an alarm, dashboard, metric stream or alarm mute rule |
+| `ListTagsForResource` | List the tags of an alarm, dashboard, metric stream or alarm mute rule |
 
 Metric streams are stored as definitions with their `running` or `stopped` state. Floci never
 delivers metrics to the Firehose delivery stream a metric stream names.
+
+An alarm mute rule reports `SCHEDULED`, `ACTIVE` or `EXPIRED` from its `StartDate`, `ExpireDate`
+and, for an `at(...)` rule, its one-time window. Floci stores the rule and keeps running alarm
+actions while it is active.
 
 ### SNS alarm actions
 
