@@ -48,13 +48,15 @@ public class Ec2QueryHandler {
     private final Ec2IpamService ipamService;
     private final RegionResolver regionResolver;
     private final Ec2PlacementGroupService placementGroupService;
+    private final Ec2SecurityGroupVpcAssociationService securityGroupVpcAssociationService;
 
     @Inject
     public Ec2QueryHandler(Ec2Service service, EmulatorConfig config, FlowLogService flowLogService,
                            Ec2EbsEncryptionService ebsEncryptionService,
                            Ec2SnapshotBlockPublicAccessService snapshotBlockPublicAccessService,
                            Ec2IpamService ipamService, RegionResolver regionResolver,
-                           Ec2PlacementGroupService placementGroupService) {
+                           Ec2PlacementGroupService placementGroupService,
+                           Ec2SecurityGroupVpcAssociationService securityGroupVpcAssociationService) {
         this.service = service;
         this.config = config;
         this.flowLogService = flowLogService;
@@ -63,6 +65,7 @@ public class Ec2QueryHandler {
         this.ipamService = ipamService;
         this.regionResolver = regionResolver;
         this.placementGroupService = placementGroupService;
+        this.securityGroupVpcAssociationService = securityGroupVpcAssociationService;
     }
 
     public Response handle(String action, MultivaluedMap<String, String> params, String region) {
@@ -190,6 +193,10 @@ public class Ec2QueryHandler {
                 case "AuthorizeSecurityGroupIngress" -> handleAuthorizeSecurityGroupIngress(params, region);
                 case "AuthorizeSecurityGroupEgress" -> handleAuthorizeSecurityGroupEgress(params, region);
                 case "RevokeSecurityGroupIngress" -> handleRevokeSecurityGroupIngress(params, region);
+                case "AssociateSecurityGroupVpc" -> handleAssociateSecurityGroupVpc(params, region);
+                case "DisassociateSecurityGroupVpc" -> handleDisassociateSecurityGroupVpc(params, region);
+                case "DescribeSecurityGroupVpcAssociations" ->
+                        handleDescribeSecurityGroupVpcAssociations(params, region);
                 case "RevokeSecurityGroupEgress" -> handleRevokeSecurityGroupEgress(params, region);
                 case "DescribeSecurityGroupRules" -> handleDescribeSecurityGroupRules(params, region);
                 case "ModifySecurityGroupRules" -> handleModifySecurityGroupRules(params, region);
@@ -3267,6 +3274,47 @@ public class Ec2QueryHandler {
             xml.start("item").raw(sgRuleXml(rule)).end("item");
         }
         xml.end("securityGroupRuleSet").end("AuthorizeSecurityGroupEgressResponse");
+        return xmlResponse(xml.build());
+    }
+
+    private Response handleAssociateSecurityGroupVpc(MultivaluedMap<String, String> p, String region) {
+        SecurityGroupVpcAssociation association = securityGroupVpcAssociationService.associate(region,
+                p.getFirst("GroupId"), p.getFirst("VpcId"));
+        return xmlResponse(new XmlBuilder()
+                .start("AssociateSecurityGroupVpcResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .elem("state", association.getState())
+                .end("AssociateSecurityGroupVpcResponse").build());
+    }
+
+    private Response handleDisassociateSecurityGroupVpc(MultivaluedMap<String, String> p, String region) {
+        SecurityGroupVpcAssociation association = securityGroupVpcAssociationService.disassociate(region,
+                p.getFirst("GroupId"), p.getFirst("VpcId"));
+        return xmlResponse(new XmlBuilder()
+                .start("DisassociateSecurityGroupVpcResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .elem("state", association.getState())
+                .end("DisassociateSecurityGroupVpcResponse").build());
+    }
+
+    private Response handleDescribeSecurityGroupVpcAssociations(MultivaluedMap<String, String> p,
+                                                                String region) {
+        List<SecurityGroupVpcAssociation> found =
+                securityGroupVpcAssociationService.describe(region, getFilters(p));
+        XmlBuilder xml = new XmlBuilder()
+                .start("DescribeSecurityGroupVpcAssociationsResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .start("securityGroupVpcAssociationSet");
+        for (SecurityGroupVpcAssociation association : found) {
+            xml.start("item")
+                    .elem("groupId", association.getGroupId())
+                    .elem("vpcId", association.getVpcId())
+                    .elem("vpcOwnerId", association.getVpcOwnerId())
+                    .elem("state", association.getState())
+                    .elem("groupOwnerId", association.getGroupOwnerId())
+                    .end("item");
+        }
+        xml.end("securityGroupVpcAssociationSet").end("DescribeSecurityGroupVpcAssociationsResponse");
         return xmlResponse(xml.build());
     }
 

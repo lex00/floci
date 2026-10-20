@@ -288,6 +288,9 @@ private gateway lifecycles are not modelled.
 | ModifySecurityGroupRules | Updates supported fields on security group rules. |
 | UpdateSecurityGroupRuleDescriptionsIngress | Updates descriptions on matching inbound security group rules. |
 | UpdateSecurityGroupRuleDescriptionsEgress | Updates descriptions on matching outbound security group rules. |
+| AssociateSecurityGroupVpc | Associates a security group with another VPC in its region, `associated` immediately. |
+| DisassociateSecurityGroupVpc | Removes that association and reports `disassociating`. |
+| DescribeSecurityGroupVpcAssociations | Lists associations by the `group-id`, `group-owner-id`, `vpc-id`, `vpc-owner-id` and `state` filters. |
 
 ### Key Pairs
 
