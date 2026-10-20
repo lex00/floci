@@ -13,11 +13,26 @@
 | `UpdateGeofenceCollection` | Change a geofence collection's description and settings |
 | `DeleteGeofenceCollection` | Delete a geofence collection |
 | `ListGeofenceCollections` | List geofence collection summaries |
+| `PutGeofence` | Create or replace a geofence |
+| `GetGeofence` | Read a geofence |
+| `BatchPutGeofence` | Create or replace up to 10 geofences |
+| `ListGeofences` | List a collection's geofences |
+| `BatchDeleteGeofence` | Delete geofences |
+| `BatchEvaluateGeofences` | Validate position updates against a collection |
 | `CreateTracker` | Create a tracker |
 | `DescribeTracker` | Read a tracker by name |
 | `UpdateTracker` | Change a tracker's description and settings |
 | `DeleteTracker` | Delete a tracker |
 | `ListTrackers` | List tracker summaries |
+| `BatchUpdateDevicePosition` | Record up to 10 device positions |
+| `GetDevicePosition` | Read a device's latest position |
+| `GetDevicePositionHistory` | List a device's positions in a time range |
+| `BatchGetDevicePosition` | Read the latest position of several devices |
+| `ListDevicePositions` | List each device's latest position, optionally inside a polygon |
+| `BatchDeleteDevicePositionHistory` | Delete devices' position history |
+| `AssociateTrackerConsumer` | Link a geofence collection to a tracker |
+| `ListTrackerConsumers` | List a tracker's geofence collections |
+| `DisassociateTrackerConsumer` | Unlink a geofence collection from a tracker |
 | `CreateMap` | Create a map |
 | `DescribeMap` | Read a map by name |
 | `UpdateMap` | Change a map's description and settings |
@@ -33,6 +48,8 @@
 | `UpdateRouteCalculator` | Change a route calculator's description and settings |
 | `DeleteRouteCalculator` | Delete a route calculator |
 | `ListRouteCalculators` | List route calculator summaries |
+| `CalculateRoute` | Calculate a great-circle route through the waypoints |
+| `CalculateRouteMatrix` | Calculate great-circle distances between position sets |
 | `ListTagsForResource` | List a resource's tags |
 | `TagResource` | Tag a resource |
 | `UntagResource` | Remove tags from a resource |
@@ -47,8 +64,21 @@
 - A map's `DataSource` comes from its style name, such as `Here` for
   `VectorHereExplore`. A place index without `DataSourceConfiguration` reads back with
   `IntendedUse` `SingleUse`.
-- Geofences, device positions, map tiles, place search and route calculation are not
-  implemented, so a collection's `GeofenceCount` stays at 0.
+- A geofence holds exactly one of `Polygon`, `Circle`, `MultiPolygon` or `Geobuf` and is
+  `ACTIVE` once stored. `GeofenceCount` counts a collection's geofences.
+- A tracker keeps every position it receives. `GetDevicePosition` and `ListDevicePositions`
+  return the latest by `SampleTime`, and `ListDevicePositions` applies `FilterGeometry` to
+  the polygon's outer ring. Position filtering is not applied.
+- `BatchEvaluateGeofences` validates each update and emits no EventBridge events.
+- Routes follow the great circle between consecutive positions, at 50 km/h by car or
+  motorcycle, 40 km/h by truck, 15 km/h by bicycle and 5 km/h on foot. Each leg has one
+  step.
+
+## Not emulated
+
+- Map tiles, glyphs and sprites
+- Place search
+- Geofence event forecasts and device position verification
 
 ## Host prefixes
 
