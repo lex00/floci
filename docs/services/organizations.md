@@ -125,7 +125,7 @@ call `LeaveOrganization`. An account in no organization gets
 | --- | --- | --- |
 | `FLOCI_SERVICES_ORGANIZATIONS_ENABLED` | `true` | Enables the service |
 | `FLOCI_SERVICES_ORGANIZATIONS_SCP_ENFORCEMENT_ENABLED` | `false` | When `true` (and IAM enforcement is enabled), attached service control policies participate in IAM policy evaluation |
-| `FLOCI_SERVICES_ORGANIZATIONS_TAG_POLICY_ENFORCEMENT_ENABLED` | `false` | When `true`, the account's effective tag policy refuses noncompliant EC2 and SQS tag writes, see [Tag policy enforcement](#tag-policy-enforcement) |
+| `FLOCI_SERVICES_ORGANIZATIONS_TAG_POLICY_ENFORCEMENT_ENABLED` | `false` | When `true`, the account's effective tag policy refuses noncompliant tag writes, see [Tag policy enforcement](#tag-policy-enforcement) |
 | `FLOCI_SERVICES_ORGANIZATIONS_MANAGEMENT_ACCOUNT_EMAIL` | unset | Email reported for the organization's management account (`DescribeOrganization` master account, `ListAccounts`). Unset falls back to the built-in default |
 | `FLOCI_STORAGE_SERVICES_ORGANIZATIONS_MODE` | inherits `FLOCI_STORAGE_MODE` | Storage mode override |
 | `FLOCI_STORAGE_SERVICES_ORGANIZATIONS_FLUSH_INTERVAL_MS` | `5000` | Hybrid/WAL flush interval |
@@ -146,12 +146,22 @@ resolves the chain, but with IAM enforcement off the flag has no effect.
 ## Tag policy enforcement
 
 With `FLOCI_SERVICES_ORGANIZATIONS_TAG_POLICY_ENFORCEMENT_ENABLED=true`, the account's effective
-`TAG_POLICY` applies to EC2 `CreateTags` and to SQS `CreateQueue` and `TagQueue`. A policy tag whose
-`enforced_for` names the resource type (`ec2:vpc`, `sqs:queue`) or its service's `ALL_SUPPORTED`
-refuses a value outside `tag_value`, where a trailing `*` matches a prefix, and a key spelled with
-different capitalization from `tag_key`. The refusal is a 400 `TagPolicyViolation`. EC2 checks the
-tags of a `TagSpecification` after the resource is created, so a refused tag leaves the resource
-untagged rather than uncreated.
+`TAG_POLICY` applies to tag writes. A policy tag whose `enforced_for` names the resource type
+(`ec2:vpc`, `sqs:queue`, `lambda:function`) or its service's `ALL_SUPPORTED` refuses a value
+outside `tag_value`, where a trailing `*` matches a prefix, and a key spelled with different
+capitalization from `tag_key`. A create call is checked before anything is created, so a refused
+tag leaves no resource behind.
+
+| Write | Resource type | Refusal |
+|---|---|---|
+| EC2 `CreateTags`, and the `TagSpecification` of every create call | `ec2:<type>` | 400 `TagPolicyViolation` |
+| SQS `CreateQueue`, `TagQueue` | `sqs:queue` | 400 `TagPolicyViolation` |
+| SNS `CreateTopic`, `TagResource` | `sns:topic` | 400 `TagPolicyException` |
+| DynamoDB `CreateTable`, `TagResource` | `dynamodb:table` | 400 `ValidationException` |
+| Lambda `CreateFunction`, `TagResource` | `lambda:function`, `lambda:event-source-mapping` | 400 `InvalidParameterValueException` |
+| S3 `PutBucketTagging` | `s3:bucket` | 400 `InvalidTag` |
+| `TagResource` on the shared `/tags/{arn}` and `/v1/tags/{arn}` paths (Scheduler, EKS, API Gateway and the other services there) | the ARN's service and resource type, such as `scheduler:schedule-group` | 400 with the service's validation error code |
+| Resource Groups Tagging API `TagResources` | the ARN's service and resource type | the ARN's `FailedResourcesMap` entry, `InvalidParameterException` |
 
 ## Example
 

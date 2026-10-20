@@ -10,12 +10,15 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.core.Response;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Amazon FSx over JSON 1.1 ({@code X-Amz-Target: AWSSimbaAPIService_v20180301.<Action>}),
- * covering file systems and their tags.
+ * covering file systems, volumes, storage virtual machines, backups, data repository associations
+ * and their tags.
  */
 @ApplicationScoped
 public class FsxJsonHandler {
@@ -23,43 +26,99 @@ public class FsxJsonHandler {
     private static final int DEFAULT_PAGE_SIZE = 2147483647;
 
     private final FsxService service;
+    private final FsxResourceService resources;
     private final ObjectMapper mapper;
 
     @Inject
-    public FsxJsonHandler(FsxService service, ObjectMapper mapper) {
+    public FsxJsonHandler(FsxService service, FsxResourceService resources, ObjectMapper mapper) {
         this.service = service;
+        this.resources = resources;
         this.mapper = mapper;
     }
 
     public Response handle(String action, JsonNode request, String region) {
         return switch (action) {
-            case "CreateFileSystem" -> ok(mapper.createObjectNode()
-                    .set("FileSystem", fileSystemNode(service.createFileSystem(request, region))));
+            case "CreateFileSystem" -> {
+                FsxFileSystem created = service.createFileSystem(request, region);
+                if (FsxService.OPENZFS.equals(created.getFileSystemType())) {
+                    resources.createRootVolume(created, region);
+                }
+                yield ok(mapper.createObjectNode().set("FileSystem", fileSystemNode(created)));
+            }
             case "DescribeFileSystems" -> describeFileSystems(request, region);
             case "UpdateFileSystem" -> ok(mapper.createObjectNode()
                     .set("FileSystem", fileSystemNode(service.updateFileSystem(request, region))));
             case "DeleteFileSystem" -> {
-                FsxFileSystem deleted = service.deleteFileSystem(text(request, "FileSystemId"), region);
+                FsxFileSystem target = service.getFileSystem(text(request, "FileSystemId"), region);
+                resources.onFileSystemDelete(target.getFileSystemId(), region);
+                FsxFileSystem deleted = service.deleteFileSystem(target.getFileSystemId(), region);
                 yield ok(mapper.createObjectNode()
                         .put("FileSystemId", deleted.getFileSystemId())
                         .put("Lifecycle", deleted.getLifecycle()));
             }
+            case "CreateStorageVirtualMachine" -> ok(mapper.createObjectNode()
+                    .set("StorageVirtualMachine", resources.createStorageVirtualMachine(request, region)));
+            case "DescribeStorageVirtualMachines" -> page(request, "StorageVirtualMachines",
+                    resources.describeStorageVirtualMachines(request, region));
+            case "UpdateStorageVirtualMachine" -> ok(mapper.createObjectNode()
+                    .set("StorageVirtualMachine", resources.updateStorageVirtualMachine(request, region)));
+            case "DeleteStorageVirtualMachine" -> {
+                ObjectNode deleted = resources.deleteStorageVirtualMachine(
+                        text(request, "StorageVirtualMachineId"), region);
+                yield ok(mapper.createObjectNode()
+                        .put("StorageVirtualMachineId", deleted.path("StorageVirtualMachineId").asText())
+                        .put("Lifecycle", deleted.path("Lifecycle").asText()));
+            }
+            case "CreateVolume" -> ok(mapper.createObjectNode().set("Volume", resources.createVolume(request, region)));
+            case "DescribeVolumes" -> page(request, "Volumes", resources.describeVolumes(request, region));
+            case "UpdateVolume" -> ok(mapper.createObjectNode().set("Volume", resources.updateVolume(request, region)));
+            case "DeleteVolume" -> ok(resources.deleteVolume(request, region));
+            case "CreateBackup" -> ok(mapper.createObjectNode().set("Backup", resources.createBackup(request, region)));
+            case "DescribeBackups" -> page(request, "Backups", resources.describeBackups(request, region));
+            case "CopyBackup" -> ok(mapper.createObjectNode().set("Backup", resources.copyBackup(request, region)));
+            case "DeleteBackup" -> ok(resources.deleteBackup(text(request, "BackupId"), region));
+            case "CreateDataRepositoryAssociation" -> ok(mapper.createObjectNode()
+                    .set("Association", resources.createDataRepositoryAssociation(request, region)));
+            case "DescribeDataRepositoryAssociations" -> page(request, "Associations",
+                    resources.describeDataRepositoryAssociations(request, region));
+            case "UpdateDataRepositoryAssociation" -> ok(mapper.createObjectNode()
+                    .set("Association", resources.updateDataRepositoryAssociation(request, region)));
+            case "DeleteDataRepositoryAssociation" -> ok(resources.deleteDataRepositoryAssociation(request, region));
             case "TagResource" -> {
                 Map<String, String> tags = FsxService.tagMap(request.path("Tags"));
                 if (tags.isEmpty()) {
                     throw new AwsException("BadRequest", "Tags is required.", 400);
                 }
-                service.tagResource(text(request, "ResourceARN"), tags, region);
+                String arn = text(request, "ResourceARN");
+                Optional<ObjectNode> resource = resources.findByArn(arn, region);
+                if (resource.isPresent()) {
+                    Map<String, String> merged = new LinkedHashMap<>(FsxResourceService.tagsOf(resource.get()));
+                    merged.putAll(tags);
+                    resources.saveTags(resource.get(), merged, region);
+                } else {
+                    service.tagResource(arn, tags, region);
+                }
                 yield ok(mapper.createObjectNode());
             }
             case "UntagResource" -> {
-                service.untagResource(text(request, "ResourceARN"), FsxService.strings(request.path("TagKeys")),
-                        region);
+                String arn = text(request, "ResourceARN");
+                List<String> keys = FsxService.strings(request.path("TagKeys"));
+                Optional<ObjectNode> resource = resources.findByArn(arn, region);
+                if (resource.isPresent()) {
+                    Map<String, String> remaining = new LinkedHashMap<>(FsxResourceService.tagsOf(resource.get()));
+                    keys.forEach(remaining::remove);
+                    resources.saveTags(resource.get(), remaining, region);
+                } else {
+                    service.untagResource(arn, keys, region);
+                }
                 yield ok(mapper.createObjectNode());
             }
             case "ListTagsForResource" -> {
+                String arn = text(request, "ResourceARN");
+                Optional<ObjectNode> resource = resources.findByArn(arn, region);
                 ObjectNode response = mapper.createObjectNode();
-                response.set("Tags", tagList(service.listTags(text(request, "ResourceARN"), region)));
+                response.set("Tags", tagList(resource.isPresent()
+                        ? FsxResourceService.tagsOf(resource.get()) : service.listTags(arn, region)));
                 yield ok(response);
             }
             default -> throw new AwsException("UnknownOperationException",
@@ -70,6 +129,12 @@ public class FsxJsonHandler {
     private Response describeFileSystems(JsonNode request, String region) {
         List<FsxFileSystem> all = service.describeFileSystems(FsxService.strings(request.path("FileSystemIds")),
                 region);
+        List<ObjectNode> nodes = all.stream().map(this::fileSystemNode).toList();
+        return page(request, "FileSystems", nodes);
+    }
+
+    /** A Describe* page: NextToken is the offset of the next item. */
+    private Response page(JsonNode request, String member, List<ObjectNode> all) {
         int start = 0;
         String nextToken = text(request, "NextToken");
         if (nextToken != null) {
@@ -85,9 +150,9 @@ public class FsxJsonHandler {
         }
         int end = (int) Math.min((long) start + maxResults, all.size());
         ObjectNode response = mapper.createObjectNode();
-        ArrayNode items = response.putArray("FileSystems");
-        for (FsxFileSystem fileSystem : all.subList(Math.min(start, all.size()), end)) {
-            items.add(fileSystemNode(fileSystem));
+        ArrayNode items = response.putArray(member);
+        for (ObjectNode item : all.subList(Math.min(start, all.size()), end)) {
+            items.add(item);
         }
         if (end < all.size()) {
             response.put("NextToken", String.valueOf(end));

@@ -601,6 +601,7 @@ See [Web Console](../ui/index.md) for running the console and swapping in a thir
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_ENABLED` | `true` | Enable the Bedrock AgentCore data plane (`InvokeAgentRuntime` stub) |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_INVOKE_RESPONSE` | `{"output":"yes"}` | Canned body returned by `InvokeAgentRuntime` |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_VALIDATE_RUNTIME_EXISTS` | `false` | When `true`, `InvokeAgentRuntime` rejects unknown runtime ARNs |
+| `FLOCI_SERVICES_BEDROCK_AGENT_CORE_WRITE_TRACE_SPANS` | `false` | When `true`, each `InvokeAgentRuntime` call writes its span to the `aws/spans` log group |
 | `FLOCI_SERVICES_TEXTRACT_ENABLED` | `true` | Enable the Textract service |
 | `FLOCI_SERVICES_TRANSFER_ENABLED` | `true` | Enable the Transfer Family service |
 | `FLOCI_SERVICES_ROUTE53_ENABLED` | `true` | Enable the Route 53 service |

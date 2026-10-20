@@ -160,9 +160,13 @@ The data-plane operations are canned, in the same spirit as `InvokeAgentRuntime`
 - `StopBatchEvaluation` before that first read moves the job to `STOPPED`. Stopping a completed
   job is a `ConflictException`, as is deleting one that has not reached a terminal status.
 - No CloudWatch Logs are read and no results or metrics are written to CloudWatch.
-- Floci writes no trace spans to the `aws/spans` log group. Logs Insights queries over it run on
-  the CloudWatch Logs `StartQuery` subset and return the spans an agent wrote there with
-  `PutLogEvents`.
+- With `FLOCI_SERVICES_BEDROCK_AGENT_CORE_WRITE_TRACE_SPANS=true`, every `InvokeAgentRuntime` call
+  writes its server span to the `default` stream of the `aws/spans` log group, as AgentCore does
+  with CloudWatch Transaction Search on. The span is an OpenTelemetry record in JSON with the
+  runtime session id in `attributes.session.id`, and it joins the trace that `traceparent` or
+  `X-Amzn-Trace-Id` names. A Logs Insights query such as
+  `filter attributes.session.id = 'my-session'` over `aws/spans` finds the session, next to any
+  spans an agent wrote there with `PutLogEvents`.
 
 ## Data plane — `InvokeAgentRuntime`
 
@@ -236,6 +240,7 @@ block is ever produced even when a request supplies `tools`.
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_INVOKE_RESPONSE` | `{"output":"yes"}` | Canned `InvokeAgentRuntime` response body |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_RUNTIME_MODE` | `stub` | `docker` runs the runtime's artifact and forwards `InvokeAgentRuntime` to it |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_RUNTIME_IDLE_TIMEOUT_SECONDS` | `900` | Seconds a session's container may sit unused before it is stopped |
+| `FLOCI_SERVICES_BEDROCK_AGENT_CORE_WRITE_TRACE_SPANS` | `false` | When `true`, each `InvokeAgentRuntime` call writes its span to the `aws/spans` log group |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_RUNTIME_STARTUP_TIMEOUT_SECONDS` | `60` | Seconds a new container has to answer its readiness probe |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_CODE_RUNTIME_IMAGE` | `python:{version}-slim` | Image a `codeConfiguration` artifact runs in |
 | `FLOCI_SERVICES_BEDROCK_AGENT_CORE_VALIDATE_RUNTIME_EXISTS` | `false` | When `true`, `InvokeAgentRuntime` returns `ResourceNotFoundException` for an unknown runtime ARN instead of the canned response |
@@ -248,7 +253,7 @@ block is ever produced even when a request supplies `tools`.
 > use hyphenated words: `floci.services.bedrock-agent-core-control.enabled` and
 > `floci.services.bedrock-agent-core.enabled` (and `…bedrock-agent-core.invoke-response`,
 > `…bedrock-agent-core.validate-runtime-exists`, `…bedrock-agent-core.runtime-mode`,
-> `…bedrock-agent-core.runtime-idle-timeout-seconds`,
+> `…bedrock-agent-core.runtime-idle-timeout-seconds`, `…bedrock-agent-core.write-trace-spans`,
 > `…bedrock-agent-core.runtime-startup-timeout-seconds`, `…bedrock-agent-core.code-runtime-image`, `…bedrock-agent-core.harness-echo-prefix`,
 > `…bedrock-agent-core.harness-empty-reply`, `…bedrock-agent-core.evaluation-score`). The
 > `FLOCI_*` environment variables above map to these paths directly and are the recommended way

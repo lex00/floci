@@ -8254,15 +8254,23 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
 
     public void createTags(String region, List<String> resourceIds, List<Tag> tagList) {
         validateUserTagKeys(tagList);
-        if (tagPolicyEnforcer != null && tagPolicyEnforcer.isResolvable()) {
-            Map<String, String> requested = new LinkedHashMap<>();
-            tagList.forEach(tag -> requested.put(tag.getKey(), tag.getValue()));
-            for (String resourceId : resourceIds) {
-                tagPolicyEnforcer.get().enforce(callerAccountId(), "ec2:" + inferResourceType(resourceId),
-                        requested, "TagPolicyViolation");
-            }
+        for (String resourceId : resourceIds) {
+            enforceTagPolicy(inferResourceType(resourceId), tagList);
         }
         createSystemTags(region, resourceIds, tagList);
+    }
+
+    /**
+     * Refuses tags the account's tag policy does not allow on an EC2 resource of this type, such
+     * as {@code vpc}. Create calls run it on their TagSpecification before creating anything.
+     */
+    public void enforceTagPolicy(String resourceType, List<Tag> tagList) {
+        if (tagList == null || tagList.isEmpty() || tagPolicyEnforcer == null || !tagPolicyEnforcer.isResolvable()) {
+            return;
+        }
+        Map<String, String> requested = new LinkedHashMap<>();
+        tagList.forEach(tag -> requested.put(tag.getKey(), tag.getValue()));
+        tagPolicyEnforcer.get().enforce(callerAccountId(), "ec2:" + resourceType, requested, "TagPolicyViolation");
     }
 
     @Inject

@@ -30,8 +30,9 @@ public class V1TagsController extends AbstractTagsController {
     @Inject
     public V1TagsController(@V1Tags Instance<TagHandler> handlers,
                             RegionResolver regionResolver,
-                            ObjectMapper objectMapper) {
-        super(new TagDispatcher(handlers, regionResolver, objectMapper));
+                            ObjectMapper objectMapper,
+                            Instance<TagWriteGuard> guards) {
+        super(new TagDispatcher(handlers, regionResolver, objectMapper, guards));
     }
 
     /**

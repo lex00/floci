@@ -7,6 +7,7 @@ import io.github.hectorvent.floci.core.common.AwsPartitions;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.common.Resettable;
 import io.github.hectorvent.floci.core.common.TagHandler;
+import io.github.hectorvent.floci.core.common.TagWriteGuard;
 import io.github.hectorvent.floci.core.resource.ExplorerResource;
 import io.github.hectorvent.floci.core.resource.ResourceProvider;
 import io.github.hectorvent.floci.core.resource.SupportedResourceType;
@@ -30,6 +31,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -60,6 +62,10 @@ public class ResourceGroupsTaggingService implements Resettable {
     private final Iterable<TaggedResourceProvider> taggedResourceProviders;
     private final Iterable<TaggedResourceWriter> taggedResourceWriters;
     private final RegionResolver regionResolver;
+
+    /** Tag policy checks for TagResources; unset outside CDI. */
+    @Inject
+    Instance<TagWriteGuard> tagWriteGuards;
 
     // region::arn → ResourceTagMapping
     private Map<String, ResourceTagMapping> store = new ConcurrentHashMap<>();
@@ -183,6 +189,9 @@ public class ResourceGroupsTaggingService implements Resettable {
         Map<String, AwsException> failures = new LinkedHashMap<>();
         Map<String, TagHandler> owners = listedOwners(resourceArns, region, failures);
         for (String arn : resourceArns) {
+            if (!failures.containsKey(arn)) {
+                refuseByTagPolicy(arn, tags).ifPresent(e -> failures.put(arn, e));
+            }
             if (failures.containsKey(arn) || writtenThrough(writer -> writer.tag(arn, tags))) {
                 continue;
             }
@@ -198,6 +207,21 @@ public class ResourceGroupsTaggingService implements Resettable {
             }
         }
         return failures;
+    }
+
+    /** The tag policy's refusal of these tags on one ARN, reported as AWS reports it in FailedResourcesMap. */
+    private Optional<AwsException> refuseByTagPolicy(String arn, Map<String, String> tags) {
+        if (tagWriteGuards == null || regionResolver == null) {
+            return Optional.empty();
+        }
+        try {
+            for (TagWriteGuard guard : tagWriteGuards) {
+                guard.checkArn(regionResolver.getAccountId(), arn, tags, "InvalidParameterException");
+            }
+            return Optional.empty();
+        } catch (AwsException e) {
+            return Optional.of(e);
+        }
     }
 
     /**

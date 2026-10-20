@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -335,18 +336,36 @@ final class LogsInsightsQuery {
                 if (row.json == null) {
                     return null;
                 }
-                JsonNode node = row.json;
-                for (String seg : field.split("\\.")) {
-                    if (node == null) {
-                        return null;
-                    }
-                    node = node.get(seg);
-                }
+                JsonNode node = lookup(row.json, field.split("\\."), 0);
                 if (node == null || node.isNull()) {
                     return null;
                 }
                 return node.isValueNode() ? node.asText() : node.toString();
         }
+    }
+
+    /**
+     * Follows a dotted field into the JSON message. Insights flattens nested keys with dots, and a
+     * key may hold dots itself, as OpenTelemetry attribute names such as {@code session.id} do, so
+     * at each level the longest run of segments that names a key is taken first.
+     */
+    private static JsonNode lookup(JsonNode node, String[] segments, int from) {
+        if (from == segments.length) {
+            return node;
+        }
+        if (node == null || !node.isObject()) {
+            return null;
+        }
+        for (int to = segments.length; to > from; to--) {
+            JsonNode child = node.get(String.join(".", Arrays.copyOfRange(segments, from, to)));
+            if (child != null) {
+                JsonNode found = lookup(child, segments, to);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 
     private static JsonNode tryParse(String message) {
