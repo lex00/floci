@@ -6,8 +6,11 @@ import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.BackupWindows;
 import io.github.hectorvent.floci.core.common.RegionResolver;
+import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend;
+import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend.AccountEntry;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
+import io.github.hectorvent.floci.lifecycle.PersistedRuntimeRestorer;
 import io.github.hectorvent.floci.services.docdb.container.DocDbContainerHandle;
 import io.github.hectorvent.floci.services.docdb.container.DocDbContainerManager;
 import io.github.hectorvent.floci.services.docdb.model.DocDbCluster;
@@ -23,6 +26,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -33,10 +37,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 @ApplicationScoped
-public class DocDbService {
+public class DocDbService implements PersistedRuntimeRestorer {
 
     private static final Logger LOG = Logger.getLogger(DocDbService.class);
     private static final String ENGINE_VERSION_DEFAULT = "5.0.0";
@@ -50,6 +55,10 @@ public class DocDbService {
             "8.0.0", "docdb8.0",
             "8.0.1", "docdb8.0");
     private static final int MONGO_PORT = 27017;
+    private static final Duration BACKEND_RETRY_INTERVAL = Duration.ofSeconds(10);
+
+    private final AtomicBoolean backendRetryRunning = new AtomicBoolean();
+    private volatile Instant lastBackendRetry = Instant.EPOCH;
 
     private final StorageBackend<String, DocDbCluster> clusters;
     private final StorageBackend<String, DocDbInstance> instances;
@@ -218,6 +227,7 @@ public class DocDbService {
             cluster.setStatus("available");
             cluster.setEngineVersion(effectiveEngineVersion);
             cluster.setMasterUsername(masterUsername);
+            cluster.setMasterUserPassword(masterPassword);
             cluster.setIamDatabaseAuthenticationEnabled(iamEnabled);
             cluster.setDbClusterArn(regionResolver.buildArn("rds", region, "cluster:" + id));
             cluster.setDbClusterResourceId("cluster-" + UUID.randomUUID().toString()
@@ -579,6 +589,129 @@ public class DocDbService {
     }
 
     public Collection<DocDbCluster> listDbClusters(String filterId) {
+        Collection<DocDbCluster> found = filterDbClusters(filterId);
+        if (found.stream().anyMatch(this::lacksBackend)) {
+            scheduleBackendRetry();
+        }
+        return found;
+    }
+
+    // ── Backend recovery ──────────────────────────────────────────────────────
+
+    /**
+     * Starts the MongoDB backends of persisted clusters off the startup path. The container
+     * fields a record carries describe the previous process, so they are cleared first.
+     */
+    @Override
+    public void restorePersistedRuntime() {
+        if (!config.services().docdb().enabled() || config.services().docdb().mock()) {
+            return;
+        }
+        List<AccountEntry<DocDbCluster>> stored = storedClusters();
+        for (AccountEntry<DocDbCluster> entry : stored) {
+            DocDbCluster cluster = entry.value();
+            cluster.setContainerId(null);
+            cluster.setContainerHost(null);
+            cluster.setContainerPort(0);
+            putStoredCluster(entry.accountId(), entry.key(), cluster);
+        }
+        if (!stored.isEmpty()) {
+            Thread.ofVirtual().name("docdb-backend-restore").start(this::startMissingBackends);
+        }
+    }
+
+    private boolean lacksBackend(DocDbCluster cluster) {
+        return !config.services().docdb().mock() && cluster.getContainerId() == null
+                && "available".equals(cluster.getStatus());
+    }
+
+    /**
+     * A cluster created while no Docker daemon answered has no backend. A describe that finds one
+     * retries in the background, at most once per {@link #BACKEND_RETRY_INTERVAL}.
+     */
+    private void scheduleBackendRetry() {
+        if (Instant.now().isBefore(lastBackendRetry.plus(BACKEND_RETRY_INTERVAL)) || backendRetryRunning.get()) {
+            return;
+        }
+        Thread.ofVirtual().name("docdb-backend-retry").start(this::startMissingBackends);
+    }
+
+    void startMissingBackends() {
+        if (!backendRetryRunning.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            lastBackendRetry = Instant.now();
+            if (!containerManager.isDockerReachable()) {
+                return;
+            }
+            for (AccountEntry<DocDbCluster> entry : storedClusters()) {
+                if (lacksBackend(entry.value())) {
+                    startMissingBackend(entry.accountId(), entry.key(), entry.value());
+                }
+            }
+        } finally {
+            backendRetryRunning.set(false);
+        }
+    }
+
+    private void startMissingBackend(String accountId, String key, DocDbCluster stored) {
+        String id = stored.getDbClusterIdentifier();
+        String region = AwsArnUtils.regionOrDefault(stored.getDbClusterArn(), regionResolver.getDefaultRegion());
+        DocDbContainerHandle handle;
+        try {
+            handle = containerManager.tryStart(id, config.services().docdb().defaultImage(),
+                    stored.getMasterUsername(), stored.getMasterUserPassword(), region);
+        } catch (RuntimeException e) {
+            LOG.warnv("DocDB cluster {0} backend did not start: {1}", id, e.getMessage());
+            return;
+        }
+        if (handle == null) {
+            return;
+        }
+        synchronized (lockFor("cluster:" + key)) {
+            Optional<DocDbCluster> current = storedCluster(accountId, key);
+            if (current.isEmpty() || !lacksBackend(current.get())) {
+                containerManager.stop(handle);
+                return;
+            }
+            DocDbCluster cluster = current.get();
+            cluster.setEndpoint(handle.getHost());
+            cluster.setReaderEndpoint(handle.getHost());
+            cluster.setPort(handle.getPort());
+            cluster.setContainerId(handle.getContainerId());
+            cluster.setContainerHost(handle.getHost());
+            cluster.setContainerPort(handle.getPort());
+            putStoredCluster(accountId, key, cluster);
+            LOG.infov("DocDB cluster {0} now has its backing MongoDB container", id);
+        }
+    }
+
+    private List<AccountEntry<DocDbCluster>> storedClusters() {
+        if (clusters instanceof AccountAwareStorageBackend<DocDbCluster> aware) {
+            return aware.scanAllAccountEntries(k -> true);
+        }
+        String account = regionResolver.getDefaultAccountId();
+        return clusters.keys().stream()
+                .map(k -> clusters.get(k).map(c -> new AccountEntry<>(account, k, c)).orElse(null))
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    private Optional<DocDbCluster> storedCluster(String accountId, String key) {
+        return clusters instanceof AccountAwareStorageBackend<DocDbCluster> aware
+                ? aware.getForAccount(accountId, key) : clusters.get(key);
+    }
+
+    private void putStoredCluster(String accountId, String key, DocDbCluster cluster) {
+        if (clusters instanceof AccountAwareStorageBackend<DocDbCluster> aware) {
+            aware.putForAccount(accountId, key, cluster);
+        } else {
+            clusters.put(key, cluster);
+        }
+    }
+
+    private Collection<DocDbCluster> filterDbClusters(String filterId) {
         String region = regionResolver.getRegion();
         if (filterId != null && !filterId.isBlank()) {
             // The db-cluster-id filter accepts ARNs as well as identifiers. Match the
