@@ -102,6 +102,21 @@ class AwsJsonCborSerializerTest {
     }
 
     @Test
+    void smithyRpcV2DateSuffixedFieldsAreTagged() throws Exception {
+        // CloudWatch GetMetricStream: aws-sdk-go-v2 rejects an untagged CreationDate.
+        JsonNode node = jsonMapper.readTree(
+                "{\"CreationDate\": 1700000000, \"LastUpdateDate\": 1700000060, \"Name\": \"probe\"}");
+
+        byte[] cbor = AwsJsonCborController.nodeToSmithyCbor(node);
+
+        assertEquals(2, countTag1(cbor), "both *Date fields must be tagged");
+        JsonNode decoded = cborMapper.readTree(cbor);
+        assertEquals(1700000000L, decoded.path("CreationDate").asLong());
+        assertEquals(1700000060L, decoded.path("LastUpdateDate").asLong());
+        assertEquals("probe", decoded.path("Name").asText());
+    }
+
+    @Test
     void smithyRpcV2NonTimestampNumberIsNotTagged() throws Exception {
         // A plain numeric field (e.g. CloudWatch Period) must remain an untagged integer.
         JsonNode node = jsonMapper.readTree("{\"Period\": 60}");

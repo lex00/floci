@@ -14,13 +14,16 @@ import io.github.hectorvent.floci.core.resource.ResourceProvider;
 import io.github.hectorvent.floci.core.resource.SupportedResourceType;
 import io.github.hectorvent.floci.core.storage.StorageBackedMap;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
+import io.github.hectorvent.floci.services.ec2.DataPlanePeerSource;
 import io.github.hectorvent.floci.services.ec2.Ec2Service;
+import io.github.hectorvent.floci.services.ec2.SecurityGroupFirewallManager;
 import io.github.hectorvent.floci.services.ec2.model.Subnet;
 import io.github.hectorvent.floci.services.elbv2.model.*;
 import io.github.hectorvent.floci.services.iam.ServerCertificateReferenceProvider;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.jboss.logging.Logger;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -34,7 +37,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @ApplicationScoped
-public class ElbV2Service implements ResourceProvider, ServerCertificateReferenceProvider {
+public class ElbV2Service implements ResourceProvider, ServerCertificateReferenceProvider, DataPlanePeerSource {
+
+    private static final Logger LOG = Logger.getLogger(ElbV2Service.class);
 
     @Inject
     ElbV2DataPlane dataPlane;
@@ -50,6 +55,10 @@ public class ElbV2Service implements ResourceProvider, ServerCertificateReferenc
 
     @Inject
     StorageFactory storageFactory;
+
+    /** Left null by the unit tests, which run without security-group enforcement. */
+    @Inject
+    SecurityGroupFirewallManager firewallManager;
 
     @Inject
     EmulatorConfig config;
@@ -238,6 +247,7 @@ public class ElbV2Service implements ResourceProvider, ServerCertificateReferenc
         if (!initialTags.isEmpty()) {
             tags.put(arn, new LinkedHashMap<>(initialTags));
         }
+        refreshFirewallPeers();
         return lb;
     }
 
@@ -301,6 +311,7 @@ public class ElbV2Service implements ResourceProvider, ServerCertificateReferenc
         tgToLbs.values().forEach(lbSet -> lbSet.remove(arn));
         tags.remove(arn);
         loadBalancers.put(region, regionLbs);
+        refreshFirewallPeers();
     }
 
     public Map<String, String> describeLoadBalancerAttributes(String region, String arn) {
@@ -334,6 +345,51 @@ public class ElbV2Service implements ResourceProvider, ServerCertificateReferenc
         LoadBalancer lb = requireLoadBalancer(region, arn);
         lb.setSecurityGroups(new ArrayList<>(sgIds));
         persistRegion(loadBalancers, region);
+        refreshFirewallPeers();
+    }
+
+    /**
+     * Every load balancer with security groups, as security-group enforcement admits its listener
+     * and health-check traffic into targets whose rules reference those groups.
+     */
+    @Override
+    public List<DataPlanePeer> dataPlanePeers() {
+        List<DataPlanePeer> peers = new ArrayList<>();
+        for (Map.Entry<String, Map<String, LoadBalancer>> regionEntry : loadBalancers.entrySet()) {
+            for (LoadBalancer lb : regionEntry.getValue().values()) {
+                if (lb.getVpcId() == null || lb.getSecurityGroups() == null || lb.getSecurityGroups().isEmpty()) {
+                    continue;
+                }
+                String accountId = AwsArnUtils.parse(lb.getLoadBalancerArn()).accountId();
+                peers.add(new DataPlanePeer(accountId, regionEntry.getKey(), lb.getVpcId(),
+                        Set.copyOf(lb.getSecurityGroups()), subnetAddresses(regionEntry.getKey(), lb)));
+            }
+        }
+        return peers;
+    }
+
+    /** The network address of each of the load balancer's subnets, inside which its nodes sit. */
+    private List<String> subnetAddresses(String region, LoadBalancer lb) {
+        List<String> subnetIds = lb.getAvailabilityZones().stream()
+                .map(AvailabilityZone::getSubnetId).filter(Objects::nonNull).toList();
+        if (subnetIds.isEmpty() || ec2Service == null) {
+            return List.of();
+        }
+        try {
+            return ec2Service.describeSubnets(region, subnetIds, Map.of()).stream()
+                    .map(Subnet::getCidrBlock).filter(Objects::nonNull)
+                    .map(cidr -> cidr.substring(0, cidr.indexOf('/') < 0 ? cidr.length() : cidr.indexOf('/')))
+                    .toList();
+        } catch (AwsException e) {
+            LOG.debugv("Load balancer {0} subnets did not resolve: {1}", lb.getLoadBalancerArn(), e.getMessage());
+            return List.of();
+        }
+    }
+
+    private void refreshFirewallPeers() {
+        if (firewallManager != null) {
+            firewallManager.refreshDataPlanePeers();
+        }
     }
 
     public void setSubnets(String region, String arn, List<String> subnets) {

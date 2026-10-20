@@ -116,6 +116,7 @@ A message older than the queue's `MessageRetentionPeriod` is no longer returned 
 | `FLOCI_SERVICES_SQS_CLEAR_FIFO_DEDUPLICATION_CACHE_ON_PURGE` | `false` | When `true`, `PurgeQueue` also clears the FIFO deduplication cache for the queue and any SNS FIFO topics subscribed to it |
 | `FLOCI_SERVICES_SQS_RECEIPT_HANDLE_SECRET` | `local-emulator-secret` | HMAC secret that signs receipt handles, so a handle that was edited or built by hand is rejected |
 | `FLOCI_SERVICES_SQS_ENDPOINT_STRATEGY` | `standard` | Shape of the returned `QueueUrl`, see [Queue URL Format](#queue-url-format) |
+| `FLOCI_SERVICES_SQS_DELETE_VISIBLE_SECONDS` | `0` | Seconds a deleted queue stays visible to `GetQueueUrl`, `ListQueues`, `GetQueueAttributes` and `ListQueueTags`, as AWS's eventually consistent `DeleteQueue` keeps it for up to 60 seconds. A `CreateQueue` of the same name fails with `QueueDeletedRecently` meanwhile. `0` deletes at once |
 
 ## Examples
 

@@ -15,6 +15,7 @@ Floci is configured exclusively through environment variables. Every option belo
 | `FLOCI_PARTITIONS_STRICT` | `false` | Reject requests signed for a service AWS does not publish in the request's partition (CloudFront in `aws-us-gov`, Lightsail in `aws-cn`) with a 404 `UnknownOperationException`, mirroring the host that fails to resolve on AWS. See [AWS Partitions](./partitions.md#partition-absent-services) |
 | `FLOCI_PARTITIONS_ALLOW_UNKNOWN_REGIONS` | `false` | Accept a request signed for a region no AWS partition publishes or admits by its region pattern (`polygondwanaland-west-1`), giving the label its own namespace. Off, such a request is refused with a 400, as moto and LocalStack refuse it. See [AWS Partitions](./partitions.md#which-partition-a-request-belongs-to) |
 | `FLOCI_DEFAULT_ACCOUNT_ID` | `000000000000` | Fallback account ID used in ARNs when the request's access key is not exactly 12 digits. When the access key IS 12 digits, it is used directly as the account ID — see [Multi-Account Isolation](./multi-account.md) |
+| `FLOCI_ALLOWED_REGIONS` | _(none)_ | Comma-separated regions the account can reach, as a region-restriction service control policy allows. A request signed for any other region gets `AccessDenied` in its protocol's error shape. `DescribeRegions` still lists every region. Leaving it unset keeps every region reachable |
 | `FLOCI_DEFAULT_AVAILABILITY_ZONE` | `us-east-1a` | Availability zone reported in EC2 and other responses |
 
 ---
@@ -209,6 +210,7 @@ See [Initialization Hooks](./initialization-hooks.md) for lifecycle phases and s
 | `FLOCI_SERVICES_SQS_CLEAR_FIFO_DEDUPLICATION_CACHE_ON_PURGE` | `false` | Reset the deduplication cache when a FIFO queue is purged |
 | `FLOCI_SERVICES_SQS_RECEIPT_HANDLE_SECRET` | `local-emulator-secret` | HMAC secret that signs receipt handles |
 | `FLOCI_SERVICES_SQS_ENDPOINT_STRATEGY` | `standard` | Shape of the returned `QueueUrl`: `standard` for `https://sqs.<region>.<dns-suffix>/<account>/<name>`, `path` for `<FLOCI_BASE_URL>/<account>/<name>`. Both forms are accepted as input |
+| `FLOCI_SERVICES_SQS_DELETE_VISIBLE_SECONDS` | `0` | Seconds a deleted queue stays visible to `GetQueueUrl`, `ListQueues`, `GetQueueAttributes` and `ListQueueTags`, as AWS's eventually consistent `DeleteQueue` keeps it for up to 60 seconds. A `CreateQueue` of the same name fails with `QueueDeletedRecently` meanwhile. `0` deletes at once |
 
 ### SNS
 
@@ -433,6 +435,7 @@ These services spawn Docker containers. They require access to the Docker socket
 | `FLOCI_SERVICES_RDS_MOCK` | `false` | When `true`, DB clusters and instances are created instantly without a real container or auth proxy (API only) |
 | `FLOCI_SERVICES_RDS_PROXY_BASE_PORT` | `7001` | First port in the RDS proxy range |
 | `FLOCI_SERVICES_RDS_PROXY_MAX_PORT` | `7099` | Last port in the RDS proxy range |
+| `FLOCI_SERVICES_RDS_LISTEN_ON_REQUESTED_PORT` | `false` | Honor a requested `Port` outside the proxy range: the proxy listens on it when it is free, and `Endpoint.Port` reports it. Off, such a port falls back to one in the range |
 | `FLOCI_SERVICES_RDS_ENDPOINT_HOST` | _(auto-detected)_ | Hostname advertised in RDS endpoints; when set in Docker, Floci advertises each proxy's published host port |
 | `FLOCI_SERVICES_RDS_IAM_TOKEN_ENDPOINT_BINDING` | `true` | Refuse a PostgreSQL IAM auth token generated for another hostname, port or region than the endpoint publishes, as RDS does; set `false` to accept such tokens. MySQL and MariaDB always refuse them |
 | `FLOCI_SERVICES_RDS_DEFAULT_POSTGRES_IMAGE` | `postgres:16-alpine` | Default PostgreSQL Docker image |

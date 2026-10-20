@@ -421,6 +421,73 @@ class AutoScalingIntegrationTest {
     }
 
     @Test
+    @Order(15)
+    void stepAndPredictivePoliciesRoundTripTheirConfiguration() {
+        given()
+                .formParam("Action", "PutScalingPolicy")
+                .formParam("AutoScalingGroupName", "my-asg")
+                .formParam("PolicyName", "step-out")
+                .formParam("PolicyType", "StepScaling")
+                .formParam("AdjustmentType", "ChangeInCapacity")
+                .formParam("MetricAggregationType", "Average")
+                .formParam("Cooldown", "120")
+                .formParam("Enabled", "false")
+                .formParam("StepAdjustments.member.1.MetricIntervalLowerBound", "0")
+                .formParam("StepAdjustments.member.1.MetricIntervalUpperBound", "10")
+                .formParam("StepAdjustments.member.1.ScalingAdjustment", "1")
+                .formParam("StepAdjustments.member.2.MetricIntervalLowerBound", "10")
+                .formParam("StepAdjustments.member.2.ScalingAdjustment", "2")
+                .header("Authorization", AUTH)
+            .when()
+                .post("/")
+            .then()
+                .statusCode(200);
+
+        given()
+                .formParam("Action", "PutScalingPolicy")
+                .formParam("AutoScalingGroupName", "my-asg")
+                .formParam("PolicyName", "predictive")
+                .formParam("PolicyType", "PredictiveScaling")
+                .formParam("PredictiveScalingConfiguration.Mode", "ForecastOnly")
+                .formParam("PredictiveScalingConfiguration.MetricSpecifications.member.1.TargetValue", "32")
+                .formParam("PredictiveScalingConfiguration.MetricSpecifications.member.1"
+                        + ".PredefinedMetricPairSpecification.PredefinedMetricType", "ASGCPUUtilization")
+                .header("Authorization", AUTH)
+            .when()
+                .post("/")
+            .then()
+                .statusCode(200);
+
+        String step = "DescribePoliciesResponse.DescribePoliciesResult.ScalingPolicies.member"
+                + ".find { it.PolicyName == 'step-out' }";
+        String predictive = "DescribePoliciesResponse.DescribePoliciesResult.ScalingPolicies.member"
+                + ".find { it.PolicyName == 'predictive' }";
+        String simple = "DescribePoliciesResponse.DescribePoliciesResult.ScalingPolicies.member"
+                + ".find { it.PolicyName == 'scale-out' }";
+        given()
+                .formParam("Action", "DescribePolicies")
+                .formParam("AutoScalingGroupName", "my-asg")
+                .header("Authorization", AUTH)
+            .when()
+                .post("/")
+            .then()
+                .statusCode(200)
+                .body(simple + ".Cooldown", equalTo("60"))
+                .body(simple + ".Enabled", equalTo("true"))
+                .body(step + ".Enabled", equalTo("false"))
+                .body(step + ".Cooldown.size()", equalTo(0))
+                .body(step + ".MetricAggregationType", equalTo("Average"))
+                .body(step + ".StepAdjustments.member.size()", equalTo(2))
+                .body(step + ".StepAdjustments.member[0].MetricIntervalUpperBound", equalTo("10.0"))
+                .body(step + ".StepAdjustments.member[1].ScalingAdjustment", equalTo("2"))
+                .body(predictive + ".PredictiveScalingConfiguration.Mode", equalTo("ForecastOnly"))
+                .body(predictive + ".PredictiveScalingConfiguration.MetricSpecifications.member.TargetValue",
+                        equalTo("32.0"))
+                .body(predictive + ".PredictiveScalingConfiguration.MetricSpecifications.member"
+                        + ".PredefinedMetricPairSpecification.PredefinedMetricType", equalTo("ASGCPUUtilization"));
+    }
+
+    @Test
     @Order(16)
     void deletePolicy() {
         given()

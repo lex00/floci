@@ -53,6 +53,40 @@ class SqsServiceTest {
     }
 
     @Test
+    void deletedQueueStaysVisibleToReadsForTheConfiguredWindow() {
+        sqsService.setDeleteVisibleFor(Duration.ofSeconds(60));
+        Queue queue = sqsService.createQueue("lagging", null, Map.of("owner", "estate"), "us-east-1");
+
+        sqsService.deleteQueue(queue.getQueueUrl(), "us-east-1");
+
+        assertEquals(queue.getQueueUrl(), sqsService.getQueueUrl("lagging", "us-east-1"));
+        assertEquals(1, sqsService.listQueues("lag", "us-east-1").size());
+        assertEquals("0", sqsService.getQueueAttributes(queue.getQueueUrl(), List.of("All"), "us-east-1")
+                .get("ApproximateNumberOfMessages"));
+        assertEquals(Map.of("owner", "estate"), sqsService.listQueueTags(queue.getQueueUrl(), "us-east-1"));
+        AwsException recreate = assertThrows(AwsException.class,
+                () -> sqsService.createQueue("lagging", null, "us-east-1"));
+        assertEquals("AWS.SimpleQueueService.QueueDeletedRecently", recreate.getErrorCode());
+        assertThrows(AwsException.class, () -> sqsService.deleteQueue(queue.getQueueUrl(), "us-east-1"));
+
+        clock.advance(Duration.ofSeconds(60));
+
+        assertThrows(AwsException.class, () -> sqsService.getQueueUrl("lagging", "us-east-1"));
+        assertTrue(sqsService.listQueues("lag", "us-east-1").isEmpty());
+        sqsService.createQueue("lagging", null, "us-east-1");
+    }
+
+    @Test
+    void deletedQueueDisappearsAtOnceByDefault() {
+        Queue queue = sqsService.createQueue("immediate", null, "us-east-1");
+
+        sqsService.deleteQueue(queue.getQueueUrl(), "us-east-1");
+
+        assertThrows(AwsException.class, () -> sqsService.getQueueUrl("immediate", "us-east-1"));
+        assertTrue(sqsService.listQueues("immediate", "us-east-1").isEmpty());
+    }
+
+    @Test
     void createQueue() {
         Queue queue = sqsService.createQueue("test-queue", null, "eu-west-1");
         assertEquals("test-queue", queue.getQueueName());

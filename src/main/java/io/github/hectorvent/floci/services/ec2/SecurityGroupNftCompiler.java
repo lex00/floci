@@ -6,6 +6,7 @@ import io.github.hectorvent.floci.services.ec2.model.SecurityGroup;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -41,6 +42,17 @@ public final class SecurityGroupNftCompiler {
 
     public static String compile(Endpoint target, Collection<Endpoint> peers,
                                  Map<String, List<String>> prefixLists, List<String> vpcResolvers) {
+        return compile(target, peers, prefixLists, vpcResolvers, List.of(), null);
+    }
+
+    /**
+     * {@link #compile} that also admits Floci's own data plane, arriving from
+     * {@code dataPlaneSource}, wherever an ingress rule matches one of {@code dataPlanePeers}.
+     */
+    public static String compile(Endpoint target, Collection<Endpoint> peers,
+                                 Map<String, List<String>> prefixLists, List<String> vpcResolvers,
+                                 Collection<DataPlanePeerSource.DataPlanePeer> dataPlanePeers,
+                                 String dataPlaneSource) {
         if (target == null || target.groups() == null || target.groups().isEmpty()) {
             throw new IllegalArgumentException("Protected endpoint needs at least one security group");
         }
@@ -100,6 +112,9 @@ public final class SecurityGroupNftCompiler {
                     }
                 }
             }
+            if (!egress && dataPlaneSource != null && literal(dataPlaneSource) && dataPlanePeers != null) {
+                appendDataPlaneRules(rules, target, dataPlanePeers, prefixLists, dataPlaneSource);
+            }
             // A managed peer must never fall through to a broad external CIDR rule
             // evaluated against its Docker bridge IP instead of its logical ENI address.
             for (Endpoint peer : managed) {
@@ -136,6 +151,41 @@ public final class SecurityGroupNftCompiler {
             }
         }
         return rules.toString();
+    }
+
+    private static void appendDataPlaneRules(StringBuilder rules, Endpoint target,
+                                             Collection<DataPlanePeerSource.DataPlanePeer> dataPlanePeers,
+                                             Map<String, List<String>> prefixLists, String dataPlaneSource) {
+        Set<String> expressions = new LinkedHashSet<>();
+        for (SecurityGroup group : target.groups()) {
+            if (group.getIpPermissions() == null) {
+                continue;
+            }
+            for (IpPermission permission : group.getIpPermissions()) {
+                String protocol = protocolExpression(permission);
+                if (protocol != null && dataPlanePeers.stream()
+                        .anyMatch(peer -> matchesDataPlanePeer(target, group, permission, peer, prefixLists))) {
+                    expressions.add(protocol);
+                }
+            }
+        }
+        for (String expression : expressions) {
+            appendRule(rules, "ingress", "saddr", dataPlaneSource, expression);
+        }
+    }
+
+    private static boolean matchesDataPlanePeer(Endpoint target, SecurityGroup group, IpPermission permission,
+                                                DataPlanePeerSource.DataPlanePeer peer,
+                                                Map<String, List<String>> prefixLists) {
+        if (!target.accountId().equals(peer.accountId()) || !target.region().equals(peer.region())
+                || !target.vpcId().equals(peer.vpcId())) {
+            return false;
+        }
+        List<String> addresses = peer.logicalAddresses() == null || peer.logicalAddresses().isEmpty()
+                ? Collections.singletonList(null) : peer.logicalAddresses();
+        return addresses.stream().anyMatch(address -> SecurityGroupPolicy.matchesPeer(group, permission,
+                new SecurityGroupPolicy.Peer(address, peer.accountId(), peer.vpcId(), peer.groupIds()),
+                prefixLists));
     }
 
     private static void appendRule(StringBuilder rules, String chain, String addressField,

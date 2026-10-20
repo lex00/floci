@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.AwsException;
+import io.github.hectorvent.floci.services.globalaccelerator.model.AttachmentResource;
 import io.github.hectorvent.floci.services.globalaccelerator.model.EndpointGroup;
 import io.github.hectorvent.floci.services.globalaccelerator.model.PortOverride;
 import io.github.hectorvent.floci.services.globalaccelerator.model.PortRange;
@@ -129,6 +130,29 @@ public class GlobalAcceleratorJsonHandler {
                 yield Response.ok(Map.of()).build();
             }
 
+            case "CreateCrossAccountAttachment" -> Response.ok(Map.of("CrossAccountAttachment",
+                    service.createCrossAccountAttachment(
+                            text(request, "Name"),
+                            stringList(request.path("Principals")),
+                            attachmentResources(request.path("Resources")),
+                            tagMap(request.path("Tags"))))).build();
+            case "DescribeCrossAccountAttachment" -> Response.ok(Map.of("CrossAccountAttachment",
+                    service.describeCrossAccountAttachment(text(request, "AttachmentArn")))).build();
+            case "UpdateCrossAccountAttachment" -> Response.ok(Map.of("CrossAccountAttachment",
+                    service.updateCrossAccountAttachment(
+                            text(request, "AttachmentArn"),
+                            text(request, "Name"),
+                            stringList(request.path("AddPrincipals")),
+                            stringList(request.path("RemovePrincipals")),
+                            attachmentResources(request.path("AddResources")),
+                            attachmentResources(request.path("RemoveResources"))))).build();
+            case "DeleteCrossAccountAttachment" -> {
+                service.deleteCrossAccountAttachment(text(request, "AttachmentArn"));
+                yield Response.ok(Map.of()).build();
+            }
+            case "ListCrossAccountAttachments" -> Response.ok(Map.of("CrossAccountAttachments",
+                    service.listCrossAccountAttachments())).build();
+
             case "TagResource" -> {
                 service.tagResource(text(request, "ResourceArn"), tagMap(request.path("Tags")));
                 yield Response.ok(Map.of()).build();
@@ -186,6 +210,13 @@ public class GlobalAcceleratorJsonHandler {
         List<String> endpointIds = new ArrayList<>();
         node.forEach(element -> endpointIds.add(element.path("EndpointId").asText()));
         return endpointIds;
+    }
+
+    private List<AttachmentResource> attachmentResources(JsonNode node) {
+        if (node == null || !node.isArray()) {
+            return null;
+        }
+        return mapper.convertValue(node, new TypeReference<List<AttachmentResource>>() {});
     }
 
     private List<PortRange> portRanges(JsonNode node) {

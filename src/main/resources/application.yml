@@ -396,6 +396,8 @@ floci:
       # standard -> https://sqs.<region>.<partition dns suffix>/<account>/<name>
       # path     -> <base-url>/<account>/<name>
       endpoint-strategy: standard
+      # Seconds a deleted queue stays visible to reads; 0 deletes at once.
+      delete-visible-seconds: 0
     s3:
       enabled: true
       enforce-auth: false
@@ -528,6 +530,8 @@ floci:
       mock: false                                 # FLOCI_SERVICES_RDS_MOCK — true = metadata only, no Docker (useful for CI)
       proxy-base-port: 7001
       proxy-max-port: 7099
+      # Honor a requested Port outside the proxy range by listening on it when it is free.
+      listen-on-requested-port: false
       # endpoint-host: localhost                 # Hostname clients use; enables published-port translation in Docker
       # iam-token-endpoint-binding: true         # FLOCI_SERVICES_RDS_IAM_TOKEN_ENDPOINT_BINDING; false accepts PostgreSQL IAM tokens generated for another hostname or port
       # Omit image overrides to adapt Floci's built-in images to EngineVersion.

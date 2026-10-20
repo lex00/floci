@@ -66,6 +66,13 @@ public interface EmulatorConfig {
     @WithDefault("000000000000")
     String defaultAccountId();
 
+    /**
+     * Regions the account can reach, in the manner of a region-restriction service control
+     * policy. Unset means every region. When set, a request signed for any other region is
+     * refused with AccessDenied; DescribeRegions still lists every region.
+     */
+    Optional<List<String>> allowedRegions();
+
     PartitionsConfig partitions();
 
     /**
@@ -1425,6 +1432,15 @@ public interface EmulatorConfig {
          */
         @WithDefault("standard")
         String endpointStrategy();
+
+        /**
+         * Seconds a deleted queue stays visible to GetQueueUrl, ListQueues, GetQueueAttributes and
+         * ListQueueTags, as AWS's eventually consistent DeleteQueue keeps it for up to 60 seconds.
+         * A CreateQueue of the same name fails with QueueDeletedRecently for the same window.
+         * Zero deletes at once.
+         */
+        @WithDefault("0")
+        int deleteVisibleSeconds();
     }
 
     interface S3ServiceConfig {
@@ -1760,6 +1776,15 @@ public interface EmulatorConfig {
 
         @WithDefault("7099")
         int proxyMaxPort();
+
+        /**
+         * Whether a requested Port outside the proxy range is honored: the proxy listens on it when
+         * it is free and Endpoint.Port reports it. Off, such a port falls back to one in the range,
+         * which a Docker deployment publishes to the host.
+         * Env: FLOCI_SERVICES_RDS_LISTEN_ON_REQUESTED_PORT
+         */
+        @WithDefault("false")
+        boolean listenOnRequestedPort();
 
         /** Empty when Floci should adapt its built-in image to the requested engine version. */
         Optional<String> defaultPostgresImage();

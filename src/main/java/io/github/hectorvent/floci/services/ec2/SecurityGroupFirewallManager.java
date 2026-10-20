@@ -5,6 +5,7 @@ import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.Container;
+import com.github.dockerjava.api.model.ContainerNetwork;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.Info;
 import io.github.hectorvent.floci.config.EmulatorConfig;
@@ -13,10 +14,12 @@ import io.github.hectorvent.floci.core.common.docker.ContainerBuilder;
 import io.github.hectorvent.floci.core.common.docker.ContainerLifecycleManager;
 import io.github.hectorvent.floci.core.common.docker.ContainerSpec;
 import io.github.hectorvent.floci.core.common.docker.ContainerStorageHelper;
+import io.github.hectorvent.floci.core.common.docker.CurrentContainerNetworkResolver;
 import io.github.hectorvent.floci.core.common.docker.LocallyBuiltHelperImage;
 import io.github.hectorvent.floci.services.ec2.model.SecurityGroup;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
@@ -45,6 +48,12 @@ public class SecurityGroupFirewallManager {
     private final EmulatorConfig config;
     private final EmbeddedDnsServer embeddedDnsServer;
     private final Map<String, ProtectedEndpoint> endpoints = new HashMap<>();
+
+    @Inject
+    Instance<DataPlanePeerSource> dataPlanePeerSources;
+
+    @Inject
+    Instance<CurrentContainerNetworkResolver> currentContainerNetwork;
 
     @Inject
     public SecurityGroupFirewallManager(DockerClient dockerClient, ContainerBuilder containerBuilder,
@@ -178,7 +187,7 @@ public class SecurityGroupFirewallManager {
             throw new IllegalStateException("Two managed ENIs share a Docker transport address");
         }
         ProtectedEndpoint previous = endpoints.put(endpoint.eniId(),
-                new ProtectedEndpoint(endpoint, helperId, Map.copyOf(prefixLists)));
+                new ProtectedEndpoint(endpoint, helperId, Map.copyOf(prefixLists), dataPlaneSource(helperId)));
         try {
             reconcileAll();
         } catch (RuntimeException e) {
@@ -216,7 +225,8 @@ public class SecurityGroupFirewallManager {
         SecurityGroupNftCompiler.Endpoint updated = new SecurityGroupNftCompiler.Endpoint(
                 identity.accountId(), identity.region(), identity.vpcId(), identity.eniId(),
                 identity.logicalAddress(), identity.transportAddress(), Set.copyOf(groupIds), attached);
-        endpoints.put(eniId, new ProtectedEndpoint(updated, current.helperId(), Map.copyOf(prefixLists)));
+        endpoints.put(eniId, new ProtectedEndpoint(updated, current.helperId(), Map.copyOf(prefixLists),
+                current.dataPlaneSource()));
         reconcileAll();
     }
 
@@ -237,10 +247,12 @@ public class SecurityGroupFirewallManager {
         List<SecurityGroupNftCompiler.Endpoint> peers = endpoints.values().stream()
                 .map(ProtectedEndpoint::endpoint).toList();
         List<String> vpcResolvers = vpcResolvers();
+        List<DataPlanePeerSource.DataPlanePeer> dataPlanePeers = dataPlanePeers();
         for (ProtectedEndpoint protectedEndpoint : new ArrayList<>(endpoints.values())) {
             try {
                 String rules = SecurityGroupNftCompiler.compile(protectedEndpoint.endpoint(), peers,
-                        protectedEndpoint.prefixLists(), vpcResolvers);
+                        protectedEndpoint.prefixLists(), vpcResolvers, dataPlanePeers,
+                        protectedEndpoint.dataPlaneSource());
                 apply(protectedEndpoint.helperId(), rules);
             } catch (RuntimeException e) {
                 endpoints.values().forEach(endpoint -> quarantine(endpoint.helperId()));
@@ -267,9 +279,61 @@ public class SecurityGroupFirewallManager {
                     identity.accountId(), identity.region(), identity.vpcId(), identity.eniId(),
                     identity.logicalAddress(), identity.transportAddress(), identity.groupIds(), attached);
             endpoints.put(entry.getKey(), new ProtectedEndpoint(updated, current.helperId(),
-                    Map.copyOf(prefixLists)));
+                    Map.copyOf(prefixLists), current.dataPlaneSource()));
         }
         reconcileAll();
+    }
+
+    /** Recompiles every endpoint after a data-plane resource's security groups change. */
+    public synchronized void refreshDataPlanePeers() {
+        if (enabled() && !endpoints.isEmpty()) {
+            reconcileAll();
+        }
+    }
+
+    private List<DataPlanePeerSource.DataPlanePeer> dataPlanePeers() {
+        if (dataPlanePeerSources == null) {
+            return List.of();
+        }
+        List<DataPlanePeerSource.DataPlanePeer> peers = new ArrayList<>();
+        for (DataPlanePeerSource source : dataPlanePeerSources) {
+            peers.addAll(source.dataPlanePeers());
+        }
+        return peers;
+    }
+
+    /**
+     * The address Floci's own connections arrive from inside the helper's network: Floci's
+     * address on that network when Floci runs in a container attached to it, otherwise the
+     * network's gateway, which fronts connections from the host.
+     */
+    String dataPlaneSource(String helperId) {
+        try {
+            Map<String, ContainerNetwork> helperNetworks = dockerClient.inspectContainerCmd(helperId).exec()
+                    .getNetworkSettings().getNetworks();
+            if (helperNetworks == null || helperNetworks.isEmpty()) {
+                return null;
+            }
+            Optional<String> selfId = currentContainerNetwork == null || !currentContainerNetwork.isResolvable()
+                    ? Optional.empty() : currentContainerNetwork.get().resolveContainerId();
+            if (selfId.isPresent()) {
+                Map<String, ContainerNetwork> selfNetworks = dockerClient.inspectContainerCmd(selfId.get()).exec()
+                        .getNetworkSettings().getNetworks();
+                for (String name : helperNetworks.keySet()) {
+                    ContainerNetwork shared = selfNetworks == null ? null : selfNetworks.get(name);
+                    if (shared != null && shared.getIpAddress() != null && !shared.getIpAddress().isBlank()) {
+                        return shared.getIpAddress();
+                    }
+                }
+            }
+            return helperNetworks.values().stream().map(ContainerNetwork::getGateway)
+                    .filter(gateway -> gateway != null && !gateway.isBlank())
+                    .findFirst().orElse(null);
+        } catch (RuntimeException e) {
+            LOG.warnv("Could not resolve the data-plane source address for helper {0}: {1}",
+                    helperId, e.getMessage());
+            return null;
+        }
     }
 
     /**
@@ -365,5 +429,5 @@ public class SecurityGroupFirewallManager {
 
     public record Namespace(String helperId, String transportAddress) {}
     private record ProtectedEndpoint(SecurityGroupNftCompiler.Endpoint endpoint, String helperId,
-                                     Map<String, List<String>> prefixLists) {}
+                                     Map<String, List<String>> prefixLists, String dataPlaneSource) {}
 }

@@ -8,6 +8,8 @@ import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -791,6 +793,33 @@ class Ec2IntegrationTest {
             .body("DescribeImagesResponse.imagesSet.item.imageId",
                     containsInAnyOrder("ami-ubuntu2404-arm64", "ami-ubuntu2404-cloud-arm64"))
             .body("DescribeImagesResponse.imagesSet.item.architecture", everyItem(equalTo("arm64")));
+    }
+
+    @ParameterizedTest
+    @Order(9)
+    @CsvSource({
+        "679593333241, openSUSE-Leap-16-0-*, ami-opensuse-leap160",
+        "679593333241, suse-sles-15-sp6-byos-v*-hvm-ssd-x86_64, ami-sles15sp6-byos",
+        "013907871322, suse-sles-15-sp6-v*-hvm-ssd-x86_64, ami-sles15sp6",
+        "792107900819, Rocky-9-EC2-Base-9*, ami-rocky9",
+        "309956199498, RHEL-9.5.0_HVM-*, ami-rhel9"
+    })
+    void describeImagesFindsSuseAndRedHatFamilyImagesByOwnerAndName(String owner, String name, String imageId) {
+        given()
+            .formParam("Action", "DescribeImages")
+            .formParam("Owner.1", owner)
+            .formParam("Filter.1.Name", "name")
+            .formParam("Filter.1.Value.1", name)
+            .formParam("Filter.2.Name", "architecture")
+            .formParam("Filter.2.Value.1", "x86_64")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeImagesResponse.imagesSet.item.size()", equalTo(1))
+            .body("DescribeImagesResponse.imagesSet.item.imageId", equalTo(imageId))
+            .body("DescribeImagesResponse.imagesSet.item.imageOwnerId", equalTo(owner));
     }
 
     @Test
@@ -5954,6 +5983,79 @@ class Ec2IntegrationTest {
             "BlockDeviceMapping.1.Ebs.VolumeType", "gp9"))));
     }
 
+    @Test
+    @Order(337)
+    void runInstancesHonorsRootVolumeSizeAndCreatesNonRootVolumes() {
+        String instanceId = launch(Map.of(
+            "BlockDeviceMapping.1.DeviceName", "/dev/xvda",
+            "BlockDeviceMapping.1.Ebs.VolumeSize", "200",
+            "BlockDeviceMapping.1.Ebs.DeleteOnTermination", "false",
+            "BlockDeviceMapping.2.DeviceName", "/dev/sdf",
+            "BlockDeviceMapping.2.Ebs.VolumeSize", "50",
+            "BlockDeviceMapping.2.Ebs.VolumeType", "io1",
+            "BlockDeviceMapping.2.Ebs.Iops", "1000"));
+
+        given()
+            .formParam("Action", "DescribeVolumes")
+            .formParam("Filter.1.Name", "attachment.instance-id")
+            .formParam("Filter.1.Value.1", instanceId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeVolumesResponse.volumeSet.item.size()", equalTo(2))
+            .body("DescribeVolumesResponse.volumeSet.item.find { it.attachmentSet.item.device == '/dev/xvda' }.size",
+                equalTo("200"))
+            .body("DescribeVolumesResponse.volumeSet.item.find { it.attachmentSet.item.device == '/dev/sdf' }.size",
+                equalTo("50"))
+            .body("DescribeVolumesResponse.volumeSet.item.find { it.attachmentSet.item.device == '/dev/sdf' }.volumeType",
+                equalTo("io1"))
+            .body("DescribeVolumesResponse.volumeSet.item.find { it.attachmentSet.item.device == '/dev/sdf' }.iops",
+                equalTo("1000"));
+
+        String rootVolumeId = given()
+            .formParam("Action", "DescribeInstances")
+            .formParam("InstanceId.1", instanceId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeInstancesResponse.reservationSet.item.instancesSet.item.blockDeviceMapping.item.size()",
+                equalTo(2))
+            .body("DescribeInstancesResponse.reservationSet.item.instancesSet.item.blockDeviceMapping.item[0].deviceName",
+                equalTo("/dev/xvda"))
+            .body("DescribeInstancesResponse.reservationSet.item.instancesSet.item.blockDeviceMapping.item[0].ebs.deleteOnTermination",
+                equalTo("false"))
+            .body("DescribeInstancesResponse.reservationSet.item.instancesSet.item.blockDeviceMapping.item[1].deviceName",
+                equalTo("/dev/sdf"))
+            .body("DescribeInstancesResponse.reservationSet.item.instancesSet.item.blockDeviceMapping.item[1].ebs.deleteOnTermination",
+                equalTo("true"))
+            .extract().path(
+                "DescribeInstancesResponse.reservationSet.item.instancesSet.item.blockDeviceMapping.item[0].ebs.volumeId");
+
+        given()
+            .formParam("Action", "TerminateInstances")
+            .formParam("InstanceId.1", instanceId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        // DeleteOnTermination=false keeps the root volume, now detached; the data volume goes.
+        given()
+            .formParam("Action", "DescribeVolumes")
+            .formParam("VolumeId.1", rootVolumeId)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeVolumesResponse.volumeSet.item.status", equalTo("available"));
+    }
+
     private String launch(Map<String, String> params) {
         return given()
             .formParam("Action", "RunInstances")
@@ -5980,6 +6082,7 @@ class Ec2IntegrationTest {
             .post("/")
         .then()
             .statusCode(200)
-            .extract().path("DescribeVolumesResponse.volumeSet.item.volumeType");
+            .extract().path(
+                "DescribeVolumesResponse.volumeSet.item.find { it.attachmentSet.item.device == '/dev/xvda' }.volumeType");
     }
 }

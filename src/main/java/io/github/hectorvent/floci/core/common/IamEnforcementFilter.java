@@ -1498,7 +1498,20 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
 
     static Response accessDeniedResponse(String action, String credentialScope, MediaType requestMediaType,
                                          String resourceArn, WireProtocol protocol) {
-        String message = accessDeniedMessage(action);
+        return deniedResponse(accessDeniedMessage(action), credentialScope, requestMediaType, resourceArn, protocol);
+    }
+
+    /** An AccessDenied in the request's protocol shape, carrying the given message verbatim. */
+    static Response deniedForRequest(String message, String credentialScope, ContainerRequestContext ctx) {
+        WireProtocol protocol = claimedProtocol(ctx);
+        if (isCbor(protocol)) {
+            return cborError(ctx, "AccessDeniedException", message, 403);
+        }
+        return deniedResponse(message, credentialScope, ctx.getMediaType(), null, protocol);
+    }
+
+    private static Response deniedResponse(String message, String credentialScope, MediaType requestMediaType,
+                                           String resourceArn, WireProtocol protocol) {
         if ("s3".equals(credentialScope)) {
             String resourcePath = formatS3ResourcePath(resourceArn);
             return s3XmlAccessDenied(message, resourcePath);

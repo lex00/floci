@@ -298,6 +298,8 @@ class EventBridgeSchedulerIntegrationTest {
             @Override
             public String defaultAccountId() { return ACCOUNT; }
             @Override
+            public Optional<List<String>> allowedRegions() { return Optional.empty(); }
+            @Override
             public PartitionsConfig partitions() {
                 return new PartitionsConfig() {
                     @Override

@@ -725,4 +725,92 @@ class GlobalAcceleratorIntegrationTest {
             .body("__type", equalTo("InvalidArgumentException"))
             .body("message", startsWith("Name"));
     }
+
+    // Cross-account attachments
+
+    private static String attachmentArn;
+
+    @Test
+    @Order(70)
+    void createCrossAccountAttachment() {
+        attachmentArn = call("CreateCrossAccountAttachment", """
+                {"Name":"probe","Principals":["123456789012"],
+                 "Resources":[{"EndpointId":"arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/a/1",
+                               "Region":"us-east-1"}],
+                 "IdempotencyToken":"attach-1","Tags":[{"Key":"env","Value":"test"}]}""")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("CrossAccountAttachment.Name", equalTo("probe"))
+            .body("CrossAccountAttachment.Principals", contains("123456789012"))
+            .body("CrossAccountAttachment.Resources[0].Region", equalTo("us-east-1"))
+            .body("CrossAccountAttachment.CreatedTime", notNullValue())
+            .extract().path("CrossAccountAttachment.AttachmentArn");
+        assertTrue(attachmentArn.contains(":attachment/"), attachmentArn);
+    }
+
+    @Test
+    @Order(71)
+    void updateAndDescribeCrossAccountAttachment() {
+        call("UpdateCrossAccountAttachment", """
+                {"AttachmentArn":"%s","Name":"renamed","AddPrincipals":["210987654321"],
+                 "RemovePrincipals":["123456789012"],"AddResources":[{"Cidr":"198.51.100.0/24"}]}"""
+                .formatted(attachmentArn))
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        call("DescribeCrossAccountAttachment", "{\"AttachmentArn\":\"" + attachmentArn + "\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("CrossAccountAttachment.Name", equalTo("renamed"))
+            .body("CrossAccountAttachment.Principals", contains("210987654321"))
+            .body("CrossAccountAttachment.Resources", hasSize(2));
+
+        call("ListCrossAccountAttachments", "{}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("CrossAccountAttachments.AttachmentArn", hasItem(attachmentArn));
+
+        call("ListTagsForResource", "{\"ResourceArn\":\"" + attachmentArn + "\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("Tags[0].Key", equalTo("env"));
+    }
+
+    @Test
+    @Order(72)
+    void deleteCrossAccountAttachment() {
+        call("DeleteCrossAccountAttachment", "{\"AttachmentArn\":\"" + attachmentArn + "\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        call("DescribeCrossAccountAttachment", "{\"AttachmentArn\":\"" + attachmentArn + "\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("__type", equalTo("AttachmentNotFoundException"));
+    }
+
+    @Test
+    @Order(73)
+    void crossAccountAttachmentResourceNeedsEndpointOrCidr() {
+        call("CreateCrossAccountAttachment", "{\"Name\":\"bad\",\"Resources\":[{\"Region\":\"us-east-1\"}]}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("__type", equalTo("InvalidArgumentException"));
+    }
 }

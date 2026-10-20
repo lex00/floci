@@ -31,9 +31,14 @@ emulated, so the static IP addresses and DNS names Floci hands out route no traf
 | `ListEndpointGroups` | List a listener's endpoint groups |
 | `AddEndpoints` | Add endpoints to an endpoint group |
 | `RemoveEndpoints` | Remove endpoints from an endpoint group |
-| `TagResource` | Tag an accelerator, listener or endpoint group |
-| `UntagResource` | Remove tags from an accelerator, listener or endpoint group |
-| `ListTagsForResource` | List the tags on an accelerator, listener or endpoint group |
+| `CreateCrossAccountAttachment` | Create a cross-account attachment of principals and resources |
+| `DescribeCrossAccountAttachment` | Describe a cross-account attachment |
+| `UpdateCrossAccountAttachment` | Rename an attachment, or add and remove its principals and resources |
+| `DeleteCrossAccountAttachment` | Delete a cross-account attachment |
+| `ListCrossAccountAttachments` | List the account's cross-account attachments |
+| `TagResource` | Tag an accelerator, listener, endpoint group or cross-account attachment |
+| `UntagResource` | Remove tags from an accelerator, listener, endpoint group or cross-account attachment |
+| `ListTagsForResource` | List the tags on an accelerator, listener, endpoint group or cross-account attachment |
 <!-- floci:actions:end -->
 
 ## ARNs and Regions

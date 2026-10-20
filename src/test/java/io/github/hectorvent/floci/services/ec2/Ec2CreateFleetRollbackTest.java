@@ -55,7 +55,8 @@ class Ec2CreateFleetRollbackTest {
         Ec2QueryHandler handler = new Ec2QueryHandler(service, mock(EmulatorConfig.class),
                 mock(FlowLogService.class), mock(Ec2EbsEncryptionService.class),
                 mock(Ec2SnapshotBlockPublicAccessService.class), mock(Ec2IpamService.class),
-                mock(RegionResolver.class));
+                mock(RegionResolver.class), mock(Ec2PlacementGroupService.class),
+                mock(Ec2SecurityGroupVpcAssociationService.class), mock(Ec2ClientVpnService.class));
         Response response = handler.handle("CreateFleet", params(), REGION);
 
         assertEquals(400, response.getStatus());

@@ -45,6 +45,26 @@ metadata.
 | `ami-debian12` | | `public.ecr.aws/docker/library/debian:12` |
 | `ami-alpine` | | `public.ecr.aws/docker/library/alpine:latest` |
 | `ami-0abcdef1234567893` | | `public.ecr.aws/amazonlinux/amazonlinux:2023` |
+| `ami-opensuse-leap160` | | `registry.opensuse.org/opensuse/leap:16.0` |
+| `ami-sles15sp4-byos` | | `registry.suse.com/bci/bci-base:15.4` |
+| `ami-sles15sp5-byos` | | `registry.suse.com/bci/bci-base:15.5` |
+| `ami-sles15sp6-byos` | | `registry.suse.com/bci/bci-base:15.6` |
+| `ami-sles15sp7-byos` | | `registry.suse.com/bci/bci-base:15.7` |
+| `ami-sles12sp5-byos` | | `registry.suse.com/bci/bci-base:15.7` |
+| `ami-sles-sap15sp5` | | `registry.suse.com/bci/bci-base:15.5` |
+| `ami-smlm-server51-x86-64` | | `registry.suse.com/bci/bci-base:15.7` |
+| `ami-smlm-server51-arm64` | | `registry.suse.com/bci/bci-base:15.7` |
+| `ami-smlm-proxy51-x86-64` | | `registry.suse.com/bci/bci-base:15.7` |
+| `ami-smlm-proxy51-arm64` | | `registry.suse.com/bci/bci-base:15.7` |
+| `ami-sles12sp5` | | `registry.suse.com/bci/bci-base:15.7` |
+| `ami-sles15sp5` | | `registry.suse.com/bci/bci-base:15.5` |
+| `ami-sles15sp6` | | `registry.suse.com/bci/bci-base:15.6` |
+| `ami-sles15sp7` | | `registry.suse.com/bci/bci-base:15.7` |
+| `ami-sles160` | | `registry.suse.com/bci/bci-base:16.0` |
+| `ami-rocky9` | | `public.ecr.aws/docker/library/rockylinux:9` |
+| `ami-rocky10` | | `quay.io/rockylinux/rockylinux:10` |
+| `ami-rhel8` | | `registry.access.redhat.com/ubi8/ubi:8.10` |
+| `ami-rhel9` | | `registry.access.redhat.com/ubi9/ubi:9.5` |
 
 Any unrecognized AMI ID (including real AWS AMI IDs like `ami-0abc12345678`) falls back to the catalog `defaultDockerImage` (`public.ecr.aws/amazonlinux/amazonlinux:2023` by default).
 
@@ -268,6 +288,9 @@ private gateway lifecycles are not modelled.
 | ModifySecurityGroupRules | Updates supported fields on security group rules. |
 | UpdateSecurityGroupRuleDescriptionsIngress | Updates descriptions on matching inbound security group rules. |
 | UpdateSecurityGroupRuleDescriptionsEgress | Updates descriptions on matching outbound security group rules. |
+| AssociateSecurityGroupVpc | Associates a security group with another VPC in its region, `associated` immediately. |
+| DisassociateSecurityGroupVpc | Removes that association and reports `disassociating`. |
+| DescribeSecurityGroupVpcAssociations | Lists associations by the `group-id`, `group-owner-id`, `vpc-id`, `vpc-owner-id` and `state` filters. |
 
 ### Key Pairs
 
@@ -601,6 +624,36 @@ still carrying instances on release, goes to `unsuccessful` instead of failing t
 `RunInstances` accepts `Placement.HostId` and `Placement.Tenancy`; naming a host defaults the
 tenancy to `host` and, without a subnet, the zone to the host's. `hostProperties` reports a
 fixed socket/core/vCPU shape rather than one derived from the instance family.
+
+### Client VPN
+
+| Action | Description |
+|--------|-------------|
+| CreateClientVpnEndpoint | Creates an endpoint in `pending-associate`, with `client-vpn-endpoint` tags from `TagSpecification`. |
+| DescribeClientVpnEndpoints | Lists endpoints by id and the `endpoint-id` and `transport-protocol` filters. |
+| ModifyClientVpnEndpoint | Updates any endpoint setting the request names. |
+| DeleteClientVpnEndpoint | Deletes an endpoint once it has no target networks. |
+| AssociateClientVpnTargetNetwork | Associates a subnet, `associated` immediately; the first one sets the endpoint's VPC and makes it `available`. |
+| DescribeClientVpnTargetNetworks | Lists an endpoint's target network associations. |
+| DisassociateClientVpnTargetNetwork | Removes a target network association. |
+| AuthorizeClientVpnIngress | Adds an authorization rule, `active` immediately. |
+| DescribeClientVpnAuthorizationRules | Lists an endpoint's authorization rules. |
+| RevokeClientVpnIngress | Removes an authorization rule. |
+
+Without `SecurityGroupId.N`, the first association applies the VPC's default security group. The
+endpoints model the control plane only, so no VPN client can connect to them.
+
+### Placement Groups
+
+| Action | Description |
+|--------|-------------|
+| CreatePlacementGroup | Creates a `cluster`, `spread` or `partition` group, `available` immediately, with `placement-group` tags from `TagSpecification`. |
+| DescribePlacementGroups | Lists groups by `GroupName.N`, `GroupId.N` and the `group-name`, `group-arn`, `state`, `strategy`, `spread-level`, `tag:` and `tag-key` filters. |
+| DeletePlacementGroup | Deletes the group named by `GroupName`. |
+
+`Strategy` defaults to `cluster`. A `partition` group defaults to 2 partitions (1 to 7), and a
+`spread` group to the `rack` spread level. A repeated name fails with
+`InvalidPlacementGroup.Duplicate`, and an unknown name with `InvalidPlacementGroup.Unknown`.
 
 ### Elastic IPs
 
