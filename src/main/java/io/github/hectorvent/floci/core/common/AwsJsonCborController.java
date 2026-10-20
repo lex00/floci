@@ -177,16 +177,19 @@ public class AwsJsonCborController {
      * schema-less it cannot consult the Smithy model, so it matches field names by their
      * conventional suffix: AWS timestamp members end in {@code "Timestamp"} (e.g.
      * GetMetricStatistics' scalar {@code Timestamp}, or alarm fields such as
-     * {@code StateUpdatedTimestamp}), and list-of-timestamp members end in
+     * {@code StateUpdatedTimestamp}), list-of-timestamp members end in
      * {@code "Timestamps"} (e.g. CloudWatch GetMetricData's
-     * {@code MetricDataResults[].Timestamps}). The flag is propagated into array elements,
+     * {@code MetricDataResults[].Timestamps}), and date members end in {@code "Date"}
+     * (e.g. CloudWatch GetMetricStream's {@code CreationDate} and {@code LastUpdateDate},
+     * Step Functions' {@code creationDate}). Every {@code *Date} member of the services this
+     * controller routes is a timestamp shape. The flag is propagated into array elements,
      * so both scalar timestamps and timestamp lists are tagged.
      * <p>
      * This is a pragmatic heuristic; a shape carrying a differently-named time value would
      * need to be driven from the Smithy model instead.
      */
     private static boolean isTimestampField(String fieldName) {
-        return fieldName.endsWith("Timestamp") || fieldName.endsWith("Timestamps");
+        return fieldName.endsWith("Timestamp") || fieldName.endsWith("Timestamps") || fieldName.endsWith("Date");
     }
 
     /**
