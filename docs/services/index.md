@@ -160,7 +160,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [BCM Data Exports](bcm-data-exports.md) | `POST /` + `X-Amz-Target: AWSBillingAndCostManagementDataExports.*` | JSON 1.1 | 7 |
 | [Transfer Family](transfer.md) | `POST /` + `X-Amz-Target: TransferService.*` | JSON 1.1 | 26 |
 | [DataSync](datasync.md) | `POST /` + `X-Amz-Target: FmrsService.*` | JSON 1.1 | 48 |
-| [Amazon FSx](fsx.md) | `POST /` + `X-Amz-Target: AWSSimbaAPIService_v20180301.*` | JSON 1.1 | 7 |
+| [Amazon FSx](fsx.md) | `POST /` + `X-Amz-Target: AWSSimbaAPIService_v20180301.*` | JSON 1.1 | 23 |
 | [IoT Core](iot.md) | `/things/...`, `/endpoint`, rules/policies REST paths | REST JSON | 78 |
 | [IoT Data](iot.md) | `/things/{thingName}/shadow`, MQTT topics | REST JSON | 11 |
 | [MediaLive](medialive.md) | `/prod/multiplexes/*`, `/prod/tags/*` | REST JSON | 9 |
