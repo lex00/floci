@@ -47,6 +47,12 @@ deterministic windows `04:00-06:00` / `mon:00:00-mon:03:00` where AWS picks rand
 (`3.6.0`, `4.0.0`, `5.0.0`, `5.0.1`, `8.0.0`, `8.0.1`, or the `major.minor` form of one); any other
 is refused with `Cannot find version X for docdb`, on create and on modify.
 
+## Backend recovery
+
+A cluster created while no Docker daemon answers is still `available`, with no MongoDB container.
+Once a daemon answers, the next describe that lists the cluster starts the backend in the
+background. At startup, persisted clusters get their backends again the same way.
+
 ## Configuration
 
 | Variable | Default | Description |

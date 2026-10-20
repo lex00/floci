@@ -18,6 +18,9 @@ For running SQL without a PostgreSQL wire connection (the way Lambda and Step Fu
 | Action | Description |
 | --- | --- |
 | `CreateCluster` | Create a cluster and start a PostgreSQL container for it |
+| `RegisterNamespace` | Register a provisioned cluster's or serverless namespace's namespace for consumers, listed as its internal data share |
+| `DeregisterNamespace` | Remove consumers from a namespace registration, dropping the data share with the last one |
+| `DescribeDataShares` | List the region's internal namespace data shares, optionally by `DataShareArn` |
 | `DescribeClusters` | List clusters and their connection details |
 | `DeleteCluster` | Stop and remove a cluster and its container |
 | `CreateClusterSnapshot` | Back up a cluster to a SQL dump via `pg_dump` |

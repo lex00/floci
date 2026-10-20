@@ -30,6 +30,12 @@ Set `FLOCI_SERVICES_MEMORYDB_MOCK=true` to manage clusters as control-plane-only
 | `UntagResource` | Remove tags from a cluster |
 <!-- floci:actions:end -->
 
+## Backend recovery
+
+A cluster created while no Docker daemon answers is still `available`, with no Redis or Valkey container and its proxy.
+Once a daemon answers, the next describe that lists the cluster starts the backend in the
+background. At startup, persisted clusters get their backends again the same way.
+
 ## Configuration
 
 | Variable | Default | Description |

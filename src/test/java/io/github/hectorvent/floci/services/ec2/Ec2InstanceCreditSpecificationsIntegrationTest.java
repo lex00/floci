@@ -264,15 +264,22 @@ class Ec2InstanceCreditSpecificationsIntegrationTest {
                 .body("Response.Errors.Error.Code", equalTo("InvalidInstanceID.NotFound"));
     }
 
-    /**
-     * An unrecognised filter name matches everything, which is what every other filtered EC2
-     * Describe action in this handler already does.
-     */
+    /** An unrecognised filter name fails the call, as on EC2. */
     @Test
-    void anUnrecognisedFilterNameMatchesEverything() {
-        String instanceId = launch("t3.micro", null);
+    void anUnrecognisedFilterNameIsInvalid() {
+        launch("t3.micro", null);
 
-        assertTrue(filteredInstanceIds("no-such-filter", "anything").contains(instanceId));
+        given()
+                .formParam("Action", "DescribeInstanceCreditSpecifications")
+                .formParam("Filter.1.Name", "no-such-filter")
+                .formParam("Filter.1.Value.1", "anything")
+                .header("Authorization", AUTH_HEADER)
+            .when()
+                .post("/")
+            .then()
+                .statusCode(400)
+                .body("Response.Errors.Error.Code", equalTo("InvalidParameterValue"))
+                .body("Response.Errors.Error.Message", equalTo("The filter 'no-such-filter' is invalid"));
     }
 
     private List<String> filteredInstanceIds(String name, String value) {

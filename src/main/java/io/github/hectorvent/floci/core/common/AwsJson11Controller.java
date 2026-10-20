@@ -35,6 +35,7 @@ import io.github.hectorvent.floci.services.ecs.EcsJsonHandler;
 import io.github.hectorvent.floci.services.emr.EmrHandler;
 import io.github.hectorvent.floci.services.eventbridge.EventBridgeHandler;
 import io.github.hectorvent.floci.services.firehose.FirehoseJsonHandler;
+import io.github.hectorvent.floci.services.fsx.FsxJsonHandler;
 import io.github.hectorvent.floci.services.globalaccelerator.GlobalAcceleratorJsonHandler;
 import io.github.hectorvent.floci.services.glue.GlueJsonHandler;
 import io.github.hectorvent.floci.services.identitystore.IdentityStoreJsonHandler;
@@ -138,6 +139,7 @@ public class AwsJson11Controller {
     private final CognitoIdentityJsonHandler cognitoIdentityJsonHandler;
     private final GlobalAcceleratorJsonHandler globalAcceleratorJsonHandler;
     private final DataSyncJsonHandler dataSyncJsonHandler;
+    private final FsxJsonHandler fsxJsonHandler;
     private final NetworkFirewallJsonHandler networkFirewallJsonHandler;
     private final AppStreamJsonHandler appStreamJsonHandler;
     private final WorkSpacesJsonHandler workSpacesJsonHandler;
@@ -200,6 +202,7 @@ public class AwsJson11Controller {
                                CognitoIdentityJsonHandler cognitoIdentityJsonHandler,
                                GlobalAcceleratorJsonHandler globalAcceleratorJsonHandler,
                                DataSyncJsonHandler dataSyncJsonHandler,
+                               FsxJsonHandler fsxJsonHandler,
                                NetworkFirewallJsonHandler networkFirewallJsonHandler,
                                AppStreamJsonHandler appStreamJsonHandler,
                                WorkSpacesJsonHandler workSpacesJsonHandler,
@@ -266,6 +269,7 @@ public class AwsJson11Controller {
         this.cognitoIdentityJsonHandler = cognitoIdentityJsonHandler;
         this.globalAcceleratorJsonHandler = globalAcceleratorJsonHandler;
         this.dataSyncJsonHandler = dataSyncJsonHandler;
+        this.fsxJsonHandler = fsxJsonHandler;
         this.networkFirewallJsonHandler = networkFirewallJsonHandler;
         this.appStreamJsonHandler = appStreamJsonHandler;
         this.workSpacesJsonHandler = workSpacesJsonHandler;
@@ -382,6 +386,7 @@ public class AwsJson11Controller {
                 // handler takes no region.
                 case "globalaccelerator" -> globalAcceleratorJsonHandler.handle(action, request);
                 case "datasync" -> dataSyncJsonHandler.handle(action, request, region);
+                case "fsx" -> fsxJsonHandler.handle(action, request, region);
                 case "network-firewall" -> networkFirewallJsonHandler.handle(
                         action, request, region, regionResolver.getAccountId());
                 case "appstream" -> appStreamJsonHandler.handle(action, request, region);

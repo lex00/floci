@@ -6,8 +6,10 @@ import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend;
+import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend.AccountEntry;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
+import io.github.hectorvent.floci.lifecycle.PersistedRuntimeRestorer;
 import io.github.hectorvent.floci.services.neptune.container.NeptuneContainerHandle;
 import io.github.hectorvent.floci.services.neptune.container.NeptuneContainerManager;
 import io.github.hectorvent.floci.services.neptune.model.NeptuneCluster;
@@ -20,20 +22,24 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 @ApplicationScoped
-public class NeptuneService {
+public class NeptuneService implements PersistedRuntimeRestorer {
 
     private static final Logger LOG = Logger.getLogger(NeptuneService.class);
     private static final String ENGINE_VERSION_DEFAULT = "1.3.2.1";
@@ -45,6 +51,9 @@ public class NeptuneService {
     private final NeptuneContainerManager containerManager;
     private final NeptuneProxyManager proxyManager;
     private final Set<Integer> usedPorts = ConcurrentHashMap.newKeySet();
+    private static final Duration BACKEND_RETRY_INTERVAL = Duration.ofSeconds(10);
+    private final AtomicBoolean backendRetryRunning = new AtomicBoolean();
+    private volatile Instant lastBackendRetry = Instant.EPOCH;
 
     @Inject
     public NeptuneService(EmulatorConfig config,
@@ -81,16 +90,8 @@ public class NeptuneService {
         NeptuneContainerHandle handle = null;
         boolean provisioned = false;
         try {
-            String configuredDbType = config.services().neptune().dbType();
-            NeptuneDbType dbType = NeptuneDbType.fromConfig(configuredDbType).orElseGet(() -> {
-                LOG.warnv("Unsupported Neptune db-type ''{0}'', falling back to {1}. Supported: gremlin, neo4j.",
-                        configuredDbType, NeptuneDbType.GREMLIN);
-                return NeptuneDbType.GREMLIN;
-            });
-            String image = switch (dbType) {
-                case GREMLIN -> config.services().neptune().defaultImage();
-                case NEO4J -> config.services().neptune().defaultNeo4jImage();
-            };
+            NeptuneDbType dbType = configuredDbType();
+            String image = imageFor(dbType);
 
             LOG.infov("Creating Neptune cluster {0} on proxy port {1}, dbType={2}, image={3}",
                     id, String.valueOf(proxyPort), dbType, image);
@@ -212,6 +213,141 @@ public class NeptuneService {
     }
 
     public Collection<NeptuneCluster> listDbClusters(String filterId) {
+        Collection<NeptuneCluster> found = filterClusters(filterId);
+        if (found.stream().anyMatch(NeptuneService::lacksBackend)) {
+            scheduleBackendRetry();
+        }
+        return found;
+    }
+
+    private NeptuneDbType configuredDbType() {
+        String configuredDbType = config.services().neptune().dbType();
+        return NeptuneDbType.fromConfig(configuredDbType).orElseGet(() -> {
+            LOG.warnv("Unsupported Neptune db-type ''{0}'', falling back to {1}. Supported: gremlin, neo4j.",
+                    configuredDbType, NeptuneDbType.GREMLIN);
+            return NeptuneDbType.GREMLIN;
+        });
+    }
+
+    private String imageFor(NeptuneDbType dbType) {
+        return switch (dbType) {
+            case GREMLIN -> config.services().neptune().defaultImage();
+            case NEO4J -> config.services().neptune().defaultNeo4jImage();
+        };
+    }
+
+    // ── Backend recovery ──────────────────────────────────────────────────────
+
+    /**
+     * Reserves the proxy ports of persisted clusters and starts their graph databases off the
+     * startup path. The container fields a record carries describe the previous process, so they
+     * are cleared first.
+     */
+    @Override
+    public void restorePersistedRuntime() {
+        if (!config.services().neptune().enabled()) {
+            return;
+        }
+        List<AccountEntry<NeptuneCluster>> stored = storedClusters();
+        for (AccountEntry<NeptuneCluster> entry : stored) {
+            NeptuneCluster cluster = entry.value();
+            if (cluster.getProxyPort() > 0) {
+                usedPorts.add(cluster.getProxyPort());
+            }
+            cluster.setContainerId(null);
+            cluster.setContainerHost(null);
+            cluster.setContainerPort(0);
+            putCluster(cluster);
+        }
+        if (!stored.isEmpty()) {
+            Thread.ofVirtual().name("neptune-backend-restore").start(this::startMissingBackends);
+        }
+    }
+
+    private static boolean lacksBackend(NeptuneCluster cluster) {
+        return cluster.getContainerId() == null && "available".equals(cluster.getStatus())
+                && cluster.getProxyPort() > 0;
+    }
+
+    /**
+     * A cluster created while no Docker daemon answered has no backend. A describe that finds one
+     * retries in the background, at most once per {@link #BACKEND_RETRY_INTERVAL}.
+     */
+    private void scheduleBackendRetry() {
+        if (Instant.now().isBefore(lastBackendRetry.plus(BACKEND_RETRY_INTERVAL)) || backendRetryRunning.get()) {
+            return;
+        }
+        Thread.ofVirtual().name("neptune-backend-retry").start(this::startMissingBackends);
+    }
+
+    void startMissingBackends() {
+        if (!backendRetryRunning.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            lastBackendRetry = Instant.now();
+            if (!containerManager.isDockerReachable()) {
+                return;
+            }
+            for (AccountEntry<NeptuneCluster> entry : storedClusters()) {
+                if (lacksBackend(entry.value())) {
+                    startMissingBackend(entry.value());
+                }
+            }
+        } finally {
+            backendRetryRunning.set(false);
+        }
+    }
+
+    private void startMissingBackend(NeptuneCluster stored) {
+        String accountId = arnAccount(stored.getDbClusterArn());
+        String region = arnRegion(stored.getDbClusterArn());
+        String id = stored.getDbClusterIdentifier();
+        NeptuneDbType dbType = configuredDbType();
+        NeptuneContainerHandle handle;
+        try {
+            handle = containerManager.tryStart(id, imageFor(dbType), dbType, accountId, region);
+        } catch (RuntimeException e) {
+            LOG.warnv("Neptune cluster {0} backend did not start: {1}", id, e.getMessage());
+            return;
+        }
+        if (handle == null) {
+            return;
+        }
+        synchronized (this) {
+            Optional<NeptuneCluster> current = storedCluster(accountId, clusterKey(region, id));
+            if (current.isEmpty() || !lacksBackend(current.get())) {
+                containerManager.stop(handle);
+                return;
+            }
+            NeptuneCluster cluster = current.get();
+            cluster.setContainerId(handle.getContainerId());
+            cluster.setContainerHost(handle.getHost());
+            cluster.setContainerPort(handle.getPort());
+            proxyManager.startProxy(resourceIdentity(cluster), cluster.getProxyPort(), handle.getHost(),
+                    handle.getPort());
+            putCluster(cluster);
+            LOG.infov("Neptune cluster {0} now has its backing graph database container", id);
+        }
+    }
+
+    private List<AccountEntry<NeptuneCluster>> storedClusters() {
+        if (clusters instanceof AccountAwareStorageBackend<NeptuneCluster> aware) {
+            return aware.scanAllAccountEntries(k -> true);
+        }
+        String account = regionResolver.getDefaultAccountId();
+        return clusters.keys().stream()
+                .map(k -> clusters.get(k).map(c -> new AccountEntry<>(account, k, c)).orElse(null))
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    private Optional<NeptuneCluster> storedCluster(String accountId, String key) {
+        return clusters instanceof AccountAwareStorageBackend<NeptuneCluster> aware
+                ? aware.getForAccount(accountId, key) : clusters.get(key);
+    }
+
+    private Collection<NeptuneCluster> filterClusters(String filterId) {
         if (filterId != null && !filterId.isBlank()) {
             // The db-cluster-id filter accepts ARNs as well as identifiers. Match the
             // full ARN against each cluster's stored ARN rather than reducing it to

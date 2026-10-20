@@ -7,6 +7,7 @@ import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
+import io.github.hectorvent.floci.services.docdb.container.DocDbContainerHandle;
 import io.github.hectorvent.floci.services.docdb.container.DocDbContainerManager;
 import io.github.hectorvent.floci.services.docdb.model.DocDbCluster;
 import io.github.hectorvent.floci.services.docdb.model.DocDbClusterSettings;
@@ -47,6 +48,7 @@ class DocDbServiceTest {
     private RdsService rdsService;
     private Ec2Service ec2Service;
     private KmsService kmsService;
+    private EmulatorConfig.DocDbServiceConfig docdbConfig;
 
     @BeforeEach
     void setUp() {
@@ -56,7 +58,7 @@ class DocDbServiceTest {
 
         EmulatorConfig config = Mockito.mock(EmulatorConfig.class);
         EmulatorConfig.ServicesConfig servicesConfig = Mockito.mock(EmulatorConfig.ServicesConfig.class);
-        EmulatorConfig.DocDbServiceConfig docdbConfig = Mockito.mock(EmulatorConfig.DocDbServiceConfig.class);
+        docdbConfig = Mockito.mock(EmulatorConfig.DocDbServiceConfig.class);
         when(config.services()).thenReturn(servicesConfig);
         when(servicesConfig.docdb()).thenReturn(docdbConfig);
         when(docdbConfig.mock()).thenReturn(true);
@@ -71,6 +73,26 @@ class DocDbServiceTest {
                 List.of("default.docdb3.6", "default.docdb4.0", "default.docdb5.0", "default.docdb8.0").contains(inv.<String>getArgument(0)));
         docDbService = new DocDbService(config, regionResolver, containerManager, storageFactory,
                 rdsService, ec2Service, kmsService);
+    }
+
+    @Test
+    void clusterCreatedWithoutDockerGetsItsBackendOnceDockerAnswers() {
+        when(docdbConfig.mock()).thenReturn(false);
+        when(docdbConfig.defaultImage()).thenReturn("mongo:7");
+        when(containerManager.tryStart(anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(null);
+        DocDbCluster created = docDbService.createDbCluster("late-docs", null, "admin", "secret", false);
+        assertNull(created.getContainerId());
+
+        when(containerManager.isDockerReachable()).thenReturn(true);
+        when(containerManager.tryStart(eq("late-docs"), anyString(), eq("admin"), eq("secret"), eq("us-east-1")))
+                .thenReturn(new DocDbContainerHandle("cid-late", "late-docs", "10.0.0.7", 32768));
+        docDbService.startMissingBackends();
+
+        DocDbCluster described = docDbService.getDbCluster("late-docs");
+        assertEquals("cid-late", described.getContainerId());
+        assertEquals("10.0.0.7", described.getEndpoint());
+        assertEquals(32768, described.getPort());
     }
 
     @Test

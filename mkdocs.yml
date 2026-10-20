@@ -223,6 +223,7 @@ nav:
     - AppSync: services/appsync.md
     - Transfer Family: services/transfer.md
     - DataSync: services/datasync.md
+    - Amazon FSx: services/fsx.md
     - AWS Config: services/config.md
     - EMR: services/emr.md
     - EMR Serverless: services/emr-serverless.md

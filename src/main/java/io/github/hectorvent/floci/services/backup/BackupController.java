@@ -38,6 +38,84 @@ public class BackupController {
         this.objectMapper = objectMapper;
     }
 
+    // ── Audit Manager frameworks ───────────────────────────────────────────────
+
+    @POST
+    @Path("/audit/frameworks")
+    public Response createFramework(@Context HttpHeaders headers, String body) throws IOException {
+        JsonNode req = objectMapper.readTree(body == null || body.isBlank() ? "{}" : body);
+        BackupFramework framework = service.createFramework(textOrNull(req, "FrameworkName"),
+                textOrNull(req, "FrameworkDescription"), req.get("FrameworkControls"),
+                textOrNull(req, "IdempotencyToken"), readStringMap(req, "FrameworkTags"),
+                regionResolver.resolveRegion(headers));
+        ObjectNode out = objectMapper.createObjectNode();
+        out.put("FrameworkName", framework.getFrameworkName());
+        out.put("FrameworkArn", framework.getFrameworkArn());
+        return Response.ok(out).build();
+    }
+
+    @GET
+    @Path("/audit/frameworks/{frameworkName}")
+    public Response describeFramework(@Context HttpHeaders headers,
+                                      @PathParam("frameworkName") String frameworkName) {
+        BackupFramework framework = service.describeFramework(frameworkName, regionResolver.resolveRegion(headers));
+        ObjectNode out = objectMapper.createObjectNode();
+        out.put("FrameworkName", framework.getFrameworkName());
+        out.put("FrameworkArn", framework.getFrameworkArn());
+        if (framework.getFrameworkDescription() != null) {
+            out.put("FrameworkDescription", framework.getFrameworkDescription());
+        }
+        out.set("FrameworkControls", framework.getFrameworkControls());
+        out.put("CreationTime", framework.getCreationTime());
+        out.put("DeploymentStatus", "COMPLETED");
+        out.put("FrameworkStatus", "ACTIVE");
+        if (framework.getIdempotencyToken() != null) {
+            out.put("IdempotencyToken", framework.getIdempotencyToken());
+        }
+        return Response.ok(out).build();
+    }
+
+    @PUT
+    @Path("/audit/frameworks/{frameworkName}")
+    public Response updateFramework(@Context HttpHeaders headers, @PathParam("frameworkName") String frameworkName,
+                                    String body) throws IOException {
+        JsonNode req = objectMapper.readTree(body == null || body.isBlank() ? "{}" : body);
+        BackupFramework framework = service.updateFramework(frameworkName, textOrNull(req, "FrameworkDescription"),
+                req.get("FrameworkControls"), regionResolver.resolveRegion(headers));
+        ObjectNode out = objectMapper.createObjectNode();
+        out.put("FrameworkName", framework.getFrameworkName());
+        out.put("FrameworkArn", framework.getFrameworkArn());
+        out.put("CreationTime", framework.getCreationTime());
+        return Response.ok(out).build();
+    }
+
+    @DELETE
+    @Path("/audit/frameworks/{frameworkName}")
+    public Response deleteFramework(@Context HttpHeaders headers, @PathParam("frameworkName") String frameworkName) {
+        service.deleteFramework(frameworkName, regionResolver.resolveRegion(headers));
+        return Response.ok().build();
+    }
+
+    @GET
+    @Path("/audit/frameworks")
+    public Response listFrameworks(@Context HttpHeaders headers) {
+        ObjectNode out = objectMapper.createObjectNode();
+        ArrayNode items = out.putArray("Frameworks");
+        for (BackupFramework framework : service.listFrameworks(regionResolver.resolveRegion(headers))) {
+            ObjectNode item = items.addObject();
+            item.put("FrameworkName", framework.getFrameworkName());
+            item.put("FrameworkArn", framework.getFrameworkArn());
+            if (framework.getFrameworkDescription() != null) {
+                item.put("FrameworkDescription", framework.getFrameworkDescription());
+            }
+            item.put("NumberOfControls", framework.getFrameworkControls() != null
+                    ? framework.getFrameworkControls().size() : 0);
+            item.put("CreationTime", framework.getCreationTime());
+            item.put("DeploymentStatus", "COMPLETED");
+        }
+        return Response.ok(out).build();
+    }
+
     // ── Vault ──────────────────────────────────────────────────────────────────
 
     @PUT

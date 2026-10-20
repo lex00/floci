@@ -90,6 +90,10 @@ public class DmsJsonHandler {
                     service.startReplicationTask(request, region).getAttributes());
             case "StopReplicationTask" -> single("ReplicationTask",
                     service.stopReplicationTask(request, region).getAttributes());
+            case "ImportCertificate" -> single("Certificate", service.importCertificate(request, region).getAttributes());
+            case "DescribeCertificates" -> page("Certificates", service.describeCertificates(request, region),
+                    DmsResource::getAttributes);
+            case "DeleteCertificate" -> single("Certificate", service.deleteCertificate(request, region).getAttributes());
             default -> null;
         };
     }

@@ -201,6 +201,7 @@ public class RedshiftService {
         credentialBroker.revokeCluster(clusters.accountId(), identifier);
 
         Cluster cluster = new Cluster();
+        cluster.setClusterNamespaceId(UUID.randomUUID().toString());
         cluster.setClusterIdentifier(identifier);
         cluster.setNodeType(nodeType);
         cluster.setMasterUsername(username);
@@ -1042,6 +1043,7 @@ public class RedshiftService {
                 .orElse("admin");
 
         Cluster cluster = new Cluster();
+        cluster.setClusterNamespaceId(UUID.randomUUID().toString());
         cluster.setClusterIdentifier(clusterIdentifier);
         cluster.setNodeType(effectiveNodeType);
         cluster.setMasterUsername(username);

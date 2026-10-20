@@ -10,6 +10,7 @@ import io.github.hectorvent.floci.services.redshift.model.Cluster;
 import io.github.hectorvent.floci.services.redshift.model.ClusterParameterGroup;
 import io.github.hectorvent.floci.services.redshift.model.ClusterSubnetGroup;
 import io.github.hectorvent.floci.services.redshift.model.Integration;
+import io.github.hectorvent.floci.services.redshift.model.NamespaceRegistration;
 import io.github.hectorvent.floci.services.redshift.model.Parameter;
 import io.github.hectorvent.floci.services.redshift.model.Snapshot;
 import io.github.hectorvent.floci.services.redshift.model.SnapshotCopyGrant;
@@ -27,6 +28,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -48,12 +50,15 @@ public class RedshiftQueryHandler {
     private final RedshiftIamDbUserResolver iamDbUserResolver;
     private final RegionResolver regionResolver;
     private final RedshiftDynamoDbZeroEtlConsumer zeroEtlConsumer;
+    private final RedshiftNamespaceRegistrationService namespaceRegistrations;
 
     @Inject
     public RedshiftQueryHandler(RedshiftService service, RedshiftCredentialBroker credentialBroker,
                                 EmulatorConfig config, RedshiftIamDbUserResolver iamDbUserResolver,
                                 RegionResolver regionResolver,
-                                RedshiftDynamoDbZeroEtlConsumer zeroEtlConsumer) {
+                                RedshiftDynamoDbZeroEtlConsumer zeroEtlConsumer,
+                                RedshiftNamespaceRegistrationService namespaceRegistrations) {
+        this.namespaceRegistrations = namespaceRegistrations;
         this.service = service;
         this.credentialBroker = credentialBroker;
         this.config = config;
@@ -65,7 +70,7 @@ public class RedshiftQueryHandler {
     RedshiftQueryHandler(RedshiftService service, RedshiftCredentialBroker credentialBroker,
                          EmulatorConfig config, RedshiftIamDbUserResolver iamDbUserResolver,
                          RegionResolver regionResolver) {
-        this(service, credentialBroker, config, iamDbUserResolver, regionResolver, null);
+        this(service, credentialBroker, config, iamDbUserResolver, regionResolver, null, null);
     }
 
     public Response handle(String action, MultivaluedMap<String, String> params) {
@@ -113,15 +118,72 @@ public class RedshiftQueryHandler {
                     .build();
             return Response.ok(xml).type(MediaType.APPLICATION_XML).build();
         }
+        case "RegisterNamespace", "DeregisterNamespace" -> {
+            String region = regionResolver.resolveRegionFromAuth(authorizationHeader);
+            String clusterIdentifier = params.getFirst("NamespaceIdentifier.ProvisionedIdentifier.ClusterIdentifier");
+            String serverlessNamespace =
+                    params.getFirst("NamespaceIdentifier.ServerlessIdentifier.NamespaceIdentifier");
+            List<String> consumers = new ArrayList<>();
+            for (int i = 1; params.getFirst("ConsumerIdentifiers.member." + i) != null; i++) {
+                consumers.add(params.getFirst("ConsumerIdentifiers.member." + i));
+            }
+            boolean register = "RegisterNamespace".equals(action);
+            if (register) {
+                namespaceRegistrations.register(region, clusterIdentifier, serverlessNamespace, consumers);
+            } else {
+                namespaceRegistrations.deregister(region, clusterIdentifier, serverlessNamespace, consumers);
+            }
+            String xml = new XmlBuilder()
+                    .start(action + "Response")
+                      .start(action + "Result")
+                        .elem("Status", register ? "Registering" : "Deregistering")
+                      .end(action + "Result")
+                      .start("ResponseMetadata").elem("RequestId", UUID.randomUUID().toString()).end("ResponseMetadata")
+                    .end(action + "Response")
+                    .build();
+            return Response.ok(xml).type(MediaType.APPLICATION_XML).build();
+        }
+        case "DescribeDataShares" -> {
+            String region = regionResolver.resolveRegionFromAuth(authorizationHeader);
+            XmlBuilder xml = new XmlBuilder()
+                    .start("DescribeDataSharesResponse")
+                      .start("DescribeDataSharesResult")
+                        .start("DataShares");
+            for (NamespaceRegistration registration
+                    : namespaceRegistrations.dataShares(region, params.getFirst("DataShareArn"))) {
+                xml.start("member")
+                        .elem("DataShareArn", registration.getDataShareArn())
+                        .elem("ProducerArn", registration.getNamespaceArn())
+                        .elem("AllowPubliclyAccessibleConsumers", "false")
+                        .start("DataShareAssociations");
+                registration.getConsumers().forEach((consumer, since) -> xml.start("member")
+                        .elem("ConsumerIdentifier", consumer)
+                        .elem("Status", "ACTIVE")
+                        .elem("ConsumerRegion", region)
+                        .elem("CreatedDate", since.toString())
+                        .elem("StatusChangeDate", since.toString())
+                        .end("member"));
+                xml.end("DataShareAssociations")
+                        .elem("DataShareType", "INTERNAL")
+                        .end("member");
+            }
+            String body = xml.end("DataShares")
+                      .end("DescribeDataSharesResult")
+                      .start("ResponseMetadata").elem("RequestId", UUID.randomUUID().toString()).end("ResponseMetadata")
+                    .end("DescribeDataSharesResponse")
+                    .build();
+            return Response.ok(body).type(MediaType.APPLICATION_XML).build();
+        }
         case "DescribeClusters" -> {
             String identifier = params.getFirst("ClusterIdentifier");
             List<Cluster> clusters = service.describeClusters(identifier);
+            String describeRegion = regionResolver.resolveRegionFromAuth(authorizationHeader);
             XmlBuilder xmlBuilder = new XmlBuilder()
                     .start("DescribeClustersResponse")
                       .start("DescribeClustersResult")
                         .start("Clusters");
             for (Cluster cluster : clusters) {
-                xmlBuilder.raw(buildClusterXml(cluster));
+                xmlBuilder.raw(buildClusterXml(cluster, describeRegion));
             }
             String xml = xmlBuilder
                         .end("Clusters")
@@ -858,6 +920,10 @@ public class RedshiftQueryHandler {
     }
 
     private String buildClusterXml(Cluster cluster) {
+        return buildClusterXml(cluster, null);
+    }
+
+    private String buildClusterXml(Cluster cluster, String region) {
         XmlBuilder builder = new XmlBuilder()
             .start("Cluster")
             .elem("ClusterIdentifier", cluster.getClusterIdentifier())
@@ -869,6 +935,9 @@ public class RedshiftQueryHandler {
             // AWS always returns "enabled" or "disabled" here, never blank.
             .elem("MultiAZ", cluster.isMultiAZ() ? "enabled" : "disabled")
             .elem("ClusterSubnetGroupName", cluster.getClusterSubnetGroupName());
+        if (region != null && namespaceRegistrations != null) {
+            builder.elem("ClusterNamespaceArn", namespaceRegistrations.clusterNamespaceArn(cluster, region));
+        }
 
         if (cluster.getMasterPasswordSecretArn() != null) {
             builder.elem("MasterPasswordSecretArn", cluster.getMasterPasswordSecretArn())

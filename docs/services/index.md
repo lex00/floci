@@ -79,8 +79,8 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [DataZone](datazone.md) | `/v2/domains/...` | REST JSON | 16 |
 | [Neptune](neptune.md) | `POST /` with `Action=` param + Gremlin TCP proxy | Query + WebSocket | 14 |
 | [DocumentDB](docdb.md) | `POST /` with `Action=` param + MongoDB container | Query + MongoDB wire | 13 |
-| [DMS](dms.md) | `POST /` + `X-Amz-Target: AmazonDMSv20160101.*` | JSON 1.1 | 20 |
-| [Redshift](redshift.md) | `POST /` with `Action=` param + PostgreSQL container | Query + PostgreSQL wire (+ CFN) | 43 |
+| [DMS](dms.md) | `POST /` + `X-Amz-Target: AmazonDMSv20160101.*` | JSON 1.1 | 23 |
+| [Redshift](redshift.md) | `POST /` with `Action=` param + PostgreSQL container | Query + PostgreSQL wire (+ CFN) | 46 |
 | [Redshift Data API](redshift-data.md) | `POST /` + `X-Amz-Target: RedshiftData.*` | JSON 1.1 | 11 |
 | [Redshift Serverless](redshift-serverless.md) | `POST /` + `X-Amz-Target: RedshiftServerless.*` | JSON 1.1 | 55 |
 | [EMR](emr.md) | `POST /` + `X-Amz-Target: ElasticMapReduce.*` | JSON 1.1 | 40 |
@@ -128,7 +128,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [AWS Audit Manager](auditmanager.md) | `/assessmentFrameworks/*`, `/controls/*`, `/tags/*` | REST JSON | 13 |
 | [Control Tower](controltower.md) | `/list-landingzones`, `/get-landingzone`, `/create-landingzone`, `/*-baseline*` | REST JSON | 15 |
 | [Managed Prometheus (AMP)](managed-prometheus.md) | `/workspaces/*`, `/workspaces/*/rulegroupsnamespaces/*`, `/tags/*` | REST JSON | 13 |
-| [AWS Backup](backup.md) | `/backup-vaults/*`, `/backup/plans/*`, `/backup-jobs/*`, `/supported-resource-types` | REST JSON | 20 |
+| [AWS Backup](backup.md) | `/backup-vaults/*`, `/backup/plans/*`, `/backup-jobs/*`, `/audit/frameworks/*`, `/supported-resource-types` | REST JSON | 25 |
 | [AWS FIS](fis.md) | `/experimentTemplates/*`, `/experiments/*`, `/actions/*`, `/targetResourceTypes/*`, `/safetyLevers/*`, `/tags/*` | REST JSON | 26 |
 | [ARC Region switch](arc-region-switch.md) | `POST /service/ArcRegionSwitch/operation/*` or `X-Amz-Target: ArcRegionSwitch.*` | RPC v2 CBOR, JSON 1.0 | 10 |
 | [Amazon IVS](ivs.md) | `POST /{OperationName}` | REST JSON | 9 |
@@ -158,8 +158,9 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [Cost and Usage Reports](cur.md) | `POST /` + `X-Amz-Target: AWSOrigamiServiceGatewayService.*` | JSON 1.1 | 6 |
 | [BCM Pricing Calculator](bcm-pricing-calculator.md) | `POST /` + `X-Amz-Target: AWSBCMPricingCalculator.*` | JSON 1.0 | 4 |
 | [BCM Data Exports](bcm-data-exports.md) | `POST /` + `X-Amz-Target: AWSBillingAndCostManagementDataExports.*` | JSON 1.1 | 7 |
-| [Transfer Family](transfer.md) | `POST /` + `X-Amz-Target: TransferService.*` | JSON 1.1 | 17 |
+| [Transfer Family](transfer.md) | `POST /` + `X-Amz-Target: TransferService.*` | JSON 1.1 | 26 |
 | [DataSync](datasync.md) | `POST /` + `X-Amz-Target: FmrsService.*` | JSON 1.1 | 48 |
+| [Amazon FSx](fsx.md) | `POST /` + `X-Amz-Target: AWSSimbaAPIService_v20180301.*` | JSON 1.1 | 7 |
 | [IoT Core](iot.md) | `/things/...`, `/endpoint`, rules/policies REST paths | REST JSON | 78 |
 | [IoT Data](iot.md) | `/things/{thingName}/shadow`, MQTT topics | REST JSON | 11 |
 | [MediaLive](medialive.md) | `/prod/multiplexes/*`, `/prod/tags/*` | REST JSON | 9 |

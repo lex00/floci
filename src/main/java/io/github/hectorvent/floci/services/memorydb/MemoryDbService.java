@@ -5,9 +5,12 @@ import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RegionResolver;
+import io.github.hectorvent.floci.core.common.RequestScopes;
 import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend;
+import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend.AccountEntry;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
+import io.github.hectorvent.floci.lifecycle.PersistedRuntimeRestorer;
 import io.github.hectorvent.floci.services.elasticache.proxy.SigV4Validator;
 import io.github.hectorvent.floci.services.memorydb.container.MemoryDbContainerHandle;
 import io.github.hectorvent.floci.services.memorydb.container.MemoryDbContainerManager;
@@ -22,14 +25,17 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Core MemoryDB business logic — clusters, ACLs and users.
@@ -44,7 +50,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * stored, so they always exist for every account and map to the no-auth path.
  */
 @ApplicationScoped
-public class MemoryDbService {
+public class MemoryDbService implements PersistedRuntimeRestorer {
 
     private static final Logger LOG = Logger.getLogger(MemoryDbService.class);
     private static final String DEFAULT_ENGINE = "redis";
@@ -69,6 +75,9 @@ public class MemoryDbService {
     private final RegionResolver regionResolver;
     private final Set<Integer> usedPorts = ConcurrentHashMap.newKeySet();
     private final Set<String> provisioningClusterNames = ConcurrentHashMap.newKeySet();
+    private static final Duration BACKEND_RETRY_INTERVAL = Duration.ofSeconds(10);
+    private final AtomicBoolean backendRetryRunning = new AtomicBoolean();
+    private volatile Instant lastBackendRetry = Instant.EPOCH;
 
     @Inject
     public MemoryDbService(MemoryDbContainerManager containerManager,
@@ -168,10 +177,135 @@ public class MemoryDbService {
 
     public Collection<Cluster> describeClusters(String filterName, String region) {
         migrateLegacyClusters(region);
-        if (filterName != null && !filterName.isBlank()) {
-            return List.of(getCluster(filterName, region));
+        Collection<Cluster> found = filterName != null && !filterName.isBlank()
+                ? List.of(getCluster(filterName, region))
+                : clusters.scan(k -> k.startsWith(region + ":"));
+        if (found.stream().anyMatch(MemoryDbService::lacksBackend)) {
+            scheduleBackendRetry();
         }
-        return clusters.scan(k -> k.startsWith(region + ":"));
+        return found;
+    }
+
+    // ──────────────────────────── Backend recovery ────────────────────────────
+
+    /**
+     * Reserves the proxy ports of persisted clusters and starts their backends off the startup
+     * path. The container fields a record carries describe the previous process, so they are
+     * cleared first.
+     */
+    @Override
+    public void restorePersistedRuntime() {
+        if (!config.services().memorydb().enabled() || config.services().memorydb().mock()) {
+            return;
+        }
+        List<AccountEntry<Cluster>> stored = storedClusters();
+        for (AccountEntry<Cluster> entry : stored) {
+            Cluster cluster = entry.value();
+            if (cluster.getProxyPort() > 0) {
+                usedPorts.add(cluster.getProxyPort());
+            }
+            cluster.setContainerId(null);
+            cluster.setContainerHost(null);
+            cluster.setContainerPort(0);
+            putStoredCluster(entry.accountId(), entry.key(), cluster);
+        }
+        if (!stored.isEmpty()) {
+            Thread.ofVirtual().name("memorydb-backend-restore").start(this::startMissingBackends);
+        }
+    }
+
+    private static boolean lacksBackend(Cluster cluster) {
+        return cluster.getContainerId() == null && cluster.getStatus() == ClusterStatus.AVAILABLE
+                && cluster.getProxyPort() > 0;
+    }
+
+    /**
+     * A cluster created while no Docker daemon answered has no backend. A describe that finds one
+     * retries in the background, at most once per {@link #BACKEND_RETRY_INTERVAL}.
+     */
+    private void scheduleBackendRetry() {
+        if (config.services().memorydb().mock()
+                || Instant.now().isBefore(lastBackendRetry.plus(BACKEND_RETRY_INTERVAL))
+                || backendRetryRunning.get()) {
+            return;
+        }
+        Thread.ofVirtual().name("memorydb-backend-retry").start(this::startMissingBackends);
+    }
+
+    void startMissingBackends() {
+        if (!backendRetryRunning.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            lastBackendRetry = Instant.now();
+            if (!containerManager.isDockerReachable()) {
+                return;
+            }
+            for (AccountEntry<Cluster> entry : storedClusters()) {
+                if (lacksBackend(entry.value())) {
+                    RequestScopes.runAs(entry.accountId(), entry.value().getRegion(),
+                            () -> startMissingBackend(entry.accountId(), entry.key(), entry.value()));
+                }
+            }
+        } finally {
+            backendRetryRunning.set(false);
+        }
+    }
+
+    private void startMissingBackend(String accountId, String key, Cluster stored) {
+        String region = stored.getRegion();
+        String identity = identityName(accountId, region, stored.getName());
+        MemoryDbContainerHandle handle;
+        try {
+            handle = containerManager.tryStart(identity, config.services().memorydb().defaultImage());
+        } catch (RuntimeException e) {
+            LOG.warnv("MemoryDB cluster {0} backend did not start: {1}", stored.getName(), e.getMessage());
+            return;
+        }
+        if (handle == null) {
+            return;
+        }
+        synchronized (this) {
+            Optional<Cluster> current = getStoredCluster(accountId, key);
+            if (current.isEmpty() || !lacksBackend(current.get())) {
+                containerManager.stop(handle);
+                return;
+            }
+            Cluster cluster = current.get();
+            cluster.setContainerId(handle.getContainerId());
+            cluster.setContainerHost(handle.getHost());
+            cluster.setContainerPort(handle.getPort());
+            String name = cluster.getName();
+            proxyManager.startProxy(identity, isAuthRequired(cluster.getAclName(), region), cluster.getProxyPort(),
+                    handle.getHost(), handle.getPort(),
+                    (username, secret) -> authenticate(name, username, secret, region));
+            putStoredCluster(accountId, key, cluster);
+            LOG.infov("MemoryDB cluster {0} now has its backing container", name);
+        }
+    }
+
+    private List<AccountEntry<Cluster>> storedClusters() {
+        if (clusters instanceof AccountAwareStorageBackend<Cluster> aware) {
+            return aware.scanAllAccountEntries(k -> true);
+        }
+        String account = regionResolver.getDefaultAccountId();
+        return clusters.keys().stream()
+                .map(k -> clusters.get(k).map(c -> new AccountEntry<>(account, k, c)).orElse(null))
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    private Optional<Cluster> getStoredCluster(String accountId, String key) {
+        return clusters instanceof AccountAwareStorageBackend<Cluster> aware
+                ? aware.getForAccount(accountId, key) : clusters.get(key);
+    }
+
+    private void putStoredCluster(String accountId, String key, Cluster cluster) {
+        if (clusters instanceof AccountAwareStorageBackend<Cluster> aware) {
+            aware.putForAccount(accountId, key, cluster);
+        } else {
+            clusters.put(key, cluster);
+        }
     }
 
     public Cluster updateCluster(String name, String description) {

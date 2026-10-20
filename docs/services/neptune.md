@@ -66,6 +66,12 @@ An instance answers on its cluster's port. Terraform's instance `port` attribute
 
 A requested `Port` is honoured when it is free and inside the proxy port range (`8182`-`8282` by default); otherwise the cluster gets the next free port in the range and `DescribeDBClusters` reports that port. Terraform's `port` attribute defaults to `8182`, so the first cluster is a clean match. For a second cluster set `port` explicitly (for example `port = 8183`) so the plan stays clean, because two clusters cannot share one host port.
 
+## Backend recovery
+
+A cluster created while no Docker daemon answers is still `available`, with no graph database container and its proxy.
+Once a daemon answers, the next describe that lists the cluster starts the backend in the
+background. At startup, persisted clusters get their backends again the same way.
+
 ## Configuration
 
 | Variable | Default | Description |

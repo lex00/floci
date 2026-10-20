@@ -889,6 +889,8 @@ public interface EmulatorConfig {
         GlobalAcceleratorServiceConfig globalaccelerator();
         DataSyncServiceConfig datasync();
 
+        FsxServiceConfig fsx();
+
         ApsServiceConfig aps();
 
         LakeFormationServiceConfig lakeformation();
@@ -998,6 +1000,11 @@ public interface EmulatorConfig {
     }
 
     interface DataSyncServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface FsxServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }
@@ -2227,6 +2234,10 @@ public interface EmulatorConfig {
 
         @WithDefault("false")
         boolean scpEnforcementEnabled();
+
+        /** Whether the account's effective tag policy refuses noncompliant tag writes. */
+        @WithDefault("false")
+        boolean tagPolicyEnforcementEnabled();
 
         Optional<String> managementAccountEmail();
     }

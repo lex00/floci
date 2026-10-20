@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -78,6 +79,41 @@ class MemoryDbServiceTest {
 
         service = new MemoryDbService(containerManager, proxyManager, sigV4Validator,
                 storageFactory, config, regionResolver);
+    }
+
+    @Test
+    void clusterCreatedWithoutDockerGetsItsBackendOnceDockerAnswers() {
+        when(containerManager.tryStart(anyString(), anyString())).thenReturn(null);
+        Cluster spec = new Cluster();
+        spec.setName("late-backend");
+        spec.setAclName("open-access");
+        Cluster created = service.createCluster(spec, "us-east-1");
+        assertNull(created.getContainerId());
+        int proxyPort = created.getProxyPort();
+
+        when(containerManager.isDockerReachable()).thenReturn(true);
+        when(containerManager.tryStart(anyString(), anyString()))
+                .thenReturn(new MemoryDbContainerHandle("cid-late", "late-backend", "10.0.0.5", 6379));
+        service.startMissingBackends();
+
+        assertEquals("cid-late", service.getCluster("late-backend", "us-east-1").getContainerId());
+        verify(proxyManager).startProxy(eq("late-backend"), anyBoolean(), eq(proxyPort), eq("10.0.0.5"),
+                eq(6379), any());
+    }
+
+    @Test
+    void persistedClusterRestoreReservesItsPortAndClearsTheOldContainer() {
+        Cluster spec = new Cluster();
+        spec.setName("restored");
+        spec.setAclName("open-access");
+        Cluster created = service.createCluster(spec, "us-east-1");
+        when(containerManager.isDockerReachable()).thenReturn(false);
+        when(mdbConfig.enabled()).thenReturn(true);
+
+        service.restorePersistedRuntime();
+
+        assertNull(service.getCluster("restored", "us-east-1").getContainerId());
+        assertEquals(created.getProxyPort(), service.getCluster("restored", "us-east-1").getProxyPort());
     }
 
     @Test

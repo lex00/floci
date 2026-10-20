@@ -65,6 +65,9 @@ class TransferServiceTest {
                     case "transfer-servers.json" -> serverStore;
                     case "transfer-users.json" -> userStore;
                     case "transfer-tags.json" -> tagStore;
+                    case "transfer-connectors.json", "transfer-workflows.json" ->
+                            new AccountAwareStorageBackend<>(new InMemoryStorage<>(), requestContextInstance,
+                                    "111111111111");
                     default -> throw new IllegalArgumentException(fileName);
                 };
                 @SuppressWarnings("unchecked")

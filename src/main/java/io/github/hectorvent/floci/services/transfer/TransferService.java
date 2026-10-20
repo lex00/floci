@@ -1,6 +1,10 @@
 package io.github.hectorvent.floci.services.transfer;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
@@ -16,6 +20,7 @@ import jakarta.inject.Inject;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +35,8 @@ public class TransferService {
     private final AccountAwareStorageBackend<Server> serverStore;
     private final AccountAwareStorageBackend<User> userStore;
     private final AccountAwareStorageBackend<Map<String, String>> tagStore;
+    private final AccountAwareStorageBackend<ObjectNode> connectorStore;
+    private final AccountAwareStorageBackend<ObjectNode> workflowStore;
     private final RegionResolver regionResolver;
 
     @Inject
@@ -40,6 +47,10 @@ public class TransferService {
                 new TypeReference<Map<String, User>>() {});
         this.tagStore = factory.create("transfer", "transfer-tags.json",
                 new TypeReference<Map<String, Map<String, String>>>() {});
+        this.connectorStore = factory.create("transfer", "transfer-connectors.json",
+                new TypeReference<Map<String, ObjectNode>>() {});
+        this.workflowStore = factory.create("transfer", "transfer-workflows.json",
+                new TypeReference<Map<String, ObjectNode>>() {});
         this.regionResolver = regionResolver;
     }
 
@@ -347,6 +358,142 @@ public class TransferService {
         syncTagsToResource(arn, existing);
     }
 
+    // ── Connectors ────────────────────────────────────────────────────────────
+
+    /**
+     * Stores an AS2 or SFTP connector. Its members are kept in the DescribedConnector shape, so a
+     * describe echoes them.
+     */
+    public synchronized ObjectNode createConnector(JsonNode request, Map<String, String> tags) {
+        requireText(request, "Url");
+        requireText(request, "AccessRole");
+        boolean as2 = request.hasNonNull("As2Config");
+        boolean sftp = request.hasNonNull("SftpConfig");
+        if (as2 == sftp) {
+            throw new AwsException("InvalidRequestException",
+                    "Specify exactly one of As2Config and SftpConfig.", 400);
+        }
+        String connectorId = "c-" + randomId();
+        ObjectNode connector = JsonNodeFactory.instance.objectNode();
+        connector.put("Arn", regionResolver.buildArn("transfer", currentRegion(), "connector/" + connectorId));
+        connector.put("ConnectorId", connectorId);
+        copyMembers(request, connector, CONNECTOR_MEMBERS);
+        if (sftp && !connector.has("SecurityPolicyName")) {
+            connector.put("SecurityPolicyName", "TransferSFTPConnectorSecurityPolicy-2024-03");
+        }
+        connector.put("EgressType", "SERVICE_MANAGED");
+        connector.put("Status", "ACTIVE");
+        connectorStore.putForAccount(currentAccount(), scopedKey(currentRegion(), connectorId), connector);
+        if (tags != null && !tags.isEmpty()) {
+            putTags("connector/" + connectorId, tags);
+        }
+        return connector;
+    }
+
+    public ObjectNode describeConnector(String connectorId) {
+        ObjectNode connector = findConnector(connectorId).deepCopy();
+        connector.set("Tags", tagArray(storedTags("connector/" + connectorId)));
+        return connector;
+    }
+
+    public synchronized ObjectNode updateConnector(JsonNode request) {
+        String connectorId = requireText(request, "ConnectorId");
+        ObjectNode connector = findConnector(connectorId);
+        copyMembers(request, connector, CONNECTOR_MEMBERS);
+        connectorStore.putForAccount(currentAccount(), scopedKey(currentRegion(), connectorId), connector);
+        return connector;
+    }
+
+    public synchronized void deleteConnector(String connectorId) {
+        findConnector(connectorId);
+        connectorStore.deleteForAccount(currentAccount(), scopedKey(currentRegion(), connectorId));
+        tagStore.deleteForAccount(currentAccount(), scopedKey(currentRegion(), "connector/" + connectorId));
+    }
+
+    public List<ObjectNode> listConnectors() {
+        return connectorStore.scanForAccount(currentAccount(), k -> k.startsWith(currentRegion() + "/")).stream()
+                .sorted(Comparator.comparing(c -> c.path("ConnectorId").asText()))
+                .toList();
+    }
+
+    private ObjectNode findConnector(String connectorId) {
+        return connectorStore.getForAccount(currentAccount(), scopedKey(currentRegion(), String.valueOf(connectorId)))
+                .orElseThrow(() -> new AwsException("ResourceNotFoundException",
+                        "Unknown connector: " + connectorId, 404));
+    }
+
+    // ── Workflows ─────────────────────────────────────────────────────────────
+
+    public synchronized ObjectNode createWorkflow(JsonNode request, Map<String, String> tags) {
+        if (!request.path("Steps").isArray()) {
+            throw new AwsException("InvalidRequestException", "Steps is required.", 400);
+        }
+        String workflowId = "w-" + randomId();
+        ObjectNode workflow = JsonNodeFactory.instance.objectNode();
+        workflow.put("Arn", regionResolver.buildArn("transfer", currentRegion(), "workflow/" + workflowId));
+        workflow.put("WorkflowId", workflowId);
+        copyMembers(request, workflow, List.of("Description", "Steps", "OnExceptionSteps"));
+        workflowStore.putForAccount(currentAccount(), scopedKey(currentRegion(), workflowId), workflow);
+        if (tags != null && !tags.isEmpty()) {
+            putTags("workflow/" + workflowId, tags);
+        }
+        return workflow;
+    }
+
+    public ObjectNode describeWorkflow(String workflowId) {
+        ObjectNode workflow = findWorkflow(workflowId).deepCopy();
+        workflow.set("Tags", tagArray(storedTags("workflow/" + workflowId)));
+        return workflow;
+    }
+
+    public synchronized void deleteWorkflow(String workflowId) {
+        findWorkflow(workflowId);
+        workflowStore.deleteForAccount(currentAccount(), scopedKey(currentRegion(), workflowId));
+        tagStore.deleteForAccount(currentAccount(), scopedKey(currentRegion(), "workflow/" + workflowId));
+    }
+
+    public List<ObjectNode> listWorkflows() {
+        return workflowStore.scanForAccount(currentAccount(), k -> k.startsWith(currentRegion() + "/")).stream()
+                .sorted(Comparator.comparing(w -> w.path("WorkflowId").asText()))
+                .toList();
+    }
+
+    private ObjectNode findWorkflow(String workflowId) {
+        return workflowStore.getForAccount(currentAccount(), scopedKey(currentRegion(), String.valueOf(workflowId)))
+                .orElseThrow(() -> new AwsException("ResourceNotFoundException",
+                        "Unknown workflow: " + workflowId, 404));
+    }
+
+    private static final List<String> CONNECTOR_MEMBERS = List.of("Url", "As2Config", "AccessRole",
+            "LoggingRole", "SftpConfig", "SecurityPolicyName", "EgressConfig");
+
+    private static void copyMembers(JsonNode from, ObjectNode to, List<String> members) {
+        for (String member : members) {
+            JsonNode value = from.get(member);
+            if (value != null && !value.isNull()) {
+                to.set(member, value.deepCopy());
+            }
+        }
+    }
+
+    private static String requireText(JsonNode request, String member) {
+        String value = request.path(member).asText(null);
+        if (value == null || value.isBlank()) {
+            throw new AwsException("InvalidRequestException", member + " is required.", 400);
+        }
+        return value;
+    }
+
+    private static ArrayNode tagArray(Map<String, String> tags) {
+        ArrayNode array = JsonNodeFactory.instance.arrayNode();
+        tags.forEach((key, value) -> array.addObject().put("Key", key).put("Value", value));
+        return array;
+    }
+
+    private static String randomId() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 17);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private String generateServerId() {
@@ -377,6 +524,10 @@ public class TransferService {
                 throw new AwsException("ResourceNotFoundException", "Resource " + arn + " does not exist.", 404);
             }
             getUser(parts[0], parts[1]);
+        } else if (resource.startsWith("connector/")) {
+            findConnector(resource.substring("connector/".length()));
+        } else if (resource.startsWith("workflow/")) {
+            findWorkflow(resource.substring("workflow/".length()));
         } else {
             throw new AwsException("ResourceNotFoundException", "Resource " + arn + " does not exist.", 404);
         }
@@ -487,6 +638,9 @@ public class TransferService {
 
     private Optional<Map<String, String>> resourceTags(String arn) {
         String resource = AwsArnUtils.parse(arn).resource();
+        if (resource.startsWith("connector/") || resource.startsWith("workflow/")) {
+            return Optional.empty();
+        }
         if (resource.startsWith("server/")) {
             return Optional.ofNullable(getServer(resource.substring("server/".length())).getTags());
         }

@@ -99,6 +99,7 @@ import io.github.hectorvent.floci.services.ec2.net.VpcNetworkManager;
 import io.github.hectorvent.floci.services.ec2.portforward.Ec2PortForwardManager;
 import io.github.hectorvent.floci.services.iam.IamService;
 import io.github.hectorvent.floci.services.iam.model.InstanceProfile;
+import io.github.hectorvent.floci.services.organizations.TagPolicyEnforcer;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.ContextNotActiveException;
@@ -1318,7 +1319,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                         acl.getAssociations().stream().anyMatch(a -> values.contains(a.getSubnetId()));
                 case "association.network-acl-association-id" ->
                         acl.getAssociations().stream().anyMatch(a -> values.contains(a.getNetworkAclAssociationId()));
-                default -> true;
+                default -> throw invalidFilter(f.getKey());
             };
             if (!matches) {
                 return false;
@@ -4965,6 +4966,14 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
         }
     }
 
+    /**
+     * The error EC2 returns for a filter name the operation does not support. A name Floci does not
+     * implement gets the same error.
+     */
+    private static AwsException invalidFilter(String name) {
+        return new AwsException("InvalidParameterValue", "The filter '" + name + "' is invalid", 400);
+    }
+
     private void requireSupportedFilters(Collection<String> filterNames, Set<String> supportedFilters) {
         filterNames.stream()
                 .filter(name -> !supportedFilters.contains(name)
@@ -8044,7 +8053,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
             case "root-device-type" -> matchesFilterValue(values, image.getRootDeviceType());
             case "state" -> matchesFilterValue(values, image.getState());
             case "virtualization-type" -> matchesFilterValue(values, image.getVirtualizationType());
-            default -> true;
+            default -> throw invalidFilter(name);
         };
     }
 
@@ -8126,7 +8135,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
             case "root-device-type" -> matchesFilterValue(values, image.getRootDeviceType());
             case "state" -> matchesFilterValue(values, image.getState());
             case "virtualization-type" -> matchesFilterValue(values, image.getVirtualizationType());
-            default -> true;
+            default -> throw invalidFilter(name);
         };
     }
 
@@ -8204,7 +8213,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
             case "volume-id" -> matchesFilterValue(values, snapshot.getVolumeId());
             case "volume-size" -> matchesFilterValue(values,
                     snapshot.getVolumeSize() != null ? String.valueOf(snapshot.getVolumeSize()) : null);
-            default -> true;
+            default -> throw invalidFilter(name);
         };
     }
 
@@ -8245,8 +8254,19 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
 
     public void createTags(String region, List<String> resourceIds, List<Tag> tagList) {
         validateUserTagKeys(tagList);
+        if (tagPolicyEnforcer != null && tagPolicyEnforcer.isResolvable()) {
+            Map<String, String> requested = new LinkedHashMap<>();
+            tagList.forEach(tag -> requested.put(tag.getKey(), tag.getValue()));
+            for (String resourceId : resourceIds) {
+                tagPolicyEnforcer.get().enforce(callerAccountId(), "ec2:" + inferResourceType(resourceId),
+                        requested, "TagPolicyViolation");
+            }
+        }
         createSystemTags(region, resourceIds, tagList);
     }
+
+    @Inject
+    jakarta.enterprise.inject.Instance<TagPolicyEnforcer> tagPolicyEnforcer;
 
     /** Service-owned tags, separate from the public EC2 CreateTags operation. */
     public void createSystemTags(String region, List<String> resourceIds, List<Tag> tagList) {
@@ -10238,7 +10258,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
             case "group-long-name" -> matchesValue(az.get("groupLongName"), values);
             case "opt-in-status" -> matchesValue(az.get("optInStatus"), values);
             case "message", "parent-zone-id", "parent-zone-name" -> matchesValue("", values);
-            default -> true;
+            default -> throw invalidFilter(filterName);
         };
     }
 
@@ -10431,7 +10451,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                         .anyMatch(a -> matchesValue(values, a.getIpv6CidrBlock()));
                 case "ipv6-cidr-block-association.state" -> vpc.getIpv6CidrBlockAssociationSet().stream()
                         .anyMatch(a -> matchesValue(values, a.getIpv6CidrBlockState()));
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof Subnet subnet) {
@@ -10441,7 +10461,15 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 case "state" -> matchesValue(values, subnet.getState());
                 case "availabilityZone", "availability-zone" -> matchesValue(values, subnet.getAvailabilityZone());
                 case "cidr-block", "cidrBlock", "cidr" -> matchesValue(values, subnet.getCidrBlock());
-                default -> true;
+                case "default-for-az", "defaultForAz" -> matchesValue(values, String.valueOf(subnet.isDefaultForAz()));
+                case "availability-zone-id", "availabilityZoneId" ->
+                        matchesValue(values, subnet.getAvailabilityZoneId());
+                case "map-public-ip-on-launch" -> matchesValue(values, String.valueOf(subnet.isMapPublicIpOnLaunch()));
+                case "owner-id" -> matchesValue(values, subnet.getOwnerId());
+                case "subnet-arn" -> matchesValue(values, subnet.getSubnetArn());
+                case "available-ip-address-count" ->
+                        matchesValue(values, String.valueOf(subnet.getAvailableIpAddressCount()));
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof ManagedPrefixList prefixList) {
@@ -10449,7 +10477,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 case "prefix-list-id" -> matchesValue(values, prefixList.getPrefixListId());
                 case "prefix-list-name" -> matchesValue(values, prefixList.getPrefixListName());
                 case "owner-id" -> matchesValue(values, prefixList.getOwnerId());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof TransitGatewayRouteTable routeTable) {
@@ -10462,7 +10490,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                         matchesValue(values, String.valueOf(routeTable.isDefaultAssociationRouteTable()));
                 case "default-propagation-route-table" ->
                         matchesValue(values, String.valueOf(routeTable.isDefaultPropagationRouteTable()));
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof TransitGatewayRouteTablePropagation propagation) {
@@ -10470,7 +10498,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 case "transit-gateway-attachment-id" -> matchesValue(values, propagation.getTransitGatewayAttachmentId());
                 case "resource-id" -> matchesValue(values, propagation.getResourceId());
                 case "resource-type" -> matchesValue(values, propagation.getResourceType());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof TransitGatewayPeeringAttachment attachment) {
@@ -10483,7 +10511,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 case "local-owner-id" -> matchesValue(values, localSide(attachment, region).getOwnerId());
                 case "remote-owner-id" -> matchesValue(values, remoteSide(attachment, region).getOwnerId());
                 case "state" -> matchesValue(values, attachment.getState());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof TransitGatewayVpcAttachment attachment) {
@@ -10495,7 +10523,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 case "state" -> matchesValue(values, attachment.getState());
                 case "resource-id" -> matchesValue(values, attachment.getVpcId());
                 case "resource-type" -> matchesValue(values, "vpc");
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof TransitGateway gateway) {
@@ -10511,7 +10539,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                         matchesValue(values, gateway.getOptions().getPropagationDefaultRouteTableId());
                 case "options.dns-support" -> matchesValue(values, gateway.getOptions().getDnsSupport());
                 case "options.vpn-ecmp-support" -> matchesValue(values, gateway.getOptions().getVpnEcmpSupport());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof SecurityGroup sg) {
@@ -10524,7 +10552,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 // default arm silently matched every group regardless of value, which is
                 // indistinguishable from "no filter" for the caller.
                 case "description" -> matchesValue(values, sg.getDescription());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof VpcPeeringConnection pcx) {
@@ -10543,7 +10571,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                         && matchesValue(values, pcx.getAccepterVpcInfo().getOwnerId());
                 case "accepter-vpc-info.region" -> pcx.getAccepterVpcInfo() != null
                         && matchesValue(values, pcx.getAccepterVpcInfo().getRegion());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof Instance inst) {
@@ -10559,7 +10587,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 // instance was launched from; it previously fell through the default arm and
                 // matched every instance regardless of value.
                 case "image-id" -> matchesValue(values, inst.getImageId());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof InternetGateway igw) {
@@ -10567,7 +10595,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 case "internet-gateway-id" -> matchesValue(values, igw.getInternetGatewayId());
                 case "attachment.vpc-id" -> igw.getAttachments().stream()
                         .anyMatch(a -> matchesValue(values, a.getVpcId()));
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof EgressOnlyInternetGateway eigw) {
@@ -10577,7 +10605,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                         .anyMatch(a -> matchesValue(values, a.getVpcId()));
                 case "attachment.state" -> eigw.getAttachments().stream()
                         .anyMatch(a -> matchesValue(values, a.getState()));
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof RouteTable rt) {
@@ -10602,14 +10630,14 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                         .anyMatch(r -> r.getInstanceId() != null && matchesValue(values, r.getInstanceId()));
                 case "route.network-interface-id" -> rt.getRoutes().stream()
                         .anyMatch(r -> r.getNetworkInterfaceId() != null && matchesValue(values, r.getNetworkInterfaceId()));
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof LaunchTemplate lt) {
             return switch (filterName) {
                 case "launch-template-id" -> matchesValue(values, lt.getLaunchTemplateId());
                 case "launch-template-name" -> matchesValue(values, lt.getLaunchTemplateName());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof VpcEndpoint endpoint) {
@@ -10628,7 +10656,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                         .anyMatch(routeTableId -> matchesValue(values, routeTableId));
                 case "subnet-id" -> endpoint.getSubnetIds().stream()
                         .anyMatch(subnetId -> matchesValue(values, subnetId));
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof NatGateway natGateway) {
@@ -10638,7 +10666,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 case "vpc-id" -> matchesValue(values, natGateway.getVpcId());
                 case "state" -> matchesValue(values, natGateway.getState());
                 case "connectivity-type" -> matchesValue(values, natGateway.getConnectivityType());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof Volume vol) {
@@ -10661,7 +10689,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                         .anyMatch(a -> matchesValue(values, a.getState()));
                 case "attachment.delete-on-termination" -> vol.getAttachments().stream()
                         .anyMatch(a -> matchesValue(values, String.valueOf(a.isDeleteOnTermination())));
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof VolumeModification mod) {
@@ -10674,7 +10702,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 case "original-size" -> matchesValue(values, mod.getOriginalSize() != null ? String.valueOf(mod.getOriginalSize()) : null);
                 case "original-volume-type" -> matchesValue(values, mod.getOriginalVolumeType());
                 case "original-iops" -> matchesValue(values, mod.getOriginalIops() != null ? String.valueOf(mod.getOriginalIops()) : null);
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof NetworkInterface ni) {
@@ -10708,7 +10736,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 case "owner-id" -> matchesValue(values, ni.getOwnerId());
                 case "mac-address" -> matchesValue(values, ni.getMacAddress());
                 case "private-dns-name" -> matchesValue(values, ni.getPrivateDnsName());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         // These are the AWS-documented DescribeAddresses filters this store can back with
@@ -10728,7 +10756,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                         && matchesValue(values, addr.getNetworkInterfaceId());
                 case "private-ip-address" -> addr.getPrivateIpAddress() != null
                         && matchesValue(values, addr.getPrivateIpAddress());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof SpotInstanceRequest sir) {
@@ -10736,7 +10764,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 case "spot-instance-request-id" -> matchesValue(values, sir.getSpotInstanceRequestId());
                 case "state" -> matchesValue(values, sir.getState());
                 case "instance-id" -> matchesValue(values, sir.getInstanceId());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof CapacityReservation cr) {
@@ -10748,7 +10776,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 case "instance-platform" -> matchesValue(values, cr.getInstancePlatform());
                 case "instance-match-criteria" -> matchesValue(values, cr.getInstanceMatchCriteria());
                 case "end-date-type" -> matchesValue(values, cr.getEndDateType());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         if (resource instanceof Host host) {
@@ -10757,7 +10785,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 case "instance-type" -> matchesValue(values, host.getInstanceType());
                 case "state" -> matchesValue(values, host.getState());
                 case "auto-placement" -> matchesValue(values, host.getAutoPlacement());
-                default -> true;
+                default -> throw invalidFilter(filterName);
             };
         }
         return true;

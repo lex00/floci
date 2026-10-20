@@ -114,6 +114,9 @@ public class EmulatorLifecycle {
     private final StepFunctionsService stepFunctionsService;
     private final DurableExecutionService durableExecutionService;
     private final Instance<ContainerTeardown> containerTeardowns;
+
+    @Inject
+    Instance<PersistedRuntimeRestorer> persistedRuntimeRestorers;
     private final PersistentPathValidator persistentPathValidator;
     private final DynamoDbRuntime dynamoDbRuntime;
     private final RedshiftDynamoDbZeroEtlConsumer redshiftZeroEtlConsumer;
@@ -276,6 +279,15 @@ public class EmulatorLifecycle {
         // After the load balancers: the reconciler registers the tasks it starts as their targets.
         if (config.services().ecs().enabled()) {
             ecsService.restorePersistedRuntime();
+        }
+        if (persistedRuntimeRestorers != null) {
+            for (PersistedRuntimeRestorer restorer : persistedRuntimeRestorers) {
+                try {
+                    restorer.restorePersistedRuntime();
+                } catch (RuntimeException e) {
+                    LOG.warnv(e, "Restoring persisted runtime failed in {0}", restorer.getClass().getSimpleName());
+                }
+            }
         }
 
         if (isMetadataServerNeeded()) {

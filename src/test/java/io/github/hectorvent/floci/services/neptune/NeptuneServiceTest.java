@@ -93,6 +93,33 @@ class NeptuneServiceTest {
     }
 
     @Test
+    void clusterCreatedWithoutDockerGetsItsBackendOnceDockerAnswers() {
+        when(containerManager.tryStart(anyString(), anyString(), any(NeptuneDbType.class), anyString(), anyString()))
+                .thenReturn(null);
+        NeptuneCluster created = service.createDbCluster("late-graph", "1.3.2.1", false);
+        assertNull(created.getContainerId());
+
+        when(containerManager.isDockerReachable()).thenReturn(true);
+        when(containerManager.tryStart(anyString(), anyString(), any(NeptuneDbType.class), anyString(), anyString()))
+                .thenReturn(new NeptuneContainerHandle("cid-late", "late-graph", "10.0.0.6", 8182));
+        service.startMissingBackends();
+
+        assertEquals("cid-late", service.getDbCluster("late-graph").getContainerId());
+        verify(proxyManager).startProxy(anyString(), eq(created.getProxyPort()), eq("10.0.0.6"), eq(8182));
+    }
+
+    @Test
+    void persistedClusterRestoreClearsTheOldContainer() {
+        service.createDbCluster("restored-graph", "1.3.2.1", false);
+        when(neptuneConfig.enabled()).thenReturn(true);
+        when(containerManager.isDockerReachable()).thenReturn(false);
+
+        service.restorePersistedRuntime();
+
+        assertNull(service.getDbCluster("restored-graph").getContainerId());
+    }
+
+    @Test
     void sameNameClustersAreIsolatedByAccountAndRegion() {
         NeptuneCluster first = service.createDbCluster("shared", "1.3.2.1", false);
         NeptuneInstance firstInstance = service.createDbInstance(

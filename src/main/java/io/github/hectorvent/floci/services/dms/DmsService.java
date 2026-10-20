@@ -23,7 +23,13 @@ import io.github.hectorvent.floci.services.ec2.model.Subnet;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.security.interfaces.RSAPublicKey;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -92,6 +98,7 @@ public class DmsService implements Resettable {
     private final Kind endpoints;
     private final Kind instances;
     private final Kind tasks;
+    private final Kind certificates;
     private final Ec2Service ec2Service;
     private final RegionResolver regionResolver;
 
@@ -121,8 +128,64 @@ public class DmsService implements Resettable {
                         "migration-type", List.of("MigrationType"),
                         "endpoint-arn", List.of("SourceEndpointArn", "TargetEndpointArn"),
                         "replication-instance-arn", List.of("ReplicationInstanceArn")));
+        this.certificates = new Kind("Certificate",
+                storageFactory.create("dms", "dms-certificates.json", type),
+                "cert", "CertificateIdentifier", "CertificateArn", 255, false,
+                Map.of("certificate-arn", List.of("CertificateArn"),
+                        "certificate-id", List.of("CertificateIdentifier")));
         this.ec2Service = ec2Service;
         this.regionResolver = regionResolver;
+    }
+
+    // ---------------------------------------------------------------- certificates
+
+    /**
+     * Stores a PEM or Oracle wallet certificate. A PEM certificate is parsed for its validity
+     * window, signing algorithm and key length, which DMS reports.
+     */
+    public synchronized DmsResource importCertificate(JsonNode request, String region) {
+        String identifier = requireResourceIdentifier(certificates, request);
+        String pem = text(request, "CertificatePem");
+        String wallet = text(request, "CertificateWallet");
+        if ((pem == null || pem.isBlank()) == (wallet == null || wallet.isBlank())) {
+            throw invalidParameter("Exactly one of CertificatePem and CertificateWallet must be provided.");
+        }
+        ObjectNode attributes = JsonNodeFactory.instance.objectNode();
+        attributes.put("CertificateCreationDate", now());
+        attributes.put("CertificateOwner", regionResolver.getAccountId());
+        putText(attributes, request, "KmsKeyId");
+        if (pem != null && !pem.isBlank()) {
+            X509Certificate certificate = parsePem(pem);
+            attributes.put("CertificatePem", pem);
+            attributes.put("ValidFromDate", certificate.getNotBefore().toInstant().getEpochSecond());
+            attributes.put("ValidToDate", certificate.getNotAfter().toInstant().getEpochSecond());
+            attributes.put("SigningAlgorithm", certificate.getSigAlgName());
+            if (certificate.getPublicKey() instanceof RSAPublicKey rsa) {
+                attributes.put("KeyLength", rsa.getModulus().bitLength());
+            }
+        } else {
+            attributes.put("CertificateWallet", wallet);
+        }
+        return create(certificates, region, identifier, attributes, request);
+    }
+
+    public PaginatedResult<DmsResource> describeCertificates(JsonNode request, String region) {
+        return describe(certificates, request, region);
+    }
+
+    public synchronized DmsResource deleteCertificate(JsonNode request, String region) {
+        Found found = requireByArn(certificates, request, certificates.arnMember(), region);
+        return remove(found);
+    }
+
+    private static X509Certificate parsePem(String pem) {
+        try {
+            CertificateFactory factory = CertificateFactory.getInstance("X.509");
+            return (X509Certificate) factory.generateCertificate(
+                    new ByteArrayInputStream(pem.getBytes(StandardCharsets.US_ASCII)));
+        } catch (CertificateException | ClassCastException e) {
+            throw new AwsException("InvalidCertificateFault", "The certificate is not a valid PEM certificate.", 400);
+        }
     }
 
     // ---------------------------------------------------------------- endpoints
@@ -468,6 +531,7 @@ public class DmsService implements Resettable {
         endpoints.store().clear();
         instances.store().clear();
         tasks.store().clear();
+        certificates.store().clear();
     }
 
     // ---------------------------------------------------------------- shared resource plumbing
@@ -586,7 +650,7 @@ public class DmsService implements Resettable {
     }
 
     private Kind kindForArnType(String arnType, String resourceArn) {
-        for (Kind kind : List.of(endpoints, instances, tasks)) {
+        for (Kind kind : List.of(endpoints, instances, tasks, certificates)) {
             if (kind.arnType().equals(arnType)) {
                 return kind;
             }
