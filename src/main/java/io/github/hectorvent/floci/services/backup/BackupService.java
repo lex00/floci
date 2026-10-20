@@ -2,6 +2,7 @@ package io.github.hectorvent.floci.services.backup;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsArnUtils;
@@ -26,11 +27,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 @ApplicationScoped
 public class BackupService {
 
     private static final Logger LOG = Logger.getLogger(BackupService.class);
+    private static final Pattern FRAMEWORK_NAME =
+            Pattern.compile("[a-zA-Z][_a-zA-Z0-9]{0,255}");
 
     private static final List<String> SUPPORTED_RESOURCE_TYPES = List.of(
             "S3", "RDS", "DynamoDB", "EFS", "EC2", "EBS",
@@ -44,6 +48,7 @@ public class BackupService {
     private final StorageBackend<String, RecoveryPoint>   recoveryStore;
     private final StorageBackend<String, String>          accessPolicyStore;
     private final StorageBackend<String, BackupVaultNotifications> notificationStore;
+    private final StorageBackend<String, BackupFramework> frameworkStore;
 
     private final RegionResolver regionResolver;
     private final SnsService snsService;
@@ -75,6 +80,7 @@ public class BackupService {
         this.recoveryStore  = storageFactory.create("backup", "backup-recovery-points.json", new TypeReference<>() {});
         this.accessPolicyStore  = storageFactory.create("backup", "backup-vault-access-policies.json", new TypeReference<>() {});
         this.notificationStore  = storageFactory.create("backup", "backup-vault-notifications.json",   new TypeReference<>() {});
+        this.frameworkStore = storageFactory.create("backup", "backup-frameworks.json", new TypeReference<>() {});
         this.regionResolver = regionResolver;
         this.objectMapper = objectMapper;
         this.snsService = snsService;
@@ -84,6 +90,81 @@ public class BackupService {
     @PreDestroy
     void shutdown() {
         scheduler.shutdownNow();
+    }
+
+    // ── Audit Manager frameworks ───────────────────────────────────────────────
+
+    public synchronized BackupFramework createFramework(String name, String description, JsonNode controls,
+                                                        String idempotencyToken, Map<String, String> tags,
+                                                        String region) {
+        if (name == null || !FRAMEWORK_NAME.matcher(name).matches()) {
+            throw new AwsException("InvalidParameterValueException",
+                    "FrameworkName must start with a letter and contain 1 to 256 letters, numbers or underscores.",
+                    400);
+        }
+        requireControls(controls);
+        String key = frameworkKey(region, name);
+        if (frameworkStore.get(key).isPresent()) {
+            throw new AwsException("AlreadyExistsException", "Framework already exists: " + name, 400);
+        }
+        BackupFramework framework = new BackupFramework();
+        framework.setFrameworkName(name);
+        framework.setFrameworkArn(regionResolver.buildArn("backup", region,
+                "framework:" + name + "-" + UUID.randomUUID()));
+        framework.setFrameworkDescription(description);
+        framework.setFrameworkControls(controls);
+        framework.setCreationTime(Instant.now().getEpochSecond());
+        framework.setIdempotencyToken(idempotencyToken);
+        framework.setRegion(region);
+        framework.setTags(tags);
+        frameworkStore.put(key, framework);
+        return framework;
+    }
+
+    public BackupFramework describeFramework(String name, String region) {
+        return frameworkStore.get(frameworkKey(region, name)).orElseThrow(() ->
+                new AwsException("ResourceNotFoundException", "Framework not found: " + name, 400));
+    }
+
+    public synchronized BackupFramework updateFramework(String name, String description, JsonNode controls,
+                                                        String region) {
+        BackupFramework framework = describeFramework(name, region);
+        if (description != null) {
+            framework.setFrameworkDescription(description);
+        }
+        if (controls != null && !controls.isMissingNode() && !controls.isNull()) {
+            requireControls(controls);
+            framework.setFrameworkControls(controls);
+        }
+        frameworkStore.put(frameworkKey(region, name), framework);
+        return framework;
+    }
+
+    public synchronized void deleteFramework(String name, String region) {
+        describeFramework(name, region);
+        frameworkStore.delete(frameworkKey(region, name));
+    }
+
+    public List<BackupFramework> listFrameworks(String region) {
+        return frameworkStore.scan(k -> k.startsWith(region + "::")).stream()
+                .sorted(Comparator.comparing(BackupFramework::getFrameworkName))
+                .toList();
+    }
+
+    private static void requireControls(JsonNode controls) {
+        if (controls == null || !controls.isArray()) {
+            throw new AwsException("InvalidParameterValueException", "FrameworkControls is required.", 400);
+        }
+        for (JsonNode control : controls) {
+            if (control.path("ControlName").asText("").isBlank()) {
+                throw new AwsException("InvalidParameterValueException",
+                        "Every framework control needs a ControlName.", 400);
+            }
+        }
+    }
+
+    private static String frameworkKey(String region, String name) {
+        return region + "::" + name;
     }
 
     // ── Vault ──────────────────────────────────────────────────────────────────
@@ -829,7 +910,15 @@ public class BackupService {
         });
     }
 
+    private Optional<BackupFramework> findFrameworkByArn(String arn) {
+        return frameworkStore.scan(k -> true).stream().filter(f -> arn.equals(f.getFrameworkArn())).findFirst();
+    }
+
     private Map<String, String> findTagsByArn(String arn) {
+        Optional<BackupFramework> framework = findFrameworkByArn(arn);
+        if (framework.isPresent()) {
+            return framework.get().getTags();
+        }
         Optional<BackupVault> vault = vaultStore.scan(k -> true).stream()
                 .filter(v -> arn.equals(v.getBackupVaultArn()))
                 .findFirst();
@@ -846,6 +935,13 @@ public class BackupService {
     }
 
     private void applyTags(String arn, Map<String, String> newTags) {
+        Optional<BackupFramework> framework = findFrameworkByArn(arn);
+        if (framework.isPresent()) {
+            framework.get().getTags().putAll(newTags);
+            frameworkStore.put(frameworkKey(framework.get().getRegion(), framework.get().getFrameworkName()),
+                    framework.get());
+            return;
+        }
         Optional<BackupVault> vaultOpt = vaultStore.scan(k -> true).stream()
                 .filter(v -> arn.equals(v.getBackupVaultArn()))
                 .findFirst();
@@ -859,6 +955,13 @@ public class BackupService {
     }
 
     private void removeTags(String arn, List<String> tagKeys) {
+        Optional<BackupFramework> framework = findFrameworkByArn(arn);
+        if (framework.isPresent()) {
+            tagKeys.forEach(framework.get().getTags()::remove);
+            frameworkStore.put(frameworkKey(framework.get().getRegion(), framework.get().getFrameworkName()),
+                    framework.get());
+            return;
+        }
         Optional<BackupVault> vaultOpt = vaultStore.scan(k -> true).stream()
                 .filter(v -> arn.equals(v.getBackupVaultArn()))
                 .findFirst();

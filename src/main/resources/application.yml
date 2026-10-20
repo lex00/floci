@@ -1004,6 +1004,8 @@ floci:
       enabled: true
     datasync:
       enabled: true
+    fsx:
+      enabled: true
     aps:
       enabled: true
     lakeformation:

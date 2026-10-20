@@ -881,6 +881,8 @@ public interface EmulatorConfig {
         GlobalAcceleratorServiceConfig globalaccelerator();
         DataSyncServiceConfig datasync();
 
+        FsxServiceConfig fsx();
+
         ApsServiceConfig aps();
 
         LakeFormationServiceConfig lakeformation();
@@ -972,6 +974,11 @@ public interface EmulatorConfig {
     }
 
     interface DataSyncServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface FsxServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }

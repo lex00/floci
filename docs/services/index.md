@@ -123,7 +123,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [AWS Audit Manager](auditmanager.md) | `/assessmentFrameworks/*`, `/controls/*`, `/tags/*` | REST JSON | 13 |
 | [Control Tower](controltower.md) | `/list-landingzones`, `/get-landingzone`, `/create-landingzone`, `/*-baseline*` | REST JSON | 15 |
 | [Managed Prometheus (AMP)](managed-prometheus.md) | `/workspaces/*`, `/workspaces/*/rulegroupsnamespaces/*`, `/tags/*` | REST JSON | 13 |
-| [AWS Backup](backup.md) | `/backup-vaults/*`, `/backup/plans/*`, `/backup-jobs/*`, `/supported-resource-types` | REST JSON | 20 |
+| [AWS Backup](backup.md) | `/backup-vaults/*`, `/backup/plans/*`, `/backup-jobs/*`, `/audit/frameworks/*`, `/supported-resource-types` | REST JSON | 25 |
 | [AWS FIS](fis.md) | `/experimentTemplates/*`, `/experiments/*`, `/actions/*`, `/targetResourceTypes/*`, `/safetyLevers/*`, `/tags/*` | REST JSON | 26 |
 | [Amazon IVS](ivs.md) | `POST /{OperationName}` | REST JSON | 9 |
 | [Amazon IVS Chat](ivschat.md) | `POST /{OperationName}` | REST JSON | 6 |
@@ -149,6 +149,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [BCM Data Exports](bcm-data-exports.md) | `POST /` + `X-Amz-Target: AWSBillingAndCostManagementDataExports.*` | JSON 1.1 | 7 |
 | [Transfer Family](transfer.md) | `POST /` + `X-Amz-Target: TransferService.*` | JSON 1.1 | 26 |
 | [DataSync](datasync.md) | `POST /` + `X-Amz-Target: FmrsService.*` | JSON 1.1 | 48 |
+| [Amazon FSx](fsx.md) | `POST /` + `X-Amz-Target: AWSSimbaAPIService_v20180301.*` | JSON 1.1 | 7 |
 | [IoT Core](iot.md) | `/things/...`, `/endpoint`, rules/policies REST paths | REST JSON | 78 |
 | [IoT Data](iot.md) | `/things/{thingName}/shadow`, MQTT topics | REST JSON | 11 |
 | [MediaLive](medialive.md) | `/prod/multiplexes/*`, `/prod/tags/*` | REST JSON | 9 |

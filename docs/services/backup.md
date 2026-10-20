@@ -38,6 +38,16 @@
 | `PutBackupVaultLockConfiguration` | `PUT` | `/backup-vaults/{backupVaultName}/vault-lock` | Apply a governance or compliance lock |
 | `DeleteBackupVaultLockConfiguration` | `DELETE` | `/backup-vaults/{backupVaultName}/vault-lock` | Remove a lock that is still changeable |
 
+### Audit Manager Frameworks
+
+| Action | Method | Path | Description |
+|---|---|---|---|
+| `CreateFramework` | `POST` | `/audit/frameworks` | Create a framework of controls, with tags |
+| `DescribeFramework` | `GET` | `/audit/frameworks/{frameworkName}` | Describe a framework, deployed and active at once |
+| `UpdateFramework` | `PUT` | `/audit/frameworks/{frameworkName}` | Replace a framework's description or controls |
+| `DeleteFramework` | `DELETE` | `/audit/frameworks/{frameworkName}` | Delete a framework |
+| `ListFrameworks` | `GET` | `/audit/frameworks` | List the region's frameworks |
+
 ### Backup Plans
 
 | Action | Method | Path | Description |

@@ -44,7 +44,7 @@ class PartitionCrossServiceSmokeIntegrationTest {
             "cloudfront", "cloudmap", "cloudwatch", "codebuild", "codedeploy", "codepipeline", "cognito",
             "configservice", "connect", "controlcatalog", "controltower", "datasync", "datazone", "dlm", "dms", "dynamodb", "ec2",
             "ecr", "ecs", "efs", "eks", "elasticache", "elasticbeanstalk", "elbv2", "emr", "emrserverless",
-            "eventbridge", "firehose", "fis", "glue", "guardduty", "iot", "kinesis", "kinesisanalytics", "lambda",
+            "eventbridge", "firehose", "fis", "fsx", "glue", "guardduty", "iot", "kinesis", "kinesisanalytics", "lambda",
             "lambdamicrovms", "lambdaweb", "medialive", "mediapackage", "memorydb", "msk", "mwaa", "networkfirewall",
             "oam", "opensearch", "organizations", "pipes", "ram", "rds", "redshift", "redshiftserverless",
             "resourceexplorer2", "route53", "route53resolver",
@@ -1115,6 +1115,25 @@ class PartitionCrossServiceSmokeIntegrationTest {
         cleanup.register(() -> json11(region, "datasync", "FmrsService.DeleteAgent",
                 "{\"AgentArn\":\"" + arn + "\"}").when().post("/"));
         PartitionMatrix.assertArnIn(partitionCase, arn);
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void fsxFileSystemArnAndDnsName(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "fsx");
+        String subnetId = signed(region, "ec2")
+            .formParam("Action", "DescribeSubnets")
+            .formParam("Version", "2016-11-15")
+        .when().post("/").then().statusCode(200)
+            .extract().xmlPath().getString("DescribeSubnetsResponse.subnetSet.item[0].subnetId");
+        Response created = json11(region, "fsx", "AWSSimbaAPIService_v20180301.CreateFileSystem",
+                "{\"FileSystemType\":\"LUSTRE\",\"StorageCapacity\":1200,\"SubnetIds\":[\"" + subnetId + "\"]}")
+        .when().post("/").then().statusCode(200).extract().response();
+        String id = created.jsonPath().getString("FileSystem.FileSystemId");
+        cleanup.register(() -> json11(region, "fsx", "AWSSimbaAPIService_v20180301.DeleteFileSystem",
+                "{\"FileSystemId\":\"" + id + "\"}").when().post("/"));
+        PartitionMatrix.assertArnIn(partitionCase, created.jsonPath().getString("FileSystem.ResourceARN"));
+        assertRegionalHostIn(partitionCase, created.jsonPath().getString("FileSystem.DNSName"));
     }
 
     @ParameterizedTest

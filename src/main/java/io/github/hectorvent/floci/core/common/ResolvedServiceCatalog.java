@@ -750,6 +750,12 @@ public class ResolvedServiceCatalog {
                         "datasync", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
                         protocols(ServiceProtocol.JSON),
                         Set.of("FmrsService."), Set.of("datasync"), Set.of(), Set.of()),
+                // FSx's Smithy service shape is AWSSimbaAPIService_v20180301, so that is the
+                // target prefix the SDK sends.
+                descriptor("fsx", "fsx", config.services().fsx().enabled(), true,
+                        "fsx", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
+                        protocols(ServiceProtocol.JSON),
+                        Set.of("AWSSimbaAPIService_v20180301."), Set.of("fsx"), Set.of(), Set.of()),
                 descriptor("network-firewall", "networkfirewall", config.services().networkfirewall().enabled(), true,
                         "networkfirewall", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
                         protocols(ServiceProtocol.JSON),
