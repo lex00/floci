@@ -13,7 +13,9 @@ that shares the same signing name: see [Bedrock Runtime](bedrock-runtime.md).
 | --- | --- |
 | `ListFoundationModels` | List the foundation model catalog, filtered by provider, output modality, inference type and customization type |
 | `GetFoundationModel` | Read one catalog model by model id or foundation-model ARN |
-| `ListInferenceProfiles` | List the system-defined cross-region inference profiles of the request region |
+| `ListInferenceProfiles` | List the region's system-defined and application inference profiles, filtered by `type` |
+| `CreateInferenceProfile` | Create an application profile that copies a foundation model or a system-defined profile |
+| `DeleteInferenceProfile` | Delete an application profile |
 | `GetInferenceProfile` | Read an inference profile by id or ARN |
 | `CreateGuardrail` | Create a guardrail; returns the `DRAFT` version, `READY` immediately |
 | `GetGuardrail` | Read a guardrail by id or ARN, at `DRAFT` or a numbered `guardrailVersion` |
@@ -21,9 +23,9 @@ that shares the same signing name: see [Bedrock Runtime](bedrock-runtime.md).
 | `CreateGuardrailVersion` | Snapshot the `DRAFT` under the next numerical version |
 | `DeleteGuardrail` | Delete one numerical version, or the guardrail and all its versions |
 | `ListGuardrails` | List every guardrail's `DRAFT`, or every version of one guardrail |
-| `TagResource` | Tag a guardrail (`POST /tagResource`) |
-| `UntagResource` | Remove tags from a guardrail (`POST /untagResource`) |
-| `ListTagsForResource` | List a guardrail's tags (`POST /listTagsForResource`) |
+| `TagResource` | Tag a guardrail or application inference profile (`POST /tagResource`) |
+| `UntagResource` | Remove tags from a guardrail or application inference profile (`POST /untagResource`) |
+| `ListTagsForResource` | List a guardrail's or application inference profile's tags (`POST /listTagsForResource`) |
 <!-- floci:actions:end -->
 
 Guardrails are versioned. The working copy is `DRAFT`, and `GetGuardrail` without a
@@ -80,9 +82,15 @@ profiles of the request region's geography: `us.` in US regions, `eu.` in EU reg
 `apac.` in Asia Pacific regions, each listing the model's ARN in that geography's regions.
 Other regions have none.
 
+`CreateInferenceProfile` makes an `APPLICATION` profile from `modelSource.copyFrom`, which
+names a foundation model ARN or a system-defined profile ARN of the region. The profile
+takes that source's model ARNs. Its id is random, its ARN is
+`application-inference-profile/<id>`, and it accepts tags. A second profile with the same
+name fails with `ConflictException`, and a system-defined profile cannot be deleted.
+
 `FLOCI_SERVICES_BEDROCK_FOUNDATION_MODELS` replaces the catalog with a comma-separated list
-of model ids, for a proxy backend that serves a different set. A listed id the catalog does
-not know is served as a text model from the provider its id prefix names.
+of model ids, for a proxy backend that serves a different set. An unknown id becomes a text
+model from the provider its id prefix names.
 `FLOCI_SERVICES_BEDROCK_EXTRA_FOUNDATION_MODELS` appends ids to the catalog instead.
 
 ## Not implemented
@@ -93,7 +101,7 @@ emulating it faithfully would require behaviour Floci has no way to model:
 - Custom model, model customization, model import and distillation jobs. These
   depend on real training runs.
 - Model evaluation and evaluation jobs. These depend on real inference.
-- Provisioned throughput, application inference profiles and prompt routers. These describe real
+- Provisioned throughput and prompt routers. These describe real
   capacity reservations and routing.
 - Model invocation logging, batch inference and async invoke. These are data-plane
   operations backed by real model execution.

@@ -232,6 +232,9 @@ nav:
     - Transcribe: services/transcribe.md
     - Comprehend: services/comprehend.md
     - Rekognition: services/rekognition.md
+    - Kendra: services/kendra.md
+    - Q Business: services/qbusiness.md
+    - Location Service: services/location.md
     - Translate: services/translate.md
     - Pricing: services/pricing.md
     - Cost Explorer: services/ce.md

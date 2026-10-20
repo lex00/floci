@@ -55,6 +55,7 @@ import io.github.hectorvent.floci.services.lambda.durable.DurableExecutionContro
 import io.github.hectorvent.floci.services.lambdamicrovms.LambdaMicrovmsController;
 import io.github.hectorvent.floci.services.lambdamicrovms.LambdaNetworkConnectorsController;
 import io.github.hectorvent.floci.services.lambdaweb.LambdaWebController;
+import io.github.hectorvent.floci.services.location.LocationController;
 import io.github.hectorvent.floci.services.macie2.MacieController;
 import io.github.hectorvent.floci.services.marketplace.MarketplaceCatalogController;
 import io.github.hectorvent.floci.services.marketplace.MarketplaceDeploymentController;
@@ -68,6 +69,7 @@ import io.github.hectorvent.floci.services.oam.OamController;
 import io.github.hectorvent.floci.services.opensearch.ElasticsearchController;
 import io.github.hectorvent.floci.services.opensearch.OpenSearchController;
 import io.github.hectorvent.floci.services.pipes.PipesController;
+import io.github.hectorvent.floci.services.qbusiness.QBusinessController;
 import io.github.hectorvent.floci.services.rdsdata.RdsDataController;
 import io.github.hectorvent.floci.services.resourceexplorer2.ResourceExplorer2Controller;
 import io.github.hectorvent.floci.services.route53.Route53Controller;
@@ -614,13 +616,25 @@ public class ResolvedServiceCatalog {
                         protocols(ServiceProtocol.JSON),
                         Set.of("Textract."), Set.of("textract"), Set.of(), Set.of()),
                 descriptor("comprehend", "comprehend", config.services().comprehend().enabled(), true,
-                        null, null, 5000L, null, ServiceProtocol.JSON,
+                        "comprehend", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
                         protocols(ServiceProtocol.JSON),
                         Set.of("Comprehend_20171127."), Set.of("comprehend"), Set.of(), Set.of()),
                 descriptor("rekognition", "rekognition", config.services().rekognition().enabled(), true,
-                        null, null, 5000L, null, ServiceProtocol.JSON,
+                        "rekognition", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
                         protocols(ServiceProtocol.JSON),
                         Set.of("RekognitionService."), Set.of("rekognition"), Set.of(), Set.of()),
+                descriptor("kendra", "kendra", config.services().kendra().enabled(), true,
+                        "kendra", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
+                        protocols(ServiceProtocol.JSON),
+                        Set.of("AWSKendraFrontendService."), Set.of("kendra"), Set.of(), Set.of()),
+                descriptor("qbusiness", "qbusiness", config.services().qbusiness().enabled(), true,
+                        "qbusiness", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
+                        protocols(ServiceProtocol.REST_JSON),
+                        Set.of(), Set.of("qbusiness"), Set.of(), Set.of(QBusinessController.class)),
+                descriptor("location", "location", config.services().location().enabled(), true,
+                        "location", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
+                        protocols(ServiceProtocol.REST_JSON),
+                        Set.of(), Set.of("geo"), Set.of(), Set.of(LocationController.class)),
                 descriptor("pricing", "pricing", config.services().pricing().enabled(), true,
                         null, null, 5000L, null, ServiceProtocol.JSON,
                         protocols(ServiceProtocol.JSON),

@@ -814,6 +814,9 @@ public interface EmulatorConfig {
         TransferServiceConfig transfer();
         TextractServiceConfig textract();
         ComprehendServiceConfig comprehend();
+        KendraServiceConfig kendra();
+        QBusinessServiceConfig qbusiness();
+        LocationServiceConfig location();
         RekognitionServiceConfig rekognition();
         PricingServiceConfig pricing();
         DuckConfig duck();
@@ -2510,6 +2513,21 @@ public interface EmulatorConfig {
     }
 
     interface TextractServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface KendraServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface QBusinessServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface LocationServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }

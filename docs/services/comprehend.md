@@ -13,6 +13,19 @@
 | `DetectDominantLanguage` | Detect the dominant language of a text |
 | `DetectPiiEntities` | Detect personally identifiable information (PII) in a text |
 | `ContainsPiiEntities` | Report whether a text contains PII, without locating it |
+| `CreateDocumentClassifier` | Create a custom classifier; it reports `TRAINED` from the first read |
+| `DescribeDocumentClassifier` | Read a classifier by ARN, with canned `ClassifierMetadata` |
+| `ListDocumentClassifiers` | List classifiers, filtered by name or status |
+| `DeleteDocumentClassifier` | Delete a classifier |
+| `StopTrainingDocumentClassifier` | Accepted; a trained classifier keeps its status |
+| `CreateEntityRecognizer` | Create a custom entity recognizer; it reports `TRAINED` from the first read |
+| `DescribeEntityRecognizer` | Read a recognizer by ARN, with its entity types in `RecognizerMetadata` |
+| `ListEntityRecognizers` | List recognizers, filtered by name or status |
+| `DeleteEntityRecognizer` | Delete a recognizer |
+| `StopTrainingEntityRecognizer` | Accepted; a trained recognizer keeps its status |
+| `TagResource` | Tag a classifier or recognizer |
+| `UntagResource` | Remove tags from a classifier or recognizer |
+| `ListTagsForResource` | List a classifier's or recognizer's tags |
 <!-- floci:actions:end -->
 
 ## Emulation Behavior
@@ -28,9 +41,14 @@
   `ar`, `hi`, `ja`, `ko`, `zh`, `zh-TW`); `DetectPiiEntities` and
   `ContainsPiiEntities` accept only `en`/`es`, matching AWS's narrower support
   for PII detection.
-- **Out of scope:** the async job/model-training surface (`DocumentClassifier`,
-  `EntityRecognizer`, `Flywheel`, `Dataset`, `Endpoint` operations), `DetectEntities`,
-  and `DetectSyntax` are not implemented.
+- **Custom models:** document classifiers and entity recognizers are stored per region
+  and report `TRAINED` as soon as they are created, with fixed training metrics. No
+  training data is read. The ARN is `document-classifier/<name>` or
+  `entity-recognizer/<name>`, with `/version/<VersionName>` appended when a version is
+  given. A second create with the same name and version fails with
+  `ResourceInUseException`.
+- **Out of scope:** async jobs, flywheels, datasets, endpoints, `DetectEntities` and
+  `DetectSyntax` are not implemented.
 - **Intentional deviation:** real Comprehend enforces a maximum input size on `Text`
   and returns `TextSizeLimitExceededException` when exceeded. This is not enforced
   here — any non-empty `Text` is accepted regardless of length.

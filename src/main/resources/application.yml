@@ -866,6 +866,12 @@ floci:
       enabled: true
     rekognition:
       enabled: true
+    kendra:
+      enabled: true
+    qbusiness:
+      enabled: true
+    location:
+      enabled: true
     translate:
       enabled: true
     pricing:

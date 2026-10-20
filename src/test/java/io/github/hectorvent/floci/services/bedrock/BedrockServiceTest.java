@@ -42,7 +42,7 @@ class BedrockServiceTest {
     void setUp() {
         kmsService = mock(KmsService.class);
         RegionResolver regionResolver = new RegionResolver(REGION, ACCOUNT);
-        service = new BedrockService(new InMemoryStorage<>(), regionResolver, mapper, kmsService,
+        service = new BedrockService(new InMemoryStorage<>(), new InMemoryStorage<>(), regionResolver, mapper, kmsService,
                 new BedrockModelCatalog(regionResolver, Optional.empty(), Optional.empty()));
     }
 

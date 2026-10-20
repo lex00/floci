@@ -120,4 +120,94 @@ class BedrockFoundationModelIntegrationTest {
             .statusCode(200)
             .body("inferenceProfileSummaries.size()", equalTo(2));
     }
+
+    @Test
+    void applicationInferenceProfileLifecycleWithTags() {
+        String arn = given()
+            .header("Authorization", AUTH)
+            .contentType("application/json")
+            .body("""
+                {"inferenceProfileName": "team-haiku",
+                 "description": "Cost tracking",
+                 "modelSource": {"copyFrom":
+                   "arn:aws:bedrock:us-west-2:000000000000:inference-profile/us.anthropic.claude-3-haiku-20240307-v1:0"},
+                 "tags": [{"key": "team", "value": "ai"}]}
+                """)
+        .when()
+            .post("/inference-profiles")
+        .then()
+            .statusCode(201)
+            .body("status", equalTo("ACTIVE"))
+            .body("inferenceProfileArn", startsWith(
+                    "arn:aws:bedrock:us-west-2:000000000000:application-inference-profile/"))
+            .extract().path("inferenceProfileArn");
+
+        given()
+            .header("Authorization", AUTH)
+        .when()
+            .get("/inference-profiles/" + arn.substring(arn.lastIndexOf('/') + 1))
+        .then()
+            .statusCode(200)
+            .body("inferenceProfileName", equalTo("team-haiku"))
+            .body("type", equalTo("APPLICATION"))
+            .body("models.size()", equalTo(3));
+
+        given()
+            .header("Authorization", AUTH)
+            .queryParam("type", "APPLICATION")
+        .when()
+            .get("/inference-profiles")
+        .then()
+            .statusCode(200)
+            .body("inferenceProfileSummaries.inferenceProfileArn", hasItem(arn));
+
+        given()
+            .header("Authorization", AUTH)
+            .contentType("application/json")
+            .body("{\"resourceARN\": \"" + arn + "\"}")
+        .when()
+            .post("/listTagsForResource")
+        .then()
+            .statusCode(200)
+            .body("tags[0].key", equalTo("team"));
+
+        given()
+            .header("Authorization", AUTH)
+            .contentType("application/json")
+            .body("{\"inferenceProfileName\": \"team-haiku\", \"modelSource\": {\"copyFrom\": "
+                    + "\"arn:aws:bedrock:us-west-2::foundation-model/amazon.nova-lite-v1:0\"}}")
+        .when()
+            .post("/inference-profiles")
+        .then()
+            .statusCode(400)
+            .body("__type", equalTo("ConflictException"));
+
+        given()
+            .header("Authorization", AUTH)
+        .when()
+            .delete("/inference-profiles/" + arn)
+        .then()
+            .statusCode(200);
+
+        given()
+            .header("Authorization", AUTH)
+        .when()
+            .get("/inference-profiles/" + arn)
+        .then()
+            .statusCode(404);
+    }
+
+    @Test
+    void createInferenceProfileFromAnUnknownModelIsNotFound() {
+        given()
+            .header("Authorization", AUTH)
+            .contentType("application/json")
+            .body("{\"inferenceProfileName\": \"ghost\", \"modelSource\": {\"copyFrom\": "
+                    + "\"arn:aws:bedrock:us-west-2::foundation-model/acme.ghost-v1\"}}")
+        .when()
+            .post("/inference-profiles")
+        .then()
+            .statusCode(404)
+            .body("__type", equalTo("ResourceNotFoundException"));
+    }
 }

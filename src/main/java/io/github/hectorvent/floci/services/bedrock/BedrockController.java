@@ -113,6 +113,26 @@ public class BedrockController {
         return Response.ok(response).build();
     }
 
+    @POST
+    @Path("/inference-profiles")
+    public Response createInferenceProfile(@Context HttpHeaders headers, String body) {
+        String region = regionResolver.resolveRegion(headers);
+        BedrockModelCatalog.InferenceProfile profile = bedrockService.createInferenceProfile(readTree(body), region);
+        ObjectNode response = objectMapper.createObjectNode();
+        response.put("inferenceProfileArn", profile.inferenceProfileArn());
+        response.put("status", "ACTIVE");
+        return Response.status(201).entity(response).build();
+    }
+
+    @DELETE
+    @Path("/inference-profiles/{inferenceProfileIdentifier: .+}")
+    public Response deleteInferenceProfile(@PathParam("inferenceProfileIdentifier") String identifier,
+                                           @Context HttpHeaders headers) {
+        String region = regionResolver.resolveRegion(headers);
+        bedrockService.deleteInferenceProfile(identifier, region);
+        return Response.ok(objectMapper.createObjectNode()).build();
+    }
+
     @GET
     @Path("/inference-profiles/{inferenceProfileIdentifier: .+}")
     public Response getInferenceProfile(@PathParam("inferenceProfileIdentifier") String identifier,

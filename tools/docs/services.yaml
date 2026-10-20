@@ -234,6 +234,34 @@ services:
       - TagResourceByBody
       - TagResourcePut
       - UntagResourceByQuery
+  - service: kendra
+    doc: docs/services/kendra.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/kendra/KendraJsonHandler.java, mode: switch }
+  - service: qbusiness
+    doc: docs/services/qbusiness.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/qbusiness/QBusinessController.java, mode: rest }
+      - { path: src/main/java/io/github/hectorvent/floci/core/common/V1TagsController.java, mode: rest }
+    rename_actions:
+      ListTags: ListTagsForResource
+      TagResourcePost: TagResource
+    exclude_actions:
+      - ListTagsForResourceByQuery
+      - TagResourcePut
+  - service: location
+    doc: docs/services/location.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/location/LocationController.java, mode: rest }
+      - { path: src/main/java/io/github/hectorvent/floci/core/common/SharedTagsController.java, mode: rest }
+    rename_actions:
+      ListTags: ListTagsForResource
+      TagResourcePost: TagResource
+    exclude_actions:
+      - ListTagsByQuery
+      - TagResourceByBody
+      - TagResourcePut
+      - UntagResourceByQuery
   - service: rekognition
     doc: docs/services/rekognition.md
     sources:

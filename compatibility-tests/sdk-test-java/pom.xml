@@ -298,6 +298,21 @@
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>account</artifactId>
         </dependency>
+        <!-- Amazon Kendra client -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>kendra</artifactId>
+        </dependency>
+        <!-- Amazon Q Business client -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>qbusiness</artifactId>
+        </dependency>
+        <!-- Amazon Location Service client -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>location</artifactId>
+        </dependency>
         <!-- AWS Control Catalog client -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>

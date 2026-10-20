@@ -16,15 +16,17 @@ import org.jboss.logging.Logger;
 public class ComprehendJsonHandler {
     private static final Logger LOG = Logger.getLogger(ComprehendJsonHandler.class);
     private final ComprehendService comprehendService;
+    private final ComprehendModelService modelService;
     @Inject
-    public ComprehendJsonHandler(ComprehendService comprehendService) {
+    public ComprehendJsonHandler(ComprehendService comprehendService, ComprehendModelService modelService) {
         this.comprehendService = comprehendService;
+        this.modelService = modelService;
     }
     /**
      * Dispatches Comprehend actions received via the AwsJson11Controller.
-     * Only the sync Detect and ContainsPiiEntities actions are implemented; the
-     * async job and model-training surface (DocumentClassifier, EntityRecognizer,
-     * Flywheel, Dataset, Endpoint) is out of scope.
+     * The sync Detect and ContainsPiiEntities actions, custom document classifiers and
+     * entity recognizers, and tagging are implemented. Async jobs, flywheels, datasets and
+     * endpoints are out of scope.
      */
     public Response handle(String action, JsonNode request, String region) {
         LOG.debugv("Comprehend action: {0}", action);
@@ -39,6 +41,32 @@ public class ComprehendJsonHandler {
                     getStringField(request, "Text"), getStringField(request, "LanguageCode"));
             case "ContainsPiiEntities" -> comprehendService.containsPiiEntities(
                     getStringField(request, "Text"), getStringField(request, "LanguageCode"));
+            case "CreateDocumentClassifier" -> Response.ok(
+                    modelService.create(ComprehendModelService.CLASSIFIER, request, region)).build();
+            case "DescribeDocumentClassifier" -> Response.ok(modelService.describe(
+                    ComprehendModelService.CLASSIFIER, getStringField(request, "DocumentClassifierArn"))).build();
+            case "ListDocumentClassifiers" -> Response.ok(
+                    modelService.list(ComprehendModelService.CLASSIFIER, request, region)).build();
+            case "DeleteDocumentClassifier" -> Response.ok(modelService.delete(
+                    ComprehendModelService.CLASSIFIER, getStringField(request, "DocumentClassifierArn"))).build();
+            case "StopTrainingDocumentClassifier" -> Response.ok(modelService.stopTraining(
+                    ComprehendModelService.CLASSIFIER, getStringField(request, "DocumentClassifierArn"))).build();
+            case "CreateEntityRecognizer" -> Response.ok(
+                    modelService.create(ComprehendModelService.RECOGNIZER, request, region)).build();
+            case "DescribeEntityRecognizer" -> Response.ok(modelService.describe(
+                    ComprehendModelService.RECOGNIZER, getStringField(request, "EntityRecognizerArn"))).build();
+            case "ListEntityRecognizers" -> Response.ok(
+                    modelService.list(ComprehendModelService.RECOGNIZER, request, region)).build();
+            case "DeleteEntityRecognizer" -> Response.ok(modelService.delete(
+                    ComprehendModelService.RECOGNIZER, getStringField(request, "EntityRecognizerArn"))).build();
+            case "StopTrainingEntityRecognizer" -> Response.ok(modelService.stopTraining(
+                    ComprehendModelService.RECOGNIZER, getStringField(request, "EntityRecognizerArn"))).build();
+            case "TagResource" -> Response.ok(modelService.tag(
+                    getStringField(request, "ResourceArn"), request.get("Tags"))).build();
+            case "UntagResource" -> Response.ok(modelService.untag(
+                    getStringField(request, "ResourceArn"), request.get("TagKeys"))).build();
+            case "ListTagsForResource" -> Response.ok(
+                    modelService.listTags(getStringField(request, "ResourceArn"))).build();
             default -> Response.status(400)
                     .entity(new AwsErrorResponse("UnknownOperationException",
                             "Unknown operation: Comprehend_20171127." + action))
