@@ -322,6 +322,20 @@ public class DataZoneService implements TagHandler, Resettable {
                 .orElseThrow(() -> notFound("Glossary " + identifier + " not found."));
     }
 
+    public List<DataZoneGlossary> listGlossaries(String region, String domainIdentifier) {
+        DataZoneDomain domain = getDomain(region, domainIdentifier);
+        return glossaries.scan(k -> k.startsWith(childPrefix(region, domain.getId()))).stream()
+                .sorted(Comparator.comparingLong(DataZoneGlossary::getCreatedAt))
+                .toList();
+    }
+
+    public List<DataZoneGlossaryTerm> listGlossaryTerms(String region, String domainIdentifier) {
+        DataZoneDomain domain = getDomain(region, domainIdentifier);
+        return terms.scan(k -> k.startsWith(childPrefix(region, domain.getId()))).stream()
+                .sorted(Comparator.comparingLong(DataZoneGlossaryTerm::getCreatedAt))
+                .toList();
+    }
+
     public DataZoneGlossary updateGlossary(String region, String domainIdentifier, String identifier,
                                            String name, String description, String status) {
         DataZoneGlossary glossary = getGlossary(region, domainIdentifier, identifier);

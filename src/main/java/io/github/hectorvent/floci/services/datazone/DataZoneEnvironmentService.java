@@ -467,6 +467,14 @@ public class DataZoneEnvironmentService implements Resettable {
         records.delete(key(ASSET_TYPE, region, assetType.path("domainId").asText(), identifier));
     }
 
+    public List<ObjectNode> listFormTypes(String region, String domainId) {
+        return list(FORM_TYPE, region, domains.getDomain(region, domainId).getId(), "name");
+    }
+
+    public List<ObjectNode> listAssetTypes(String region, String domainId) {
+        return list(ASSET_TYPE, region, domains.getDomain(region, domainId).getId(), "name");
+    }
+
     // ──────────────────────────── User profiles ────────────────────────────
 
     public synchronized ObjectNode createUserProfile(String region, String domainId, JsonNode request) {

@@ -70,6 +70,29 @@ and projects that hold them.
 | `AddPolicyGrant` | Grant a managed policy on a domain unit, profile, configuration or asset type |
 | `RemovePolicyGrant` | Remove a policy grant by principal or grant id |
 | `ListPolicyGrants` | List an entity's grants of one policy type |
+| `CreateAsset` | Create an asset of a custom or `amazon.datazone.` asset type |
+| `GetAsset` | Get an asset, or one of its revisions |
+| `DeleteAsset` | Delete an asset with its filters and listing |
+| `CreateAssetRevision` | Create the next revision of an asset |
+| `ListAssetRevisions` | List an asset's revisions, newest first |
+| `AcceptPredictions` | Accept an asset's metadata predictions |
+| `RejectPredictions` | Reject an asset's metadata predictions |
+| `CreateAssetFilter` | Create a column or row filter on an asset |
+| `GetAssetFilter` | Get an asset filter |
+| `UpdateAssetFilter` | Change an asset filter's name, description or configuration |
+| `DeleteAssetFilter` | Delete an asset filter |
+| `ListAssetFilters` | List an asset's filters |
+| `CreateDataProduct` | Create a data product from assets |
+| `GetDataProduct` | Get a data product, or one of its revisions |
+| `DeleteDataProduct` | Delete a data product with its listing |
+| `CreateDataProductRevision` | Create the next revision of a data product |
+| `ListDataProductRevisions` | List a data product's revisions, newest first |
+| `CreateListingChangeSet` | Publish or unpublish an asset or data product |
+| `GetListing` | Get a listing, or one of its revisions |
+| `DeleteListing` | Delete a listing |
+| `SearchListings` | Search active listings |
+| `Search` | Search assets, data products, glossaries or glossary terms |
+| `SearchTypes` | Search custom asset types and form types |
 <!-- floci:actions:end -->
 
 Tagging rides the shared `/tags/{resourceArn}` routes, so `ListTagsForResource`,
@@ -92,9 +115,18 @@ Each domain has a root domain unit, named after the domain, whose id is the doma
 profile is reported by the profile id, and otherwise by the identifier itself. Policy grants are
 recorded and listed but do not limit what callers can do.
 
+An asset's type is a custom asset type in the domain or any `amazon.datazone.` managed type.
+Assets and data products keep every revision. `CreateListingChangeSet` makes a listing `ACTIVE`
+at once from the latest revision or the one given, and publishing a data product publishes its
+assets too. A listing's `forms` is a JSON document keyed by form name. `Search`, `SearchListings`
+and `SearchTypes` match `searchText` against names and descriptions, apply filters to the
+result's top-level attributes, and sort on one of them. `SearchTypes` with `managed` set returns
+no items.
+
 ## Not emulated
 
-- Assets, data products, listings and subscriptions
+- Subscriptions
+- Metadata predictions; `AcceptPredictions` and `RejectPredictions` change nothing
 - Data sources and their runs, connections and lineage
 - Project profiles and rules
 
@@ -116,6 +148,10 @@ root unit and for a unit that still has child units or projects. `AddEntityOwner
 `ConflictException` for an existing owner, and `RemoveEntityOwner` and `DeleteProjectMembership`
 return `ResourceNotFoundException` for one that is absent. `AddPolicyGrant` needs the `detail`
 member that matches `policyType`, such as `createGlossary` for `CREATE_GLOSSARY`.
+
+`CreateAsset` returns `ResourceNotFoundException` for an unknown custom asset type, and
+`CreateDataProduct` for an unknown asset item. `DeleteAsset` returns `ConflictException` while a
+data product holds the asset. Asset filter names are unique per asset.
 
 ## Configuration
 
