@@ -17,10 +17,12 @@ import java.util.Map;
 public class QBusinessTagHandler implements TagHandler {
 
     private final QBusinessService service;
+    private final QBusinessResourceService resources;
 
     @Inject
-    public QBusinessTagHandler(QBusinessService service) {
+    public QBusinessTagHandler(QBusinessService service, QBusinessResourceService resources) {
         this.service = service;
+        this.resources = resources;
     }
 
     @Override
@@ -55,16 +57,24 @@ public class QBusinessTagHandler implements TagHandler {
 
     @Override
     public Map<String, String> listTags(String region, String arn) {
-        return service.listTags(arn);
+        return resources.owns(arn) ? resources.listTags(arn) : service.listTags(arn);
     }
 
     @Override
     public void tagResource(String region, String arn, Map<String, String> tags) {
-        service.tagResource(arn, tags);
+        if (resources.owns(arn)) {
+            resources.tagResource(arn, tags);
+        } else {
+            service.tagResource(arn, tags);
+        }
     }
 
     @Override
     public void untagResource(String region, String arn, List<String> tagKeys) {
-        service.untagResource(arn, tagKeys);
+        if (resources.owns(arn)) {
+            resources.untagResource(arn, tagKeys);
+        } else {
+            service.untagResource(arn, tagKeys);
+        }
     }
 }

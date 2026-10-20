@@ -107,4 +107,72 @@ class QBusinessIntegrationTest {
             .statusCode(200)
             .body("Items", notNullValue());
     }
+
+    @Test
+    void resourcesInsideAnApplication() {
+        String app = given().header("Authorization", AUTH).contentType("application/json")
+            .body("{\"displayName\": \"resources\"}")
+        .when().post("/applications")
+        .then().statusCode(200).extract().path("applicationId");
+
+        String indexId = given().header("Authorization", AUTH).contentType("application/json")
+            .body("{\"displayName\": \"main\", \"type\": \"STARTER\"}")
+        .when().post("/applications/" + app + "/indices")
+        .then().statusCode(200).extract().path("indexId");
+        given().header("Authorization", AUTH)
+        .when().get("/applications/" + app + "/indices/" + indexId)
+        .then().statusCode(200)
+            .body("status", equalTo("ACTIVE"))
+            .body("type", equalTo("STARTER"));
+
+        String dataSourceId = given().header("Authorization", AUTH).contentType("application/json")
+            .body("{\"displayName\": \"web\", \"configuration\": {\"type\": \"WEBCRAWLERV2\"}}")
+        .when().post("/applications/" + app + "/indices/" + indexId + "/datasources")
+        .then().statusCode(200).extract().path("dataSourceId");
+        given().header("Authorization", AUTH)
+        .when().post("/applications/" + app + "/indices/" + indexId + "/datasources/" + dataSourceId + "/startsync")
+        .then().statusCode(200).body("executionId", notNullValue());
+        given().header("Authorization", AUTH)
+        .when().get("/applications/" + app + "/indices/" + indexId + "/datasources")
+        .then().statusCode(200).body("dataSources.dataSourceId", hasItem(dataSourceId));
+
+        String retrieverId = given().header("Authorization", AUTH).contentType("application/json")
+            .body("{\"type\": \"NATIVE_INDEX\", \"displayName\": \"r\", "
+                    + "\"configuration\": {\"nativeIndexConfiguration\": {\"indexId\": \"" + indexId + "\"}}}")
+        .when().post("/applications/" + app + "/retrievers")
+        .then().statusCode(200).extract().path("retrieverId");
+        given().header("Authorization", AUTH).contentType("application/json")
+            .body("{\"displayName\": \"renamed\"}")
+        .when().put("/applications/" + app + "/retrievers/" + retrieverId)
+        .then().statusCode(200);
+        given().header("Authorization", AUTH)
+        .when().get("/applications/" + app + "/retrievers")
+        .then().statusCode(200).body("retrievers[0].displayName", equalTo("renamed"));
+
+        String experienceArn = given().header("Authorization", AUTH).contentType("application/json")
+            .body("{\"title\": \"Help\"}")
+        .when().post("/applications/" + app + "/experiences")
+        .then().statusCode(200).extract().path("webExperienceArn");
+        String experienceId = experienceArn.substring(experienceArn.lastIndexOf('/') + 1);
+        given().header("Authorization", AUTH)
+        .when().get("/applications/" + app + "/experiences/" + experienceId)
+        .then().statusCode(200)
+            .body("status", equalTo("ACTIVE"))
+            .body("defaultEndpoint", notNullValue());
+
+        given().header("Authorization", AUTH).contentType("application/json")
+            .body("{\"responseScope\": \"EXTENDED_KNOWLEDGE_ENABLED\"}")
+        .when().patch("/applications/" + app + "/chatcontrols")
+        .then().statusCode(200);
+        given().header("Authorization", AUTH)
+        .when().get("/applications/" + app + "/chatcontrols")
+        .then().statusCode(200).body("responseScope", equalTo("EXTENDED_KNOWLEDGE_ENABLED"));
+
+        given().header("Authorization", AUTH)
+        .when().delete("/applications/" + app)
+        .then().statusCode(200);
+        given().header("Authorization", AUTH)
+        .when().get("/applications/" + app + "/retrievers/" + retrieverId)
+        .then().statusCode(404);
+    }
 }

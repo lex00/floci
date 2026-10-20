@@ -172,4 +172,60 @@ class LocationIntegrationTest {
             .statusCode(200)
             .body("Entries.TrackerName", not(hasItem("fleet")));
     }
+
+    @Test
+    void geofencesDevicePositionsAndRoutes() {
+        geo("cp.geofencing.").body("{\"CollectionName\": \"zones\"}")
+            .when().post("/geofencing/v0/collections").then().statusCode(200);
+        geo("geofencing.").body("""
+                {"Geometry": {"Polygon": [[[-123.2, 49.2], [-123.0, 49.2], [-123.0, 49.3], [-123.2, 49.3], [-123.2, 49.2]]]},
+                 "GeofenceProperties": {"kind": "depot"}}""")
+            .when().put("/geofencing/v0/collections/zones/geofences/depot")
+            .then().statusCode(200)
+            .body("GeofenceId", equalTo("depot"))
+            .body("CreateTime", notNullValue());
+        geo("geofencing.").body("""
+                {"Entries": [{"GeofenceId": "ring", "Geometry": {"Circle": {"Center": [-123.1, 49.25], "Radius": 500}}},
+                             {"GeofenceId": "bad", "Geometry": {}}]}""")
+            .when().post("/geofencing/v0/collections/zones/put-geofences")
+            .then().statusCode(200)
+            .body("Successes.GeofenceId", hasItem("ring"))
+            .body("Errors[0].GeofenceId", equalTo("bad"))
+            .body("Errors[0].Error.Code", equalTo("ValidationError"));
+        geo("geofencing.").when().get("/geofencing/v0/collections/zones/geofences/depot")
+            .then().statusCode(200)
+            .body("Status", equalTo("ACTIVE"))
+            .body("GeofenceProperties.kind", equalTo("depot"));
+        geo("cp.geofencing.").when().get("/geofencing/v0/collections/zones")
+            .then().statusCode(200).body("GeofenceCount", equalTo(2));
+
+        geo("cp.tracking.").body("{\"TrackerName\": \"fleet\"}")
+            .when().post("/tracking/v0/trackers").then().statusCode(200);
+        geo("tracking.").body("""
+                {"Updates": [{"DeviceId": "truck-1", "SampleTime": "2026-01-01T10:00:00Z", "Position": [-123.1, 49.25]},
+                             {"DeviceId": "truck-1", "SampleTime": "2026-01-01T10:05:00Z", "Position": [-123.05, 49.26]}]}""")
+            .when().post("/tracking/v0/trackers/fleet/positions")
+            .then().statusCode(200).body("Errors.size()", equalTo(0));
+        geo("tracking.").when().get("/tracking/v0/trackers/fleet/devices/truck-1/positions/latest")
+            .then().statusCode(200)
+            .body("SampleTime", equalTo("2026-01-01T10:05:00Z"))
+            .body("Position[0]", equalTo(-123.05f));
+        geo("tracking.").body("{}")
+            .when().post("/tracking/v0/trackers/fleet/devices/truck-1/list-positions")
+            .then().statusCode(200).body("DevicePositions.size()", equalTo(2));
+        geo("tracking.").body("{}")
+            .when().post("/tracking/v0/trackers/fleet/list-positions")
+            .then().statusCode(200).body("Entries[0].DeviceId", equalTo("truck-1"));
+
+        geo("cp.routes.").body("{\"CalculatorName\": \"router\", \"DataSource\": \"Esri\"}")
+            .when().post("/routes/v0/calculators").then().statusCode(200);
+        geo("routes.").body("""
+                {"DeparturePosition": [-123.1, 49.25], "DestinationPosition": [-122.9, 49.2], "IncludeLegGeometry": true}""")
+            .when().post("/routes/v0/calculators/router/calculate/route")
+            .then().statusCode(200)
+            .body("Legs.size()", equalTo(1))
+            .body("Legs[0].Geometry.LineString.size()", equalTo(2))
+            .body("Summary.DataSource", equalTo("Esri"))
+            .body("Summary.DistanceUnit", equalTo("Kilometers"));
+    }
 }

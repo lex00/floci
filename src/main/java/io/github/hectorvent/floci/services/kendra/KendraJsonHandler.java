@@ -24,6 +24,18 @@ public class KendraJsonHandler {
             case "UpdateIndex" -> ok(service.updateIndex(request, region));
             case "DeleteIndex" -> ok(service.deleteIndex(request, region));
             case "ListIndices" -> ok(service.listIndices(request, region));
+            case "CreateDataSource" -> ok(service.createDataSource(request, region));
+            case "DescribeDataSource" -> ok(service.describeDataSource(request, region));
+            case "UpdateDataSource" -> ok(service.updateDataSource(request, region));
+            case "DeleteDataSource" -> ok(service.deleteDataSource(request, region));
+            case "ListDataSources" -> ok(service.listDataSources(request, region));
+            case "StartDataSourceSyncJob" -> ok(service.startDataSourceSyncJob(request, region));
+            case "StopDataSourceSyncJob" -> ok(service.stopDataSourceSyncJob(request, region));
+            case "ListDataSourceSyncJobs" -> ok(service.listDataSourceSyncJobs(request, region));
+            case "BatchPutDocument" -> ok(service.batchPutDocument(request, region));
+            case "BatchDeleteDocument" -> ok(service.batchDeleteDocument(request, region));
+            case "Query" -> ok(service.query(request, region));
+            case "Retrieve" -> ok(service.retrieve(request, region));
             case "TagResource" -> ok(service.tagResource(request, region));
             case "UntagResource" -> ok(service.untagResource(request, region));
             case "ListTagsForResource" -> ok(service.listTags(request, region));
