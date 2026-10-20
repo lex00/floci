@@ -24,11 +24,14 @@ import java.util.function.Function;
 public class OpenSearchServerlessJsonHandler {
 
     private final OpenSearchServerlessService service;
+    private final OpenSearchServerlessPolicyService policies;
     private final ObjectMapper objectMapper;
 
     @Inject
-    public OpenSearchServerlessJsonHandler(OpenSearchServerlessService service, ObjectMapper objectMapper) {
+    public OpenSearchServerlessJsonHandler(OpenSearchServerlessService service,
+                                           OpenSearchServerlessPolicyService policies, ObjectMapper objectMapper) {
         this.service = service;
+        this.policies = policies;
         this.objectMapper = objectMapper;
     }
 
@@ -49,6 +52,62 @@ public class OpenSearchServerlessJsonHandler {
             case "ListCollections" -> listCollections(request, region);
             case "UpdateCollection" -> updateCollection(request, region);
             case "DeleteCollection" -> deleteCollection(request, region);
+            case "CreateAccessPolicy" -> wrap("accessPolicyDetail", policies.createPolicy("access", request, region));
+            case "GetAccessPolicy" -> wrap("accessPolicyDetail", policies.getPolicy("access", request, region));
+            case "UpdateAccessPolicy" -> wrap("accessPolicyDetail", policies.updatePolicy("access", request, region));
+            case "DeleteAccessPolicy" -> {
+                policies.deletePolicy("access", request, region);
+                yield empty();
+            }
+            case "ListAccessPolicies" -> page(request, policies.listPolicies("access", request, region),
+                    "accessPolicySummaries", Function.identity());
+            case "CreateLifecyclePolicy" ->
+                    wrap("lifecyclePolicyDetail", policies.createPolicy("lifecycle", request, region));
+            case "UpdateLifecyclePolicy" ->
+                    wrap("lifecyclePolicyDetail", policies.updatePolicy("lifecycle", request, region));
+            case "DeleteLifecyclePolicy" -> {
+                policies.deletePolicy("lifecycle", request, region);
+                yield empty();
+            }
+            case "ListLifecyclePolicies" -> page(request, policies.listPolicies("lifecycle", request, region),
+                    "lifecyclePolicySummaries", Function.identity());
+            case "BatchGetLifecyclePolicy" ->
+                    Response.ok(policies.batchGetLifecyclePolicy(request.path("identifiers"), region)).build();
+            case "BatchGetEffectiveLifecyclePolicy" -> Response.ok(policies.batchGetEffectiveLifecyclePolicy(
+                    request.path("resourceIdentifiers"), region)).build();
+            case "CreateVpcEndpoint" -> wrap("createVpcEndpointDetail", policies.createVpcEndpoint(request, region));
+            case "BatchGetVpcEndpoint" -> Response.ok(policies.batchGetVpcEndpoint(request.path("ids"), region)).build();
+            case "UpdateVpcEndpoint" -> wrap("UpdateVpcEndpointDetail", policies.updateVpcEndpoint(request, region));
+            case "DeleteVpcEndpoint" ->
+                    wrap("deleteVpcEndpointDetail", policies.deleteVpcEndpoint(text(request, "id"), region));
+            case "ListVpcEndpoints" -> page(request, policies.listVpcEndpoints(request.path("vpcEndpointFilters"),
+                    region), "vpcEndpointSummaries", Function.identity());
+            case "CreateCollectionGroup" ->
+                    wrap("createCollectionGroupDetail", policies.createCollectionGroup(request, region));
+            case "BatchGetCollectionGroup" -> Response.ok(policies.batchGetCollectionGroup(request, region)).build();
+            case "UpdateCollectionGroup" ->
+                    wrap("updateCollectionGroupDetail", policies.updateCollectionGroup(request, region));
+            case "DeleteCollectionGroup" ->
+                    Response.ok(policies.deleteCollectionGroup(text(request, "id"), region)).build();
+            case "ListCollectionGroups" -> page(request, policies.listCollectionGroups(region),
+                    "collectionGroupSummaries", Function.identity());
+            case "CreateIndex" -> {
+                policies.createIndex(request, region);
+                yield empty();
+            }
+            case "GetIndex" -> Response.ok(policies.getIndex(request, region)).build();
+            case "UpdateIndex" -> {
+                policies.updateIndex(request, region);
+                yield empty();
+            }
+            case "DeleteIndex" -> {
+                policies.deleteIndex(request, region);
+                yield empty();
+            }
+            case "GetAccountSettings" -> wrap("accountSettingsDetail", policies.getAccountSettings(region));
+            case "UpdateAccountSettings" ->
+                    wrap("accountSettingsDetail", policies.updateAccountSettings(request, region));
+            case "GetPoliciesStats" -> Response.ok(policies.getPoliciesStats(region)).build();
             case "TagResource" -> tagResource(request, region);
             case "UntagResource" -> untagResource(request, region);
             case "ListTagsForResource" -> listTagsForResource(request, region);
@@ -273,20 +332,35 @@ public class OpenSearchServerlessJsonHandler {
 
     // ── Tags ───────────────────────────────────────────────────────────────────
 
+    private Response empty() {
+        return Response.ok(objectMapper.createObjectNode()).build();
+    }
+
     private Response tagResource(JsonNode request, String region) {
-        service.tagResource(region, text(request, "resourceArn"), tags(request.path("tags")));
+        String arn = text(request, "resourceArn");
+        if (policies.ownsGroupArn(arn, region)) {
+            policies.tagGroup(arn, tags(request.path("tags")), null, region);
+            return empty();
+        }
+        service.tagResource(region, arn, tags(request.path("tags")));
         return Response.ok(objectMapper.createObjectNode()).build();
     }
 
     private Response untagResource(JsonNode request, String region) {
-        service.untagResource(region, text(request, "resourceArn"), strings(request.path("tagKeys")));
+        String arn = text(request, "resourceArn");
+        if (policies.ownsGroupArn(arn, region)) {
+            policies.tagGroup(arn, null, strings(request.path("tagKeys")), region);
+            return empty();
+        }
+        service.untagResource(region, arn, strings(request.path("tagKeys")));
         return Response.ok(objectMapper.createObjectNode()).build();
     }
 
     private Response listTagsForResource(JsonNode request, String region) {
         ObjectNode out = objectMapper.createObjectNode();
         ArrayNode tags = out.putArray("tags");
-        service.listTags(region, text(request, "resourceArn"))
+        String arn = text(request, "resourceArn");
+        (policies.ownsGroupArn(arn, region) ? policies.listGroupTags(arn, region) : service.listTags(region, arn))
                 .forEach((key, value) -> tags.addObject().put("key", key).put("value", value));
         return Response.ok(out).build();
     }

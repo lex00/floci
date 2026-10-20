@@ -119,4 +119,76 @@ class OpenSearchServerlessIntegrationTest {
 
         call("DeleteSecurityPolicy", "{\"name\":\"it-orders-enc\",\"type\":\"encryption\"}").statusCode(200);
     }
+
+    @Test
+    void accessLifecycleEndpointsGroupsIndexesAndSettings() {
+        String version = call("CreateAccessPolicy", """
+                {"type":"data","name":"it-readers","policy":"[{\\"Rules\\":[{\\"ResourceType\\":\\"index\\",\
+                \\"Resource\\":[\\"index/it-*/*\\"],\\"Permission\\":[\\"aoss:ReadDocument\\"]}],\
+                \\"Principal\\":[\\"arn:aws:iam::000000000000:role/reader\\"]}]"}""")
+                .statusCode(200)
+                .body("accessPolicyDetail.policy[0].Rules[0].ResourceType", equalTo("index"))
+                .extract().path("accessPolicyDetail.policyVersion");
+        call("UpdateAccessPolicy", "{\"type\":\"data\",\"name\":\"it-readers\",\"policyVersion\":\"" + version
+                + "\",\"description\":\"readers\"}")
+                .statusCode(200)
+                .body("accessPolicyDetail.description", equalTo("readers"));
+        call("ListAccessPolicies", "{\"type\":\"data\"}")
+                .statusCode(200)
+                .body("accessPolicySummaries.name", hasItem("it-readers"));
+        call("DeleteAccessPolicy", "{\"type\":\"data\",\"name\":\"it-readers\"}").statusCode(200);
+        call("GetAccessPolicy", "{\"type\":\"data\",\"name\":\"it-readers\"}")
+                .statusCode(400)
+                .body("__type", equalTo("ResourceNotFoundException"));
+
+        call("CreateLifecyclePolicy", """
+                {"type":"retention","name":"it-keep","policy":"{\\"Rules\\":[{\\"ResourceType\\":\\"index\\",\
+                \\"Resource\\":[\\"index/it-logs/*\\"],\\"MinIndexRetention\\":\\"14d\\"}]}"}""")
+                .statusCode(200);
+        call("BatchGetEffectiveLifecyclePolicy",
+                "{\"resourceIdentifiers\":[{\"type\":\"retention\",\"resource\":\"index/it-logs/app\"}]}")
+                .statusCode(200)
+                .body("effectiveLifecyclePolicyDetails[0].policyName", equalTo("it-keep"));
+
+        String endpointId = call("CreateVpcEndpoint",
+                "{\"name\":\"it-endpoint\",\"vpcId\":\"vpc-1\",\"subnetIds\":[\"subnet-1\"]}")
+                .statusCode(200)
+                .body("createVpcEndpointDetail.status", equalTo("ACTIVE"))
+                .extract().path("createVpcEndpointDetail.id");
+        call("BatchGetVpcEndpoint", "{\"ids\":[\"" + endpointId + "\"]}")
+                .statusCode(200)
+                .body("vpcEndpointDetails[0].vpcId", equalTo("vpc-1"));
+        call("DeleteVpcEndpoint", "{\"id\":\"" + endpointId + "\"}")
+                .statusCode(200)
+                .body("deleteVpcEndpointDetail.status", equalTo("DELETING"));
+
+        String groupArn = call("CreateCollectionGroup",
+                "{\"name\":\"it-group\",\"standbyReplicas\":\"DISABLED\",\"tags\":[{\"key\":\"team\",\"value\":\"search\"}]}")
+                .statusCode(200)
+                .extract().path("createCollectionGroupDetail.arn");
+        call("ListTagsForResource", "{\"resourceArn\":\"" + groupArn + "\"}")
+                .statusCode(200)
+                .body("tags[0].value", equalTo("search"));
+
+        call("CreateSecurityPolicy", """
+                {"type":"encryption","name":"it-indexed-enc","policy":"{\\"Rules\\":[{\\"ResourceType\\":\\"collection\\",\
+                \\"Resource\\":[\\"collection/it-indexed\\"]}],\\"AWSOwnedKey\\":true}"}""")
+                .statusCode(200);
+        String collectionId = call("CreateCollection", "{\"name\":\"it-indexed\",\"type\":\"SEARCH\"}")
+                .statusCode(200)
+                .extract().path("createCollectionDetail.id");
+        call("CreateIndex", "{\"id\":\"" + collectionId + "\",\"indexName\":\"docs\","
+                + "\"indexSchema\":{\"mappings\":{\"properties\":{\"title\":{\"type\":\"text\"}}}}}")
+                .statusCode(200);
+        call("GetIndex", "{\"id\":\"" + collectionId + "\",\"indexName\":\"docs\"}")
+                .statusCode(200)
+                .body("indexSchema.mappings.properties.title.type", equalTo("text"));
+
+        call("UpdateAccountSettings", "{\"capacityLimits\":{\"maxSearchCapacityInOCU\":20}}")
+                .statusCode(200)
+                .body("accountSettingsDetail.capacityLimits.maxSearchCapacityInOCU", equalTo(20));
+        call("GetPoliciesStats", "{}")
+                .statusCode(200)
+                .body("LifecyclePolicyStats.RetentionPolicyCount", equalTo(1));
+    }
 }

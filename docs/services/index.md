@@ -98,7 +98,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [SES](ses.md) | `POST /` with `Action=` param | Query | 16 |
 | [SES v2](ses.md#v2) | `/v2/email/*` | REST JSON | 10 |
 | [OpenSearch](opensearch.md) | `/2021-01-01/opensearch/...` | REST JSON | 24 |
-| [OpenSearch Serverless](opensearch-serverless.md) | `POST /` + `X-Amz-Target: OpenSearchServerless.*` | JSON 1.0 | 18 |
+| [OpenSearch Serverless](opensearch-serverless.md) | `POST /` + `X-Amz-Target: OpenSearchServerless.*` | JSON 1.0 | 46 |
 | [AppConfig](appconfig.md) | `/applications/...`, `/deploymentstrategies/...` | REST JSON | 16 |
 | [AppConfigData](appconfig.md#data-plane) | `/configurationsessions`, `/configuration` | REST JSON | 2 |
 | [AppSync](appsync.md) | `/v1/apis/...` | REST JSON | 33 |
@@ -130,7 +130,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [Managed Prometheus (AMP)](managed-prometheus.md) | `/workspaces/*`, `/workspaces/*/rulegroupsnamespaces/*`, `/tags/*` | REST JSON | 13 |
 | [AWS Backup](backup.md) | `/backup-vaults/*`, `/backup/plans/*`, `/backup-jobs/*`, `/audit/frameworks/*`, `/supported-resource-types` | REST JSON | 25 |
 | [AWS FIS](fis.md) | `/experimentTemplates/*`, `/experiments/*`, `/actions/*`, `/targetResourceTypes/*`, `/safetyLevers/*`, `/tags/*` | REST JSON | 26 |
-| [ARC Region switch](arc-region-switch.md) | `POST /service/ArcRegionSwitch/operation/*` or `X-Amz-Target: ArcRegionSwitch.*` | RPC v2 CBOR, JSON 1.0 | 10 |
+| [ARC Region switch](arc-region-switch.md) | `POST /service/ArcRegionSwitch/operation/*` or `X-Amz-Target: ArcRegionSwitch.*` | RPC v2 CBOR, JSON 1.0 | 21 |
 | [Amazon IVS](ivs.md) | `POST /{OperationName}` | REST JSON | 9 |
 | [Amazon IVS Chat](ivschat.md) | `POST /{OperationName}` | REST JSON | 6 |
 | [CodeGuru Reviewer](codegurureviewer.md) | `/associations`, `/associations/{associationArn}`, `/tags/*` | REST JSON | 7 |

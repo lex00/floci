@@ -25,14 +25,18 @@ import java.util.Set;
 public class ArcRegionSwitchJsonHandler {
 
     /** Timestamp members in the responses this handler writes, for the CBOR encoder. */
-    public static final Set<String> TIMESTAMP_FIELDS = Set.of("updatedAt");
+    public static final Set<String> TIMESTAMP_FIELDS = Set.of("updatedAt", "startTime", "endTime", "timestamp",
+            "lastEvaluationTime", "warningUpdatedTime");
 
     private final ArcRegionSwitchService service;
+    private final ArcRegionSwitchExecutionService executions;
     private final ObjectMapper objectMapper;
 
     @Inject
-    public ArcRegionSwitchJsonHandler(ArcRegionSwitchService service, ObjectMapper objectMapper) {
+    public ArcRegionSwitchJsonHandler(ArcRegionSwitchService service, ArcRegionSwitchExecutionService executions,
+                                      ObjectMapper objectMapper) {
         this.service = service;
+        this.executions = executions;
         this.objectMapper = objectMapper;
     }
 
@@ -43,6 +47,34 @@ public class ArcRegionSwitchJsonHandler {
             case "UpdatePlan" -> planResponse(service.updatePlan(text(request, "arn"), settings(request)));
             case "DeletePlan" -> deletePlan(request);
             case "ListPlans", "ListPlansInRegion" -> listPlans(request);
+            case "StartPlanExecution" -> ok(executions.startPlanExecution(request));
+            case "GetPlanExecution" -> getPlanExecution(request);
+            case "ListPlanExecutions" -> page(request, "items", executions.listPlanExecutions(
+                    text(request, "planArn"), text(request, "state")));
+            case "ListPlanExecutionEvents" -> page(request, "items", executions.listPlanExecutionEvents(
+                    text(request, "planArn"), text(request, "executionId"), text(request, "name")));
+            case "CancelPlanExecution" -> {
+                executions.cancelPlanExecution(text(request, "planArn"), text(request, "executionId"),
+                        text(request, "comment"));
+                yield ok(objectMapper.createObjectNode());
+            }
+            case "UpdatePlanExecution" -> {
+                executions.updatePlanExecution(text(request, "planArn"), text(request, "executionId"),
+                        text(request, "action"), text(request, "comment"));
+                yield ok(objectMapper.createObjectNode());
+            }
+            case "UpdatePlanExecutionStep" -> {
+                executions.updatePlanExecutionStep(request);
+                yield ok(objectMapper.createObjectNode());
+            }
+            case "ApprovePlanExecutionStep" -> {
+                executions.approvePlanExecutionStep(request);
+                yield ok(objectMapper.createObjectNode());
+            }
+            case "GetPlanEvaluationStatus" -> ok(executions.getPlanEvaluationStatus(text(request, "planArn")));
+            case "ListRoute53HealthChecks", "ListRoute53HealthChecksInRegion" -> page(request, "healthChecks",
+                    executions.listRoute53HealthChecks(text(request, "arn"), text(request, "hostedZoneId"),
+                            text(request, "recordName")));
             case "TagResource" -> tagResource(request);
             case "UntagResource" -> untagResource(request);
             case "ListTagsForResource" -> listTagsForResource(request);
@@ -58,8 +90,42 @@ public class ArcRegionSwitchJsonHandler {
         return planResponse(plan);
     }
 
+    private Response getPlanExecution(JsonNode request) {
+        ObjectNode execution = executions.getPlanExecution(text(request, "planArn"), text(request, "executionId"));
+        execution.set("plan", planNode(service.getPlan(text(request, "planArn"))));
+        return ok(execution);
+    }
+
+    private Response page(JsonNode request, String member, List<ObjectNode> all) {
+        int maxResults = request.path("maxResults").asInt(100);
+        if (maxResults < 1 || maxResults > 100) {
+            throw new AwsException("IllegalArgumentException", "maxResults must be between 1 and 100.", 400);
+        }
+        int start = 0;
+        String nextToken = text(request, "nextToken");
+        if (nextToken != null) {
+            try {
+                start = Math.max(0, Integer.parseInt(nextToken));
+            } catch (NumberFormatException e) {
+                throw new AwsException("IllegalArgumentException", "The nextToken is not valid.", 400);
+            }
+        }
+        int end = Math.min(all.size(), start + maxResults);
+        ObjectNode out = objectMapper.createObjectNode();
+        out.putArray(member).addAll(all.subList(Math.min(start, end), end));
+        if (end < all.size()) {
+            out.put("nextToken", String.valueOf(end));
+        }
+        return ok(out);
+    }
+
+    private static Response ok(ObjectNode body) {
+        return Response.ok(body).build();
+    }
+
     private Response deletePlan(JsonNode request) {
         service.deletePlan(text(request, "arn"));
+        executions.deletePlanExecutions(text(request, "arn"));
         return Response.ok(objectMapper.createObjectNode()).build();
     }
 
@@ -123,7 +189,12 @@ public class ArcRegionSwitchJsonHandler {
 
     private Response planResponse(RegionSwitchPlan plan) {
         ObjectNode out = objectMapper.createObjectNode();
-        ObjectNode node = out.putObject("plan");
+        out.set("plan", planNode(plan));
+        return Response.ok(out).build();
+    }
+
+    private ObjectNode planNode(RegionSwitchPlan plan) {
+        ObjectNode node = objectMapper.createObjectNode();
         node.put("arn", plan.getArn());
         putIfPresent(node, "description", plan.getDescription());
         node.set("workflows", plan.getWorkflows());
@@ -144,7 +215,7 @@ public class ArcRegionSwitchJsonHandler {
         node.put("owner", plan.getOwner());
         node.put("version", String.valueOf(plan.getVersion()));
         node.put("updatedAt", epochSeconds(plan.getUpdatedAtMillis()));
-        return Response.ok(out).build();
+        return node;
     }
 
     private static ArcRegionSwitchService.PlanSettings settings(JsonNode request) {
