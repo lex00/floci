@@ -383,4 +383,57 @@ class CodeBuildIntegrationTest {
             .statusCode(200)
             .body("fleets", not(hasItem(arn)));
     }
+
+    @Test
+    @Order(101)
+    void projectOnAFleetReportsTheFleetOnItsBuilds() {
+        String fleetArn = given()
+            .header("X-Amz-Target", "CodeBuild_20161006.CreateFleet")
+            .contentType(CONTENT_TYPE)
+            .body("""
+                {"name":"it-run-fleet","baseCapacity":1,"environmentType":"LINUX_CONTAINER",
+                 "computeType":"BUILD_GENERAL1_MEDIUM"}
+                """)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("fleet.arn");
+
+        given()
+            .header("X-Amz-Target", "CodeBuild_20161006.CreateProject")
+            .contentType(CONTENT_TYPE)
+            .body("""
+                {"name":"it-fleet-project","source":{"type":"NO_SOURCE","buildspec":"version: 0.2"},
+                 "artifacts":{"type":"NO_ARTIFACTS"},"serviceRole":"arn:aws:iam::000000000000:role/cb",
+                 "environment":{"type":"LINUX_CONTAINER","image":"aws/codebuild/standard:7.0",
+                                "computeType":"BUILD_GENERAL1_SMALL","fleet":{"fleetArn":"%s"}}}
+                """.formatted(fleetArn))
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("project.environment.fleet.fleetArn", equalTo(fleetArn))
+            .body("project.environment.computeType", equalTo("BUILD_GENERAL1_MEDIUM"));
+
+        given()
+            .header("X-Amz-Target", "CodeBuild_20161006.StartBuild")
+            .contentType(CONTENT_TYPE)
+            .body("{\"projectName\":\"it-fleet-project\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("build.environment.fleet.fleetArn", equalTo(fleetArn));
+
+        given()
+            .header("X-Amz-Target", "CodeBuild_20161006.StartBuild")
+            .contentType(CONTENT_TYPE)
+            .body("{\"projectName\":\"it-fleet-project\",\"fleetOverride\":{\"fleetArn\":\"no-such-fleet\"}}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("__type", equalTo("InvalidInputException"));
+    }
 }

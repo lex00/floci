@@ -2,6 +2,8 @@ package io.github.hectorvent.floci.services.bedrockagentcorecontrol;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.PaginatedResult;
 import io.github.hectorvent.floci.core.common.Pagination;
@@ -45,6 +47,10 @@ public class BedrockAgentCoreControlService {
     private static final Pattern NAME_PATTERN = Pattern.compile("[a-zA-Z][a-zA-Z0-9_]{0,47}");
     private static final List<String> NETWORK_MODES = List.of("PUBLIC", "VPC");
     private static final List<String> SERVER_PROTOCOLS = List.of("MCP", "HTTP", "A2A", "AGUI");
+    /** The prefix of the custom headers a runtime's request header allowlist may name. */
+    public static final String CUSTOM_HEADER_PREFIX = "X-Amzn-Bedrock-AgentCore-Runtime-Custom-";
+    private static final int DEFAULT_IDLE_SECONDS = 900;
+    private static final int DEFAULT_MAX_LIFETIME_SECONDS = 28800;
     private static final String ID_ALPHABET =
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     private static final int MAX_PAGE = 100;
@@ -88,6 +94,16 @@ public class BedrockAgentCoreControlService {
                                            String roleArn, String description, Map<String, String> environmentVariables,
                                            JsonNode authorizerConfiguration, JsonNode protocolConfiguration,
                                            String clientToken, String region) {
+        return createAgentRuntime(name, artifact, networkConfiguration, roleArn, description, environmentVariables,
+                authorizerConfiguration, protocolConfiguration, null, null, clientToken, region);
+    }
+
+    /** As above, with the session lifecycle and the request headers the runtime receives. */
+    public AgentRuntime createAgentRuntime(String name, JsonNode artifact, JsonNode networkConfiguration,
+                                           String roleArn, String description, Map<String, String> environmentVariables,
+                                           JsonNode authorizerConfiguration, JsonNode protocolConfiguration,
+                                           JsonNode lifecycleConfiguration, JsonNode requestHeaderConfiguration,
+                                           String clientToken, String region) {
         if (clientToken != null) {
             Optional<AgentRuntime> replay = storage.scan(k -> k.startsWith(keyPrefix(region))).stream()
                     .filter(r -> clientToken.equals(r.getClientToken()))
@@ -110,6 +126,7 @@ public class BedrockAgentCoreControlService {
             throw new AwsException("ValidationException", "roleArn is required", 400);
         }
         validateConfiguration(networkConfiguration, protocolConfiguration);
+        validateRuntimeOptions(networkConfiguration, authorizerConfiguration, requestHeaderConfiguration);
 
         Instant now = Instant.now();
         String id = name + "-" + randomId();
@@ -130,6 +147,8 @@ public class BedrockAgentCoreControlService {
         runtime.setNetworkConfiguration(networkConfiguration);
         runtime.setAuthorizerConfiguration(authorizerConfiguration);
         runtime.setProtocolConfiguration(protocolConfiguration);
+        runtime.setLifecycleConfiguration(lifecycle(lifecycleConfiguration));
+        runtime.setRequestHeaderConfiguration(nullIfMissing(requestHeaderConfiguration));
         runtime.setEnvironmentVariables(environmentVariables != null ? new HashMap<>(environmentVariables) : new HashMap<>());
         runtime.setClientToken(clientToken);
         String workloadName = name + "-" + randomId();
@@ -173,6 +192,16 @@ public class BedrockAgentCoreControlService {
                                            String roleArn, String description, Map<String, String> environmentVariables,
                                            JsonNode authorizerConfiguration, JsonNode protocolConfiguration,
                                            String region) {
+        return updateAgentRuntime(id, artifact, networkConfiguration, roleArn, description, environmentVariables,
+                authorizerConfiguration, protocolConfiguration, null, null, region);
+    }
+
+    /** As above, with the session lifecycle and the request headers the runtime receives. */
+    public AgentRuntime updateAgentRuntime(String id, JsonNode artifact, JsonNode networkConfiguration,
+                                           String roleArn, String description, Map<String, String> environmentVariables,
+                                           JsonNode authorizerConfiguration, JsonNode protocolConfiguration,
+                                           JsonNode lifecycleConfiguration, JsonNode requestHeaderConfiguration,
+                                           String region) {
         if (artifact == null || artifact.isNull()) {
             throw new AwsException("ValidationException", "agentRuntimeArtifact is required", 400);
         }
@@ -183,6 +212,8 @@ public class BedrockAgentCoreControlService {
             throw new AwsException("ValidationException", "roleArn is required", 400);
         }
         validateConfiguration(networkConfiguration, protocolConfiguration);
+        validateRuntimeOptions(networkConfiguration, authorizerConfiguration, requestHeaderConfiguration);
+        JsonNode lifecycle = lifecycle(lifecycleConfiguration);
         AgentRuntime runtime = getAgentRuntime(id, region);
         Instant now = Instant.now();
 
@@ -194,6 +225,8 @@ public class BedrockAgentCoreControlService {
         runtime.setNetworkConfiguration(networkConfiguration);
         runtime.setAuthorizerConfiguration(authorizerConfiguration);
         runtime.setProtocolConfiguration(protocolConfiguration);
+        runtime.setLifecycleConfiguration(lifecycle);
+        runtime.setRequestHeaderConfiguration(nullIfMissing(requestHeaderConfiguration));
         runtime.setEnvironmentVariables(environmentVariables != null ? new HashMap<>(environmentVariables) : new HashMap<>());
         runtime.setLastUpdatedAt(now);
         runtime.getVersions().add(snapshot(runtime, String.valueOf(newVersion), now));
@@ -213,6 +246,98 @@ public class BedrockAgentCoreControlService {
             requireEnum(protocolConfiguration.path("serverProtocol"), "protocolConfiguration.serverProtocol",
                     SERVER_PROTOCOLS);
         }
+    }
+
+    /**
+     * VPC mode needs subnets and security groups, which PUBLIC mode refuses. A JWT authorizer needs an
+     * OpenID discovery URL. The header allowlist takes {@code Authorization} and the
+     * {@code X-Amzn-Bedrock-AgentCore-Runtime-Custom-} headers, up to 20 of them.
+     */
+    private static void validateRuntimeOptions(JsonNode network, JsonNode authorizer, JsonNode requestHeaders) {
+        JsonNode modeConfig = network.path("networkModeConfig");
+        if ("VPC".equals(network.path("networkMode").asText())) {
+            for (String member : List.of("subnets", "securityGroups")) {
+                JsonNode ids = modeConfig.path(member);
+                if (!ids.isArray() || ids.isEmpty() || ids.size() > 16) {
+                    throw new AwsException("ValidationException",
+                            "networkConfiguration.networkModeConfig." + member
+                                    + " must list between 1 and 16 ids in VPC mode", 400);
+                }
+                String prefix = "subnets".equals(member) ? "subnet-" : "sg-";
+                for (JsonNode value : ids) {
+                    if (!value.isTextual() || !value.asText().matches(prefix + "[0-9a-zA-Z]{8,17}")) {
+                        throw SmithyValidationErrors.validationException("Value '" + value.asText() + "' at "
+                                + "'networkConfiguration.networkModeConfig." + member
+                                + "' failed to satisfy constraint: Member must satisfy regular expression pattern: "
+                                + prefix + "[0-9a-zA-Z]{8,17}");
+                    }
+                }
+            }
+        } else if (!modeConfig.isMissingNode() && !modeConfig.isNull()) {
+            throw new AwsException("ValidationException",
+                    "networkConfiguration.networkModeConfig is only allowed in VPC mode", 400);
+        }
+        JsonNode jwt = authorizer == null ? null : authorizer.path("customJWTAuthorizer");
+        if (jwt != null && !jwt.isMissingNode() && !jwt.isNull()) {
+            String discoveryUrl = jwt.path("discoveryUrl").asText("");
+            if (!discoveryUrl.matches("^.+/\\.well-known/openid-configuration$")) {
+                throw new AwsException("ValidationException", "authorizerConfiguration.customJWTAuthorizer."
+                        + "discoveryUrl must be an OpenID Connect discovery URL ending in "
+                        + "/.well-known/openid-configuration", 400);
+            }
+        }
+        JsonNode allowlist = requestHeaders == null ? null : requestHeaders.path("requestHeaderAllowlist");
+        if (allowlist != null && allowlist.isArray()) {
+            if (allowlist.size() > 20) {
+                throw new AwsException("ValidationException",
+                        "requestHeaderConfiguration.requestHeaderAllowlist takes at most 20 headers", 400);
+            }
+            for (JsonNode header : allowlist) {
+                String name = header.asText("");
+                if (!"Authorization".equalsIgnoreCase(name)
+                        && !name.regionMatches(true, 0, CUSTOM_HEADER_PREFIX, 0, CUSTOM_HEADER_PREFIX.length())) {
+                    throw new AwsException("ValidationException", "Header " + name + " cannot be allowlisted: "
+                            + "allow Authorization or a header starting with " + CUSTOM_HEADER_PREFIX, 400);
+                }
+            }
+        }
+    }
+
+    /**
+     * The session lifecycle with AWS's defaults filled in: 900 seconds idle and 28800 seconds in all,
+     * each between 60 and 28800, the idle timeout no longer than the lifetime.
+     */
+    private JsonNode lifecycle(JsonNode requested) {
+        int idle = DEFAULT_IDLE_SECONDS;
+        int max = DEFAULT_MAX_LIFETIME_SECONDS;
+        if (requested != null && !requested.isNull() && !requested.isMissingNode()) {
+            if (requested.hasNonNull("idleRuntimeSessionTimeout")) {
+                idle = requested.path("idleRuntimeSessionTimeout").asInt();
+            }
+            if (requested.hasNonNull("maxLifetime")) {
+                max = requested.path("maxLifetime").asInt();
+            }
+        }
+        for (Map.Entry<String, Integer> value : Map.of("idleRuntimeSessionTimeout", idle, "maxLifetime", max)
+                .entrySet()) {
+            if (value.getValue() < 60 || value.getValue() > DEFAULT_MAX_LIFETIME_SECONDS) {
+                throw SmithyValidationErrors.validationException("Value '" + value.getValue()
+                        + "' at 'lifecycleConfiguration." + value.getKey() + "' failed to satisfy constraint: "
+                        + "Member must have value between 60 and 28800");
+            }
+        }
+        if (idle > max) {
+            throw new AwsException("ValidationException",
+                    "lifecycleConfiguration.idleRuntimeSessionTimeout must not exceed maxLifetime", 400);
+        }
+        ObjectNode lifecycle = JsonNodeFactory.instance.objectNode();
+        lifecycle.put("idleRuntimeSessionTimeout", idle);
+        lifecycle.put("maxLifetime", max);
+        return lifecycle;
+    }
+
+    private static JsonNode nullIfMissing(JsonNode node) {
+        return node == null || node.isNull() || node.isMissingNode() ? null : node;
     }
 
     private static void requireEnum(JsonNode value, String member, List<String> allowed) {
@@ -531,6 +656,8 @@ public class BedrockAgentCoreControlService {
         snap.setNetworkConfiguration(runtime.getNetworkConfiguration());
         snap.setAuthorizerConfiguration(runtime.getAuthorizerConfiguration());
         snap.setProtocolConfiguration(runtime.getProtocolConfiguration());
+        snap.setLifecycleConfiguration(runtime.getLifecycleConfiguration());
+        snap.setRequestHeaderConfiguration(runtime.getRequestHeaderConfiguration());
         snap.setEnvironmentVariables(runtime.getEnvironmentVariables() != null
                 ? new HashMap<>(runtime.getEnvironmentVariables()) : null);
         return snap;

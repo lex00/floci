@@ -14,12 +14,16 @@ import io.github.hectorvent.floci.core.common.docker.ContainerStorageHelper;
 import io.github.hectorvent.floci.core.common.docker.LaunchedContainerAwsEnv;
 import io.github.hectorvent.floci.core.common.docker.RetryingTarCopier;
 import io.github.hectorvent.floci.services.bedrockagentcorecontrol.model.AgentRuntimeVersion;
+import io.github.hectorvent.floci.services.ec2.Ec2Service;
+import io.github.hectorvent.floci.services.ec2.model.Subnet;
+import io.github.hectorvent.floci.services.ec2.net.VpcNetworkManager;
 import io.github.hectorvent.floci.services.ecr.registry.EcrRegistryManager;
 import io.github.hectorvent.floci.services.iam.model.SessionCreds;
 import io.github.hectorvent.floci.services.lambda.launcher.LambdaExecutionRoleCredentials;
 import io.github.hectorvent.floci.services.lambda.zip.ZipExtractor;
 import io.github.hectorvent.floci.services.s3.S3Service;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
@@ -86,6 +90,35 @@ public class AgentRuntimeDockerLauncher implements AgentRuntimeLauncher {
         this.executionRoleCredentials = executionRoleCredentials;
     }
 
+    @Inject
+    Instance<VpcNetworkManager> vpcNetworks;
+
+    @Inject
+    Instance<Ec2Service> ec2;
+
+    /**
+     * Puts a VPC-mode runtime's container on the Docker network of its first subnet's VPC, when
+     * Floci gives VPCs their own networks, so it reaches what runs in that VPC.
+     */
+    private void attachToVpc(Launch launch, String containerId) {
+        JsonNode network = launch.version().getNetworkConfiguration();
+        if (network == null || !"VPC".equals(network.path("networkMode").asText())
+                || vpcNetworks == null || !vpcNetworks.isResolvable() || !vpcNetworks.get().enabled()
+                || ec2 == null || !ec2.isResolvable()) {
+            return;
+        }
+        String subnetId = network.path("networkModeConfig").path("subnets").path(0).asText(null);
+        try {
+            List<Subnet> subnets = ec2.get().describeSubnets(launch.region(), List.of(subnetId), Map.of());
+            if (!subnets.isEmpty()) {
+                vpcNetworks.get().attachContainer(launch.region(), subnets.getFirst().getVpcId(), containerId);
+            }
+        } catch (RuntimeException e) {
+            LOG.warnv("AgentCore runtime {0} stays off its VPC network: subnet {1} could not be resolved: {2}",
+                    launch.runtimeId(), subnetId, e.getMessage());
+        }
+    }
+
     /** The log group AgentCore writes a runtime endpoint's output to. */
     static String logGroup(String runtimeId, String endpointName) {
         return "/aws/bedrock-agentcore/runtimes/" + runtimeId + "-" + endpointName;
@@ -142,6 +175,7 @@ public class AgentRuntimeDockerLauncher implements AgentRuntimeLauncher {
                     logGroup(launch.runtimeId(), launch.endpointName()), logStream, launch.region(),
                     "agentcore:" + launch.runtimeId());
             ContainerInfo info = lifecycleManager.startCreated(containerId, spec);
+            attachToVpc(launch, containerId);
             EndpointInfo endpoint = info.getEndpoint(launch.containerPort());
             LOG.infov("Started AgentCore runtime {0} version {1} in container {2} at {3}:{4}",
                     launch.runtimeId(), version.getVersion(), containerId, endpoint.host(), endpoint.port());

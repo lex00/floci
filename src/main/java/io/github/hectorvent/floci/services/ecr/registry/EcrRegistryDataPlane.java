@@ -37,6 +37,8 @@ public class EcrRegistryDataPlane {
 
     private static final Pattern ECR_HOST = Pattern.compile(
             "^([0-9]{12})\\.dkr\\.ecr\\.([a-z0-9-]+)\\.localhost(?:\\.floci\\.io)?(?::[0-9]+)?$");
+    private static final Pattern PUBLIC_HOST = Pattern.compile(
+            "^public\\.ecr\\.localhost(?:\\.floci\\.io)?(?::[0-9]+)?$");
     private static final String MANIFESTS_PATH = "/manifests/";
     private static final Set<String> HOP_BY_HOP_HEADERS = Set.of(
             "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
@@ -307,6 +309,9 @@ public class EcrRegistryDataPlane {
                     storageRepositoryName, repository, backendUri,
                     tag(path)));
         }
+        if (PUBLIC_HOST.matcher(host == null ? "" : host).matches()) {
+            return publicRequest(registryPath, query);
+        }
         // A loopback host is the address Floci itself hands the Docker daemon for the ECS and
         // Lambda images it pulls, path style in either URI style (see rewriteImageUri).
         if (!"path".equalsIgnoreCase(uriStyle) && !isLoopbackHost(host)) {
@@ -327,6 +332,26 @@ public class EcrRegistryDataPlane {
         return Optional.of(new RegistryRequest(segments[0], segments[1], repository,
                 storageRepositoryName, storageRepositoryName,
                 registryPath + querySuffix(query, true), tag(registryPath)));
+    }
+
+    /**
+     * An ECR Public request, {@code /v2/<alias>/<name>/...} on {@code public.ecr.localhost}. The
+     * alias is the account id, and the repository lives under {@code <account>/public/<name>}.
+     */
+    private static Optional<RegistryRequest> publicRequest(String registryPath, String query) {
+        if ("/v2/".equals(registryPath)) {
+            return Optional.of(new RegistryRequest("", "", "", "", "", registryPath + querySuffix(query, true), null));
+        }
+        String[] segments = registryPath.substring("/v2/".length()).split("/", 2);
+        if (segments.length < 2 || !segments[0].matches("[0-9]{12}")) {
+            return Optional.empty();
+        }
+        String repository = repositoryName(segments[1]);
+        String storageRepositoryName = segments[0] + "/" + EcrRegistryManager.PUBLIC_NAMESPACE + "/" + repository;
+        String backendUri = "/v2/" + storageRepositoryName
+                + segments[1].substring(repository.length()) + querySuffix(query, true);
+        return Optional.of(new RegistryRequest(segments[0], EcrRegistryManager.PUBLIC_NAMESPACE, repository,
+                storageRepositoryName, segments[0] + "/" + repository, backendUri, tag(registryPath)));
     }
 
     private static boolean isLoopbackHost(String host) {

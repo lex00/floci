@@ -22,30 +22,65 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Stores ECR Public repositories without images. The registry alias in {@code repositoryUri} is
- * the account id.
+ * Stores ECR Public repositories and the registry's catalog data. The registry alias is the
+ * account id; {@link EcrPublicImageService} keeps the images.
  */
 @ApplicationScoped
 public class EcrPublicService implements Resettable {
 
     private static final Pattern NAME = Pattern.compile("(?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*[a-z0-9]+(?:[._-][a-z0-9]+)*");
-    private static final String PUBLIC_REGISTRY_HOST = "public.ecr.aws"; // partition-literal: ECR Public has one gallery host
+
+    private static final String REGISTRY_KEY = "registry";
 
     private final AccountAwareStorageBackend<PublicRepository> store;
+    private final AccountAwareStorageBackend<Map<String, String>> registryCatalog;
 
     @Inject
     public EcrPublicService(StorageFactory storageFactory) {
         this(storageFactory.create("ecr-public", "ecr-public-repositories.json",
-                new TypeReference<Map<String, PublicRepository>>() {}));
+                new TypeReference<Map<String, PublicRepository>>() {}),
+                storageFactory.create("ecr-public", "ecr-public-registry-catalog.json",
+                        new TypeReference<Map<String, Map<String, String>>>() {}));
     }
 
     EcrPublicService(AccountAwareStorageBackend<PublicRepository> store) {
+        this(store, AccountAwareStorageBackend.inMemory("000000000000"));
+    }
+
+    EcrPublicService(AccountAwareStorageBackend<PublicRepository> store,
+                     AccountAwareStorageBackend<Map<String, String>> registryCatalog) {
         this.store = store;
+        this.registryCatalog = registryCatalog;
     }
 
     @Override
     public void clear() {
         store.clear();
+        registryCatalog.clear();
+    }
+
+    /** The registry's catalog data: its display name, empty until one is set. */
+    public Map<String, String> getRegistryCatalogData() {
+        return registryCatalog.get(REGISTRY_KEY).orElseGet(LinkedHashMap::new);
+    }
+
+    public Map<String, String> putRegistryCatalogData(String displayName) {
+        Map<String, String> catalog = new LinkedHashMap<>();
+        if (displayName != null) {
+            if (displayName.length() > 100) {
+                throw new AwsException("InvalidParameterException",
+                        "Invalid parameter at 'displayName' failed to satisfy constraint: 'length <= 100'", 400);
+            }
+            catalog.put("displayName", displayName);
+        }
+        registryCatalog.put(REGISTRY_KEY, catalog);
+        return catalog;
+    }
+
+    /** The registry ARN, {@code arn:<partition>:ecr-public::<account>:registry/<account>}. */
+    public String registryArn(String region, String accountId) {
+        return AwsArnUtils.Arn.global(AwsRegions.partitionFor(region), "ecr-public", accountId,
+                "registry/" + accountId).toString();
     }
 
     public PublicRepository createRepository(String region, String accountId, String name,
@@ -61,7 +96,6 @@ public class EcrPublicService implements Resettable {
         repository.setRegistryId(accountId);
         repository.setRepositoryArn(AwsArnUtils.Arn.global(AwsRegions.partitionFor(region), "ecr-public",
                 accountId, "repository/" + name).toString());
-        repository.setRepositoryUri(PUBLIC_REGISTRY_HOST + "/" + accountId + "/" + name);
         repository.setCreatedAt(Instant.now().toEpochMilli() / 1000.0);
         repository.setCatalogData(catalogOutput(catalogData));
         repository.setTags(tags == null ? new ArrayList<>() : new ArrayList<>(tags));

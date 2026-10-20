@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.matchesPattern;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 
@@ -30,7 +31,7 @@ class EcrPublicIntegrationTest {
         .then()
                 .statusCode(200)
                 .body("repository.repositoryArn", equalTo("arn:aws:ecr-public::000000000000:repository/it-public"))
-                .body("repository.repositoryUri", equalTo("public.ecr.aws/000000000000/it-public"))
+                .body("repository.repositoryUri", matchesPattern("public\\.ecr\\.localhost:[0-9]+/000000000000/it-public"))
                 .body("repository.createdAt", notNullValue())
                 .body("catalogData.description", equalTo("demo"))
                 .extract().path("repository.repositoryArn");

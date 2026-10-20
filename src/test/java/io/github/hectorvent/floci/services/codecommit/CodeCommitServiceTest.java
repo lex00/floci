@@ -25,7 +25,7 @@ class CodeCommitServiceTest {
         Repository repository = service.createRepository(REGION, ACCOUNT, "app", "the app", null, Map.of("team", "a"));
 
         assertEquals("arn:aws:codecommit:us-east-1:000000000000:app", repository.getArn());
-        assertEquals("https://git-codecommit.us-east-1.amazonaws.com/v1/repos/app", repository.getCloneUrlHttp());
+        assertEquals("http://git-codecommit.us-east-1.localhost:4566/v1/repos/app", repository.getCloneUrlHttp());
         assertEquals("ssh://git-codecommit.us-east-1.amazonaws.com/v1/repos/app", repository.getCloneUrlSsh());
         assertEquals(Map.of("team", "a"), service.listTags(REGION, repository.getArn()));
     }
@@ -80,5 +80,14 @@ class CodeCommitServiceTest {
         service.untagResource(REGION, repository.getArn(), List.of("a"));
 
         assertEquals(Map.of("b", "2"), service.listTags(REGION, repository.getArn()));
+    }
+
+    @Test
+    void cloneUrlUsesTheBaseUrlAsItStandsOffLocalhost() {
+        CodeCommitService remote = new CodeCommitService(AccountAwareStorageBackend.inMemory(ACCOUNT),
+                "http://floci:4566/", null);
+
+        assertEquals("http://floci:4566/v1/repos/app",
+                remote.createRepository(REGION, ACCOUNT, "app", null, null, null).getCloneUrlHttp());
     }
 }

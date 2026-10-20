@@ -43,6 +43,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -53,6 +54,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.IntSupplier;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -75,6 +77,7 @@ public class CodeBuildRunner implements ContainerTeardown {
     private final ContainerDetector containerDetector;
     private final RegionResolver regionResolver;
     private final ContainerReachableEndpoint containerEndpoint;
+    private final CodeBuildFleetCapacity fleetCapacity;
 
     private final ConcurrentHashMap<String, String> runningContainers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AtomicBoolean> stopFlags = new ConcurrentHashMap<>();
@@ -90,7 +93,8 @@ public class CodeBuildRunner implements ContainerTeardown {
                            EmulatorConfig config,
                            ContainerDetector containerDetector,
                            RegionResolver regionResolver,
-                           ContainerReachableEndpoint containerEndpoint) {
+                           ContainerReachableEndpoint containerEndpoint,
+                           CodeBuildFleetCapacity fleetCapacity) {
         this.dockerClient = dockerClient;
         this.containerBuilder = containerBuilder;
         this.lifecycleManager = lifecycleManager;
@@ -102,6 +106,7 @@ public class CodeBuildRunner implements ContainerTeardown {
         this.containerDetector = containerDetector;
         this.regionResolver = regionResolver;
         this.containerEndpoint = containerEndpoint;
+        this.fleetCapacity = fleetCapacity;
     }
 
     /**
@@ -123,11 +128,20 @@ public class CodeBuildRunner implements ContainerTeardown {
         }
     }
 
+    /** The fleet a build runs on: its ARN, its current base capacity, and whether overflow runs on demand. */
+    public record FleetLease(String fleetArn, IntSupplier capacity, boolean onDemand) {}
+
     public void startBuild(String region, Build build, Project project, String buildspecOverride) {
+        startBuild(region, build, project, buildspecOverride, null);
+    }
+
+    /** Runs the build, on a slot of {@code fleet} when one is given. */
+    public void startBuild(String region, Build build, Project project, String buildspecOverride, FleetLease fleet) {
         String executionId = build.getArn();
         AtomicBoolean stopFlag = new AtomicBoolean(false);
         stopFlags.put(executionId, stopFlag);
-        Thread.ofVirtual().start(() -> runBuild(region, build, project, buildspecOverride, stopFlag, executionId));
+        Thread.ofVirtual().start(() -> runBuild(region, build, project, buildspecOverride, stopFlag, executionId,
+                fleet));
     }
 
     public void stopBuild(String executionId) {
@@ -146,11 +160,12 @@ public class CodeBuildRunner implements ContainerTeardown {
     }
 
     private void runBuild(String region, Build build, Project project,
-                          String buildspecOverride, AtomicBoolean stopFlag, String executionId) {
+                          String buildspecOverride, AtomicBoolean stopFlag, String executionId, FleetLease fleet) {
         String buildId = build.getId();
         Path workspace = null;
         String containerId = null;
         Closeable logHandle = null;
+        boolean holdsFleetSlot = false;
 
         try {
             // SUBMITTED
@@ -161,6 +176,28 @@ public class CodeBuildRunner implements ContainerTeardown {
 
             // QUEUED
             beginPhase(build, "QUEUED");
+            build.setCurrentPhase("QUEUED");
+            if (fleet != null) {
+                Integer queuedTimeout = build.getQueuedTimeoutInMinutes();
+                CodeBuildFleetCapacity.Slot slot = fleetCapacity.acquire(fleet.fleetArn(), fleet.capacity(),
+                        fleet.onDemand(), stopFlag::get,
+                        Duration.ofMinutes(queuedTimeout != null ? queuedTimeout : 480).toMillis());
+                switch (slot) {
+                    case ACQUIRED -> holdsFleetSlot = true;
+                    case ON_DEMAND -> LOG.debugv("Fleet {0} is full; build {1} runs on demand",
+                            fleet.fleetArn(), buildId);
+                    case STOPPED -> {
+                        completePhase(build, "QUEUED", "STOPPED");
+                        finishStopped(build);
+                        return;
+                    }
+                    case TIMED_OUT -> {
+                        completePhase(build, "QUEUED", "TIMED_OUT");
+                        finishQueuedTimeout(build);
+                        return;
+                    }
+                }
+            }
             completePhase(build, "QUEUED", "SUCCEEDED");
 
             if (stopFlag.get()) { finishStopped(build); return; }
@@ -379,6 +416,9 @@ public class CodeBuildRunner implements ContainerTeardown {
                 build.getPhases().add(completedPhase);
             }
         } finally {
+            if (holdsFleetSlot) {
+                fleetCapacity.release(fleet.fleetArn());
+            }
             stopFlags.remove(executionId);
             if (containerId != null && runningContainers.remove(executionId, containerId)) {
                 lifecycleManager.stopAndRemove(containerId, logHandle);
@@ -833,6 +873,13 @@ public class CodeBuildRunner implements ContainerTeardown {
         phase.setEndTime(now);
         phase.setDurationInSeconds(0L);
         build.getPhases().add(phase);
+    }
+
+    private void finishQueuedTimeout(Build build) {
+        build.setEndTime(System.currentTimeMillis() / 1000.0);
+        build.setBuildComplete(true);
+        build.setBuildStatus("TIMED_OUT");
+        build.setCurrentPhase("COMPLETED");
     }
 
     private void finishStopped(Build build) {

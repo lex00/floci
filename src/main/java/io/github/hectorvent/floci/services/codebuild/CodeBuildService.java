@@ -25,6 +25,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -159,6 +160,7 @@ public class CodeBuildService {
         if (artifacts == null || artifacts.getType() == null) {
             throw new AwsException("InvalidInputException", "artifacts.type is required", 400);
         }
+        resolveFleet(region, environment);
 
         double now = Instant.now().toEpochMilli() / 1000.0;
         Project project = new Project();
@@ -213,7 +215,10 @@ public class CodeBuildService {
         if (sourceVersion != null) { project.setSourceVersion(sourceVersion); }
         if (artifacts != null) { project.setArtifacts(artifacts); }
         if (secondaryArtifacts != null) { project.setSecondaryArtifacts(secondaryArtifacts); }
-        if (environment != null) { project.setEnvironment(environment); }
+        if (environment != null) {
+            resolveFleet(region, environment);
+            project.setEnvironment(environment);
+        }
         if (serviceRole != null) { project.setServiceRole(serviceRole); }
         if (timeoutInMinutes != null) { project.setTimeoutInMinutes(timeoutInMinutes); }
         if (queuedTimeoutInMinutes != null) { project.setQueuedTimeoutInMinutes(queuedTimeoutInMinutes); }
@@ -426,6 +431,44 @@ public class CodeBuildService {
         return fleetsFor(region).values().stream().sorted(order).map(Fleet::getArn).toList();
     }
 
+    /**
+     * The fleet an environment names, which must exist and run the environment's type. Fills in the
+     * fleet's ARN, environment type and compute type, as AWS reports them on the project and build.
+     */
+    private Fleet resolveFleet(String region, ProjectEnvironment environment) {
+        if (environment == null || environment.getFleet() == null) {
+            return null;
+        }
+        String reference = environment.getFleet().get("fleetArn");
+        Fleet fleet = findFleet(fleetsFor(region), reference);
+        if (fleet == null) {
+            throw new AwsException("InvalidInputException", "Fleet " + reference + " does not exist", 400);
+        }
+        if (environment.getType() != null && !environment.getType().equals(fleet.getEnvironmentType())) {
+            throw new AwsException("InvalidInputException", "The environment type " + environment.getType()
+                    + " does not match the fleet's environment type " + fleet.getEnvironmentType(), 400);
+        }
+        environment.setFleet(Map.of("fleetArn", fleet.getArn()));
+        environment.setType(fleet.getEnvironmentType());
+        environment.setComputeType(fleet.getComputeType());
+        return fleet;
+    }
+
+    private static ProjectEnvironment copyEnvironment(ProjectEnvironment source) {
+        ProjectEnvironment copy = new ProjectEnvironment();
+        if (source != null) {
+            copy.setType(source.getType());
+            copy.setImage(source.getImage());
+            copy.setComputeType(source.getComputeType());
+            copy.setEnvironmentVariables(source.getEnvironmentVariables());
+            copy.setPrivilegedMode(source.getPrivilegedMode());
+            copy.setCertificate(source.getCertificate());
+            copy.setImagePullCredentialsType(source.getImagePullCredentialsType());
+            copy.setFleet(source.getFleet());
+        }
+        return copy;
+    }
+
     private static Fleet findFleet(Map<String, Fleet> store, String nameOrArn) {
         if (nameOrArn == null) {
             return null;
@@ -559,6 +602,20 @@ public class CodeBuildService {
                             Integer timeoutOverride,
                             String imageOverride,
                             String computeTypeOverride) {
+        return startBuild(region, account, projectName, buildspecOverride, environmentOverride, artifactsOverride,
+                sourceVersion, timeoutOverride, imageOverride, computeTypeOverride, null);
+    }
+
+    /** As above, with {@code fleetOverrideArn} naming the fleet the build runs on instead of the project's. */
+    public Build startBuild(String region, String account, String projectName,
+                            String buildspecOverride,
+                            ProjectEnvironment environmentOverride,
+                            ProjectArtifacts artifactsOverride,
+                            String sourceVersion,
+                            Integer timeoutOverride,
+                            String imageOverride,
+                            String computeTypeOverride,
+                            String fleetOverrideArn) {
         Project project = projectsFor(region).get(projectName);
         if (project == null) {
             throw new AwsException("ResourceNotFoundException", "Project not found: " + projectName, 400);
@@ -593,6 +650,9 @@ public class CodeBuildService {
         build.setEncryptionKey(project.getEncryptionKey());
 
         ProjectEnvironment env = environmentOverride != null ? environmentOverride : project.getEnvironment();
+        if (environmentOverride != null && environmentOverride.getFleet() == null && project.getEnvironment() != null) {
+            environmentOverride.setFleet(project.getEnvironment().getFleet());
+        }
         if (imageOverride != null || computeTypeOverride != null) {
             ProjectEnvironment merged = new ProjectEnvironment();
             merged.setType(env != null ? env.getType() : null);
@@ -600,9 +660,19 @@ public class CodeBuildService {
             merged.setComputeType(computeTypeOverride != null ? computeTypeOverride : (env != null ? env.getComputeType() : null));
             merged.setEnvironmentVariables(env != null ? env.getEnvironmentVariables() : null);
             merged.setPrivilegedMode(env != null ? env.getPrivilegedMode() : null);
+            merged.setFleet(env != null ? env.getFleet() : null);
             build.setEnvironment(merged);
         } else {
             build.setEnvironment(env);
+        }
+        Fleet fleet;
+        if (fleetOverrideArn != null) {
+            ProjectEnvironment onFleet = copyEnvironment(build.getEnvironment());
+            onFleet.setFleet(Map.of("fleetArn", fleetOverrideArn));
+            fleet = resolveFleet(region, onFleet);
+            build.setEnvironment(onFleet);
+        } else {
+            fleet = resolveFleet(region, build.getEnvironment());
         }
 
         build.setPhases(new CopyOnWriteArrayList<>());
@@ -613,7 +683,15 @@ public class CodeBuildService {
         }
         Build responseBuild = copyBuild(build);
 
-        runner.startBuild(region, build, project, buildspecOverride);
+        if (fleet != null) {
+            String fleetArn = fleet.getArn();
+            runner.startBuild(region, build, project, buildspecOverride, new CodeBuildRunner.FleetLease(fleetArn,
+                    () -> Optional.ofNullable(findFleet(fleetsFor(region), fleetArn))
+                            .map(Fleet::getBaseCapacity).orElse(0),
+                    "ON_DEMAND".equals(fleet.getOverflowBehavior())));
+        } else {
+            runner.startBuild(region, build, project, buildspecOverride);
+        }
 
         return responseBuild;
     }

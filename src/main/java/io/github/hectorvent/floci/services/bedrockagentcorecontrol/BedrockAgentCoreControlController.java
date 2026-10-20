@@ -71,6 +71,8 @@ public class BedrockAgentCoreControlController {
                     stringMap(req.get("environmentVariables")),
                     obj(req, "authorizerConfiguration"),
                     obj(req, "protocolConfiguration"),
+                    obj(req, "lifecycleConfiguration"),
+                    obj(req, "requestHeaderConfiguration"),
                     text(req, "clientToken"),
                     region);
             Map<String, String> tags = stringMap(req.get("tags"));
@@ -143,6 +145,12 @@ public class BedrockAgentCoreControlController {
             if (snap.getProtocolConfiguration() != null) {
                 out.set("protocolConfiguration", snap.getProtocolConfiguration());
             }
+            if (snap.getLifecycleConfiguration() != null) {
+                out.set("lifecycleConfiguration", snap.getLifecycleConfiguration());
+            }
+            if (snap.getRequestHeaderConfiguration() != null) {
+                out.set("requestHeaderConfiguration", snap.getRequestHeaderConfiguration());
+            }
             if (snap.getRoleArn() != null) {
                 out.put("roleArn", snap.getRoleArn());
             }
@@ -179,6 +187,8 @@ public class BedrockAgentCoreControlController {
                     stringMap(req.get("environmentVariables")),
                     obj(req, "authorizerConfiguration"),
                     obj(req, "protocolConfiguration"),
+                    obj(req, "lifecycleConfiguration"),
+                    obj(req, "requestHeaderConfiguration"),
                     region);
             String version = String.valueOf(runtime.getLatestVersion());
 
