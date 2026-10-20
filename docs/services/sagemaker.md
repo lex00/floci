@@ -10,6 +10,7 @@ Floci emulates SageMaker control-plane APIs and runs real Docker containers for 
 | Endpoint configs | `CreateEndpointConfig`, `DescribeEndpointConfig`, `DeleteEndpointConfig`, `ListEndpointConfigs` |
 | Endpoints | `CreateEndpoint`, `DescribeEndpoint`, `UpdateEndpoint`, `DeleteEndpoint`, `ListEndpoints` |
 | Training | `CreateTrainingJob`, `DescribeTrainingJob`, `ListTrainingJobs`, `StopTrainingJob` |
+| App image configs | `CreateAppImageConfig`, `DescribeAppImageConfig`, `UpdateAppImageConfig`, `DeleteAppImageConfig`, `ListAppImageConfigs` |
 | Tags | `AddTags`, `ListTags`, `DeleteTags` |
 | Runtime | `POST /endpoints/{EndpointName}/invocations` |
 
@@ -35,7 +36,12 @@ Floci emulates SageMaker control-plane APIs and runs real Docker containers for 
 | `DescribeTrainingJob` | Returns a training job's status, scoped to the calling region. |
 | `ListTrainingJobs` | Lists training jobs for the calling region; supports `NameContains`, `StatusEquals`, `MaxResults`, and `NextToken`. |
 | `StopTrainingJob` | Stops a training job that is `InProgress` or `Stopping`; a no-op against a job already in a terminal state. |
-| `AddTags` | Adds tags to a model, endpoint config, endpoint, or training job identified by ARN. |
+| `CreateAppImageConfig` | Stores a Studio app image configuration (kernel gateway, JupyterLab or Code Editor) with tags. |
+| `DescribeAppImageConfig` | Returns an app image configuration; an unknown name is `ResourceNotFound`. |
+| `UpdateAppImageConfig` | Replaces the image configuration members of an app image configuration. |
+| `DeleteAppImageConfig` | Deletes an app image configuration. |
+| `ListAppImageConfigs` | Lists app image configurations with `NameContains`, time filters, `SortBy`, `SortOrder`, `MaxResults` and `NextToken`. |
+| `AddTags` | Adds tags to a model, endpoint config, endpoint, training job or app image configuration identified by ARN. |
 | `ListTags` | Lists tags for a model, endpoint config, endpoint, or training job identified by ARN. |
 | `DeleteTags` | Removes tags by key from a model, endpoint config, endpoint, or training job identified by ARN. |
 <!-- floci:actions:end -->

@@ -85,4 +85,16 @@ public final class SageMakerEntities {
         public String containerId;
         public Map<String, String> tags = new LinkedHashMap<>();
     }
+
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class AppImageConfigResource {
+        public String appImageConfigName;
+        public String appImageConfigArn;
+        public long creationTime;
+        public long lastModifiedTime;
+        public String region;
+        public Map<String, Map<String, Object>> configs = new LinkedHashMap<>();
+        public Map<String, String> tags = new LinkedHashMap<>();
+    }
 }
