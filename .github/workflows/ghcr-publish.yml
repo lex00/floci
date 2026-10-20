@@ -1,6 +1,6 @@
 name: GHCR Publish
 
-# Fork automation: publishes ghcr.io/lex00/floci on every push to main and on
+# Fork automation: publishes ghcr.io/lex00/floci on every push to develop and on
 # version tag pushes, so the fork's fixes are pullable without waiting on a
 # tagged release. Complements the manual `publish-docker.yml` (workflow_dispatch,
 # arbitrary ref/tag) with an automatic trigger, and mirrors its multi-arch
@@ -9,13 +9,13 @@ name: GHCR Publish
 # additional secrets required.
 #
 # Published tags:
-#   main push:  ghcr.io/lex00/floci:latest        ghcr.io/lex00/floci:<short-sha>
+#   develop push: ghcr.io/lex00/floci:latest      ghcr.io/lex00/floci:<short-sha>
 #   tag push:   ghcr.io/lex00/floci:<tag>          ghcr.io/lex00/floci:<short-sha>
 
 on:
   push:
     branches:
-      - main
+      - develop
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
 
@@ -40,7 +40,7 @@ jobs:
   # This duplicates ci.yml's test steps rather than depending on the CI
   # workflow's own run (workflow_run) or calling into it (workflow_call).
   # Why:
-  #   - ghcr-publish triggers on two event shapes: push-to-main AND
+  #   - ghcr-publish triggers on two event shapes: push-to-develop AND
   #     version-tag push. ci.yml's own trigger has no `tags:` clause at all,
   #     so a workflow_run chained on "CI"'s completion would never fire for
   #     tag pushes - the release path would stay permanently ungated. A test
