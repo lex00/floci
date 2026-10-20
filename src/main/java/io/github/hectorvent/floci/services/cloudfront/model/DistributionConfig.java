@@ -26,6 +26,7 @@ public class DistributionConfig {
     private Map<String, Object> logging;
     private String continuousDeploymentPolicyId;
     private boolean staging;
+    private Map<String, Object> tenantConfig;
 
     public DistributionConfig() {}
 
@@ -82,4 +83,7 @@ public class DistributionConfig {
 
     public boolean isStaging() { return staging; }
     public void setStaging(boolean staging) { this.staging = staging; }
+
+    public Map<String, Object> getTenantConfig() { return tenantConfig; }
+    public void setTenantConfig(Map<String, Object> tenantConfig) { this.tenantConfig = tenantConfig; }
 }

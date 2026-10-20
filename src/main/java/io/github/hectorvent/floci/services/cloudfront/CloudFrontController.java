@@ -1847,8 +1847,37 @@ public class CloudFrontController {
         xml.raw(xmlViewerCertificate(cfg.getViewerCertificate()));
         xml.raw(xmlRestrictions(cfg.getGeoRestriction()));
         xml.raw(xmlLogging(cfg.getLogging()));
+        xml.raw(xmlTenantConfig(cfg.getTenantConfig()));
 
         return xml.build();
+    }
+
+    /**
+     * Renders {@code TenantConfig} only for a distribution that set one, since CloudFront has
+     * no default for it.
+     */
+    private String xmlTenantConfig(Map<String, Object> tenantConfig) {
+        if (tenantConfig == null) {
+            return "";
+        }
+        XmlBuilder xml = new XmlBuilder().start("TenantConfig").start("ParameterDefinitions");
+        for (Object item : (List<?>) tenantConfig.getOrDefault("ParameterDefinitions", List.of())) {
+            Map<?, ?> definition = (Map<?, ?>) item;
+            xml.start("member").elem("Name", str(definition.get("Name")));
+            if (definition.get("StringSchema") instanceof Map<?, ?> schema) {
+                xml.start("Definition").start("StringSchema");
+                if (schema.get("Comment") != null) {
+                    xml.elem("Comment", str(schema.get("Comment")));
+                }
+                if (schema.get("DefaultValue") != null) {
+                    xml.elem("DefaultValue", str(schema.get("DefaultValue")));
+                }
+                xml.elem("Required", Boolean.TRUE.equals(schema.get("Required")));
+                xml.end("StringSchema").end("Definition");
+            }
+            xml.end("member");
+        }
+        return xml.end("ParameterDefinitions").end("TenantConfig").build();
     }
 
     /**
@@ -2525,8 +2554,49 @@ public class CloudFrontController {
         cfg.setCustomErrorResponses(parseCustomErrorResponses(body));
         cfg.setGeoRestriction(parseGeoRestriction(body));
         cfg.setLogging(parseLogging(body));
+        cfg.setTenantConfig(parseTenantConfig(body));
 
         return cfg;
+    }
+
+    /**
+     * Parses {@code TenantConfig}. {@code ParameterDefinitions} is an unflattened Smithy list, so
+     * its items arrive in {@code member} elements rather than a {@code Quantity}/{@code Items} pair.
+     */
+    private Map<String, Object> parseTenantConfig(String body) {
+        XmlParser.XmlElement node = XmlParser.extractElementTree(body, "TenantConfig");
+        if (node == null) {
+            return null;
+        }
+        List<Map<String, Object>> definitions = new ArrayList<>();
+        XmlParser.XmlElement parameterDefinitions = node.child("ParameterDefinitions");
+        if (parameterDefinitions != null) {
+            for (XmlParser.XmlElement member : parameterDefinitions.children()) {
+                Map<String, Object> definition = new LinkedHashMap<>();
+                XmlParser.XmlElement name = member.child("Name");
+                definition.put("Name", name != null ? name.text() : "");
+                XmlParser.XmlElement wrapper = member.child("Definition");
+                XmlParser.XmlElement schema = wrapper != null ? wrapper.child("StringSchema") : null;
+                if (schema != null) {
+                    Map<String, Object> stringSchema = new LinkedHashMap<>();
+                    XmlParser.XmlElement required = schema.child("Required");
+                    stringSchema.put("Required", required != null && "true".equalsIgnoreCase(required.text()));
+                    XmlParser.XmlElement comment = schema.child("Comment");
+                    if (comment != null) {
+                        stringSchema.put("Comment", comment.text());
+                    }
+                    XmlParser.XmlElement defaultValue = schema.child("DefaultValue");
+                    if (defaultValue != null) {
+                        stringSchema.put("DefaultValue", defaultValue.text());
+                    }
+                    definition.put("StringSchema", stringSchema);
+                }
+                definitions.add(definition);
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("ParameterDefinitions", definitions);
+        return result;
     }
 
     private Map<String, String> parseDistributionConfigTopLevelValues(
