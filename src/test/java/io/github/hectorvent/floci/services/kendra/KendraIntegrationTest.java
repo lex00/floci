@@ -85,4 +85,57 @@ class KendraIntegrationTest {
             .then().statusCode(400)
             .body("__type", equalTo("ValidationException"));
     }
+
+    @Test
+    void dataSourceDocumentsAndQuery() {
+        String indexId = call("CreateIndex", "{\"Name\": \"search\", \"RoleArn\": \"" + ROLE + "\"}")
+            .when().post("/")
+            .then().statusCode(200)
+            .extract().path("Id");
+        String dataSourceId = call("CreateDataSource", """
+                {"IndexId": "%s", "Name": "bucket", "Type": "S3", "RoleArn": "%s",
+                 "Configuration": {"S3Configuration": {"BucketName": "docs"}},
+                 "Tags": [{"Key": "team", "Value": "search"}]}
+                """.formatted(indexId, ROLE))
+            .when().post("/")
+            .then().statusCode(200)
+            .extract().path("Id");
+
+        call("DescribeDataSource", "{\"IndexId\": \"" + indexId + "\", \"Id\": \"" + dataSourceId + "\"}")
+            .when().post("/")
+            .then().statusCode(200)
+            .body("Status", equalTo("ACTIVE"))
+            .body("Configuration.S3Configuration.BucketName", equalTo("docs"));
+        call("ListTagsForResource", "{\"ResourceARN\": \"arn:aws:kendra:us-east-1:000000000000:index/" + indexId
+                + "/data-source/" + dataSourceId + "\"}")
+            .when().post("/")
+            .then().statusCode(200)
+            .body("Tags.Key", hasItem("team"));
+        call("ListDataSources", "{\"IndexId\": \"" + indexId + "\"}")
+            .when().post("/")
+            .then().statusCode(200)
+            .body("SummaryItems.Name", hasItem("bucket"));
+
+        call("BatchPutDocument", """
+                {"IndexId": "%s", "Documents": [{"Id": "doc-1", "Title": "Getting started",
+                 "Blob": "SW5zdGFsbCB0aGUgZW11bGF0b3Igd2l0aCBEb2NrZXIu", "ContentType": "PLAIN_TEXT"}]}
+                """.formatted(indexId))
+            .when().post("/")
+            .then().statusCode(200)
+            .body("FailedDocuments.size()", equalTo(0));
+        call("Query", "{\"IndexId\": \"" + indexId + "\", \"QueryText\": \"docker\"}")
+            .when().post("/")
+            .then().statusCode(200)
+            .body("TotalNumberOfResults", equalTo(1))
+            .body("ResultItems[0].DocumentId", equalTo("doc-1"))
+            .body("ResultItems[0].DocumentExcerpt.Text", equalTo("Install the emulator with Docker."));
+
+        call("DeleteDataSource", "{\"IndexId\": \"" + indexId + "\", \"Id\": \"" + dataSourceId + "\"}")
+            .when().post("/")
+            .then().statusCode(200);
+        call("DescribeDataSource", "{\"IndexId\": \"" + indexId + "\", \"Id\": \"" + dataSourceId + "\"}")
+            .when().post("/")
+            .then().statusCode(400)
+            .body("__type", equalTo("ResourceNotFoundException"));
+    }
 }
