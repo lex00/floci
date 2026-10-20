@@ -2187,6 +2187,10 @@ public interface EmulatorConfig {
         @WithDefault("false")
         boolean scpEnforcementEnabled();
 
+        /** Whether the account's effective tag policy refuses noncompliant tag writes. */
+        @WithDefault("false")
+        boolean tagPolicyEnforcementEnabled();
+
         Optional<String> managementAccountEmail();
     }
 

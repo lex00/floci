@@ -20,6 +20,7 @@ import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
 import io.github.hectorvent.floci.services.iam.IamService;
+import io.github.hectorvent.floci.services.organizations.TagPolicyEnforcer;
 import io.github.hectorvent.floci.services.sns.SnsService;
 import io.github.hectorvent.floci.services.sqs.model.Message;
 import io.github.hectorvent.floci.services.sqs.model.MessageAttributeValue;
@@ -338,6 +339,15 @@ public class SqsService implements Resettable, ResourceProvider {
     }
 
     private record PendingDelete(Queue queue, Instant visibleUntil) {}
+
+    @Inject
+    Instance<TagPolicyEnforcer> tagPolicyEnforcer;
+
+    private void enforceTagPolicy(Map<String, String> tags) {
+        if (tagPolicyEnforcer != null && tagPolicyEnforcer.isResolvable()) {
+            tagPolicyEnforcer.get().enforce(regionResolver.getAccountId(), "sqs:queue", tags, "TagPolicyViolation");
+        }
+    }
 
     /** The queue a recent delete still shows to reads, if its window is open. */
     private Optional<Queue> recentlyDeleted(String storageKey) {
@@ -674,6 +684,7 @@ public class SqsService implements Resettable, ResourceProvider {
 
         validateMaximumMessageSize(attributes);
         attributes = validateMessageRetentionPeriod(attributes);
+        enforceTagPolicy(tags);
 
         String accountId = regionResolver.getAccountId();
         String queueUrl = buildQueueUrl(region, accountId, queueName);
@@ -1877,6 +1888,7 @@ public class SqsService implements Resettable, ResourceProvider {
     }
 
     public void tagQueue(String queueUrl, Map<String, String> tags, String region) {
+        enforceTagPolicy(tags);
         String storageKey = regionKey(region, queueUrl);
         Queue queue = queueStore.get(storageKey)
                 .orElseThrow(() -> new AwsException("AWS.SimpleQueueService.NonExistentQueue",

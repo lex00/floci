@@ -99,6 +99,7 @@ import io.github.hectorvent.floci.services.ec2.net.VpcNetworkManager;
 import io.github.hectorvent.floci.services.ec2.portforward.Ec2PortForwardManager;
 import io.github.hectorvent.floci.services.iam.IamService;
 import io.github.hectorvent.floci.services.iam.model.InstanceProfile;
+import io.github.hectorvent.floci.services.organizations.TagPolicyEnforcer;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.ContextNotActiveException;
@@ -8245,8 +8246,19 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
 
     public void createTags(String region, List<String> resourceIds, List<Tag> tagList) {
         validateUserTagKeys(tagList);
+        if (tagPolicyEnforcer != null && tagPolicyEnforcer.isResolvable()) {
+            Map<String, String> requested = new LinkedHashMap<>();
+            tagList.forEach(tag -> requested.put(tag.getKey(), tag.getValue()));
+            for (String resourceId : resourceIds) {
+                tagPolicyEnforcer.get().enforce(callerAccountId(), "ec2:" + inferResourceType(resourceId),
+                        requested, "TagPolicyViolation");
+            }
+        }
         createSystemTags(region, resourceIds, tagList);
     }
+
+    @Inject
+    jakarta.enterprise.inject.Instance<TagPolicyEnforcer> tagPolicyEnforcer;
 
     /** Service-owned tags, separate from the public EC2 CreateTags operation. */
     public void createSystemTags(String region, List<String> resourceIds, List<Tag> tagList) {

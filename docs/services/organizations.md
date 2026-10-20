@@ -125,6 +125,7 @@ call `LeaveOrganization`. An account in no organization gets
 | --- | --- | --- |
 | `FLOCI_SERVICES_ORGANIZATIONS_ENABLED` | `true` | Enables the service |
 | `FLOCI_SERVICES_ORGANIZATIONS_SCP_ENFORCEMENT_ENABLED` | `false` | When `true` (and IAM enforcement is enabled), attached service control policies participate in IAM policy evaluation |
+| `FLOCI_SERVICES_ORGANIZATIONS_TAG_POLICY_ENFORCEMENT_ENABLED` | `false` | When `true`, the account's effective tag policy refuses noncompliant EC2 and SQS tag writes, see [Tag policy enforcement](#tag-policy-enforcement) |
 | `FLOCI_SERVICES_ORGANIZATIONS_MANAGEMENT_ACCOUNT_EMAIL` | unset | Email reported for the organization's management account (`DescribeOrganization` master account, `ListAccounts`). Unset falls back to the built-in default |
 | `FLOCI_STORAGE_SERVICES_ORGANIZATIONS_MODE` | inherits `FLOCI_STORAGE_MODE` | Storage mode override |
 | `FLOCI_STORAGE_SERVICES_ORGANIZATIONS_FLUSH_INTERVAL_MS` | `5000` | Hybrid/WAL flush interval |
@@ -141,6 +142,16 @@ the account-root behaviour, and the cases that bypass enforcement.
 
 The evaluation itself lives in the IAM enforcement layer — this service stores the policies and
 resolves the chain, but with IAM enforcement off the flag has no effect.
+
+## Tag policy enforcement
+
+With `FLOCI_SERVICES_ORGANIZATIONS_TAG_POLICY_ENFORCEMENT_ENABLED=true`, the account's effective
+`TAG_POLICY` applies to EC2 `CreateTags` and to SQS `CreateQueue` and `TagQueue`. A policy tag whose
+`enforced_for` names the resource type (`ec2:vpc`, `sqs:queue`) or its service's `ALL_SUPPORTED`
+refuses a value outside `tag_value`, where a trailing `*` matches a prefix, and a key spelled with
+different capitalization from `tag_key`. The refusal is a 400 `TagPolicyViolation`. EC2 checks the
+tags of a `TagSpecification` after the resource is created, so a refused tag leaves the resource
+untagged rather than uncreated.
 
 ## Example
 
