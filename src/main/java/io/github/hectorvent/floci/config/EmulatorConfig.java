@@ -868,6 +868,7 @@ public interface EmulatorConfig {
         ConnectServiceConfig connect();
         AppIntegrationsServiceConfig appintegrations();
         DlmServiceConfig dlm();
+        AppFlowServiceConfig appflow();
         CognitoIdentityServiceConfig cognitoidentity();
         GlobalAcceleratorServiceConfig globalaccelerator();
         DataSyncServiceConfig datasync();
@@ -936,6 +937,11 @@ public interface EmulatorConfig {
     }
 
     interface AppIntegrationsServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface AppFlowServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }

@@ -38,7 +38,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class PartitionCrossServiceSmokeIntegrationTest {
 
     static final Set<String> COVERED_PACKAGES = Set.of(
-            "accessanalyzer", "acm", "amazonmq", "apigateway", "apigatewayv2", "applicationautoscaling", "appsync",
+            "accessanalyzer", "acm", "amazonmq", "apigateway", "apigatewayv2", "appflow", "applicationautoscaling",
+            "appsync",
             "aps", "autoscaling", "backup", "batch", "bcmdataexports", "bedrock", "bedrockagentcore", "bedrockagentcorecontrol", "ce",
             "cloudfront", "cloudmap", "cloudwatch", "codebuild", "codedeploy", "codepipeline", "cognito",
             "configservice", "connect", "controlcatalog", "controltower", "datasync", "dlm", "dms", "dynamodb", "ec2",
@@ -947,6 +948,25 @@ class PartitionCrossServiceSmokeIntegrationTest {
         cleanup.register(() -> signed(region, "dlm").when().delete("/policies/" + policyId));
         String arn = signed(region, "dlm").when().get("/policies/" + policyId)
             .then().statusCode(200).extract().jsonPath().getString("Policy.PolicyArn");
+        PartitionMatrix.assertArnIn(partitionCase, arn);
+    }
+
+    @ParameterizedTest
+    @MethodSource(PartitionMatrix.NON_COMMERCIAL_CASES)
+    void appFlowConnectorProfileArn(PartitionCase partitionCase) {
+        String region = offered(partitionCase, "appflow");
+        String name = unique("smoke-profile", partitionCase);
+        String arn = signed(region, "appflow")
+            .contentType(JSON)
+            .body("""
+                {"connectorProfileName": "%s", "connectorType": "Salesforce", "connectionMode": "Public",
+                 "connectorProfileConfig": {"connectorProfileProperties": {"Salesforce": {}}}}
+                """.formatted(name))
+        .when().post("/create-connector-profile").then().statusCode(200)
+            .extract().jsonPath().getString("connectorProfileArn");
+        cleanup.register(() -> signed(region, "appflow").contentType(JSON)
+            .body("{\"connectorProfileName\": \"" + name + "\"}")
+            .when().post("/delete-connector-profile"));
         PartitionMatrix.assertArnIn(partitionCase, arn);
     }
 

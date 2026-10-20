@@ -532,6 +532,8 @@ floci:
       enabled: true
     dlm:
       enabled: true
+    appflow:
+      enabled: true
     cognitoidentity:
       enabled: true
     globalaccelerator:

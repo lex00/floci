@@ -6,6 +6,7 @@ import io.github.hectorvent.floci.services.account.AccountController;
 import io.github.hectorvent.floci.services.apigateway.ApiGatewayController;
 import io.github.hectorvent.floci.services.appconfig.AppConfigController;
 import io.github.hectorvent.floci.services.appconfig.AppConfigDataController;
+import io.github.hectorvent.floci.services.appflow.AppFlowController;
 import io.github.hectorvent.floci.services.appsync.AppSyncController;
 import io.github.hectorvent.floci.services.aps.ApsController;
 import io.github.hectorvent.floci.services.backup.BackupController;
@@ -727,6 +728,10 @@ public class ResolvedServiceCatalog {
                         "dlm", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
                         protocols(ServiceProtocol.REST_JSON),
                         Set.of(), Set.of("dlm"), Set.of(), Set.of(DlmController.class)),
+                descriptor("appflow", "appflow", config.services().appflow().enabled(), true,
+                        "appflow", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
+                        protocols(ServiceProtocol.REST_JSON),
+                        Set.of(), Set.of("appflow"), Set.of(), Set.of(AppFlowController.class)),
                 descriptor("cognito-identity", "cognitoidentity",
                         config.services().cognitoidentity().enabled(), true,
                         "cognitoidentity", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
