@@ -30,9 +30,9 @@ Floci supports both CloudWatch Logs and CloudWatch Metrics.
 | `TagLogGroup` | Tag a log group |
 | `UntagLogGroup` | Remove tags |
 | `ListTagsLogGroup` | List tags |
-| `TagResource` | Tag a log group by ARN |
-| `UntagResource` | Remove tags from a log group by ARN |
-| `ListTagsForResource` | List tags for a log group ARN |
+| `TagResource` | Tag a log group, delivery source, delivery destination or delivery by ARN |
+| `UntagResource` | Remove tags from a log group, delivery source, delivery destination or delivery by ARN |
+| `ListTagsForResource` | List tags for a log group, delivery source, delivery destination or delivery ARN |
 | `PutSubscriptionFilter` | Create or update a subscription filter (see [Subscription filters](#subscription-filters)) |
 | `DescribeSubscriptionFilters` | List subscription filters on a log group |
 | `DeleteSubscriptionFilter` | Delete a subscription filter |
@@ -50,6 +50,25 @@ Floci supports both CloudWatch Logs and CloudWatch Metrics.
 | `StartQuery` | Start a Logs Insights query (see [Logs Insights](#logs-insights)) |
 | `GetQueryResults` | Get the status and results of a Logs Insights query |
 | `StopQuery` | Stop a query that has not completed yet |
+| `PutDeliverySource` | Create or update a delivery source for a resource's vended logs |
+| `GetDeliverySource` | Read a delivery source |
+| `DescribeDeliverySources` | List delivery sources |
+| `DeleteDeliverySource` | Delete a delivery source that no delivery uses |
+| `PutDeliveryDestination` | Create or update a log group, S3, Firehose or X-Ray delivery destination |
+| `GetDeliveryDestination` | Read a delivery destination |
+| `DescribeDeliveryDestinations` | List delivery destinations |
+| `DeleteDeliveryDestination` | Delete a delivery destination that no delivery uses |
+| `PutDeliveryDestinationPolicy` | Set a delivery destination's access policy |
+| `GetDeliveryDestinationPolicy` | Read a delivery destination's access policy |
+| `DeleteDeliveryDestinationPolicy` | Remove a delivery destination's access policy |
+| `CreateDelivery` | Pair a delivery source with a delivery destination |
+| `GetDelivery` | Read a delivery by id |
+| `DescribeDeliveries` | List deliveries |
+| `UpdateDeliveryConfiguration` | Change a delivery's record fields, delimiter or S3 path options |
+| `DeleteDelivery` | Delete a delivery |
+
+Vended log deliveries are stored as configuration. Floci sends no log records from a delivery
+source to its destinations.
 
 Log group deletion protection defaults to disabled and is persisted with the log group. When it is
 enabled, `DeleteLogGroup` returns `ValidationException` until protection is explicitly disabled

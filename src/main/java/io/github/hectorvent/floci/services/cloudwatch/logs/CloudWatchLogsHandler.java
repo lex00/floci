@@ -36,16 +36,29 @@ public class CloudWatchLogsHandler {
     private final CloudWatchLogsService logsService;
     private final CloudWatchLogsCrossAccountService crossAccountService;
     private final CloudWatchLogsMetricFilterHandler metricFilterHandler;
+    private final CloudWatchLogsDeliveryService deliveryService;
+    private final CloudWatchLogsDeliveryHandler deliveryHandler;
     private final ObjectMapper objectMapper;
+
+    public CloudWatchLogsHandler(CloudWatchLogsService logsService,
+                                 CloudWatchLogsCrossAccountService crossAccountService,
+                                 CloudWatchLogsMetricFilterService metricFilterService,
+                                 ObjectMapper objectMapper) {
+        this(logsService, crossAccountService, metricFilterService, null, objectMapper);
+    }
 
     @Inject
     public CloudWatchLogsHandler(CloudWatchLogsService logsService,
                                  CloudWatchLogsCrossAccountService crossAccountService,
                                  CloudWatchLogsMetricFilterService metricFilterService,
+                                 CloudWatchLogsDeliveryService deliveryService,
                                  ObjectMapper objectMapper) {
         this.logsService = logsService;
         this.crossAccountService = crossAccountService;
         this.metricFilterHandler = new CloudWatchLogsMetricFilterHandler(metricFilterService, objectMapper);
+        this.deliveryService = deliveryService;
+        this.deliveryHandler = deliveryService == null
+                ? null : new CloudWatchLogsDeliveryHandler(deliveryService, objectMapper);
         this.objectMapper = objectMapper;
     }
 
@@ -74,6 +87,11 @@ public class CloudWatchLogsHandler {
             case "DeleteSubscriptionFilter" -> handleDeleteSubscriptionFilter(request, region);
             case "PutMetricFilter", "DescribeMetricFilters", "DeleteMetricFilter", "TestMetricFilter" ->
                     metricFilterHandler.handle(action, request, region);
+            case "PutDeliverySource", "GetDeliverySource", "DescribeDeliverySources", "DeleteDeliverySource",
+                 "PutDeliveryDestination", "GetDeliveryDestination", "DescribeDeliveryDestinations",
+                 "DeleteDeliveryDestination", "PutDeliveryDestinationPolicy", "GetDeliveryDestinationPolicy",
+                 "DeleteDeliveryDestinationPolicy", "CreateDelivery", "GetDelivery", "DescribeDeliveries",
+                 "UpdateDeliveryConfiguration", "DeleteDelivery" -> deliveryHandler.handle(action, request, region);
             case "AssociateKmsKey" -> handleAssociateKmsKey(request, region);
             case "DisassociateKmsKey" -> handleDisassociateKmsKey(request, region);
             case "PutResourcePolicy" -> handlePutResourcePolicy(request, region);
@@ -573,6 +591,12 @@ public class CloudWatchLogsHandler {
 
     private Response handleListTagsForResource(JsonNode request, String region) {
         String resourceArn = request.path("resourceArn").asText();
+        if (deliveryService != null && CloudWatchLogsDeliveryService.isDeliveryArn(resourceArn)) {
+            ObjectNode response = objectMapper.createObjectNode();
+            ObjectNode tagsNode = response.putObject("tags");
+            deliveryService.listTags(resourceArn, region).forEach(tagsNode::put);
+            return Response.ok(response).build();
+        }
         String groupName = logsService.resolveTagTarget(resourceArn, region).name();
         Map<String, String> tags = logsService.listTagsLogGroup(groupName, region);
 
@@ -585,6 +609,10 @@ public class CloudWatchLogsHandler {
 
     private Response handleTagResource(JsonNode request, String region) {
         String resourceArn = request.path("resourceArn").asText();
+        if (deliveryService != null && CloudWatchLogsDeliveryService.isDeliveryArn(resourceArn)) {
+            deliveryService.tagResource(resourceArn, extractTags(request.path("tags")), region);
+            return Response.ok(objectMapper.createObjectNode()).build();
+        }
         String groupName = logsService.resolveTagTarget(resourceArn, region).name();
         Map<String, String> tags = extractTags(request.path("tags"));
         logsService.tagLogGroup(groupName, tags, region);
@@ -593,6 +621,12 @@ public class CloudWatchLogsHandler {
 
     private Response handleUntagResource(JsonNode request, String region) {
         String resourceArn = request.path("resourceArn").asText();
+        if (deliveryService != null && CloudWatchLogsDeliveryService.isDeliveryArn(resourceArn)) {
+            List<String> keys = new ArrayList<>();
+            request.path("tagKeys").forEach(k -> keys.add(k.asText()));
+            deliveryService.untagResource(resourceArn, keys, region);
+            return Response.ok(objectMapper.createObjectNode()).build();
+        }
         String groupName = logsService.resolveTagTarget(resourceArn, region).name();
         List<String> tagKeys = new ArrayList<>();
         request.path("tagKeys").forEach(k -> tagKeys.add(k.asText()));
