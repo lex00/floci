@@ -88,20 +88,47 @@ public class BedrockService {
     private final RegionResolver regionResolver;
     private final ObjectMapper objectMapper;
     private final KmsService kmsService;
+    private final BedrockModelCatalog modelCatalog;
 
     @Inject
     public BedrockService(StorageFactory storageFactory, RegionResolver regionResolver,
-                          ObjectMapper objectMapper, KmsService kmsService) {
+                          ObjectMapper objectMapper, KmsService kmsService, BedrockModelCatalog modelCatalog) {
         this(storageFactory.create("bedrock", "bedrock-guardrails.json",
-                new TypeReference<Map<String, Guardrail>>() {}), regionResolver, objectMapper, kmsService);
+                new TypeReference<Map<String, Guardrail>>() {}), regionResolver, objectMapper, kmsService,
+                modelCatalog);
     }
 
     BedrockService(StorageBackend<String, Guardrail> guardrails, RegionResolver regionResolver,
-                   ObjectMapper objectMapper, KmsService kmsService) {
+                   ObjectMapper objectMapper, KmsService kmsService, BedrockModelCatalog modelCatalog) {
         this.guardrails = guardrails;
         this.regionResolver = regionResolver;
         this.objectMapper = objectMapper;
         this.kmsService = kmsService;
+        this.modelCatalog = modelCatalog;
+    }
+
+    // Inference profiles
+
+    public PaginatedResult<BedrockModelCatalog.InferenceProfile> listInferenceProfiles(
+            String type, Integer maxResults, String nextToken, String region) {
+        List<BedrockModelCatalog.InferenceProfile> profiles = new ArrayList<>();
+        if (type == null || BedrockModelCatalog.SYSTEM_DEFINED.equals(type)) {
+            profiles.addAll(modelCatalog.systemInferenceProfiles(region));
+        }
+        return Pagination.paginate(profiles, BedrockModelCatalog.InferenceProfile::inferenceProfileId,
+                maxResults, nextToken, MAX_PAGE, "ValidationException");
+    }
+
+    public BedrockModelCatalog.InferenceProfile getInferenceProfile(String identifier, String region) {
+        if (identifier == null || identifier.isBlank()) {
+            throw new AwsException("ValidationException", "inferenceProfileIdentifier is required", 400);
+        }
+        BedrockModelCatalog.InferenceProfile profile = modelCatalog.findSystemInferenceProfile(identifier, region);
+        if (profile == null) {
+            throw new AwsException("ResourceNotFoundException",
+                    "Inference profile " + identifier + " does not exist.", 404);
+        }
+        return profile;
     }
 
     public Guardrail createGuardrail(JsonNode request, String region) {

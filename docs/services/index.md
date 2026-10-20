@@ -103,7 +103,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [AppConfigData](appconfig.md#data-plane) | `/configurationsessions`, `/configuration` | REST JSON | 2 |
 | [AppSync](appsync.md) | `/v1/apis/...` | REST JSON | 33 |
 | [App Runner](apprunner.md) | `POST /` + `X-Amz-Target: AppRunner.*` | JSON 1.0 | 31 |
-| [Amazon Bedrock](bedrock.md) | `/guardrails`, `/guardrails/{guardrailIdentifier}`, `/tagResource`, `/untagResource`, `/listTagsForResource` | REST JSON | 9 |
+| [Amazon Bedrock](bedrock.md) | `/guardrails`, `/guardrails/{guardrailIdentifier}`, `/foundation-models`, `/inference-profiles`, `/tagResource`, `/untagResource`, `/listTagsForResource` | REST JSON | 13 |
 | [Bedrock Runtime](bedrock-runtime.md) | `/model/{modelId}/converse`, `/model/{modelId}/invoke` | REST JSON | 2 (stub; streaming returns 501) |
 | [Bedrock AgentCore Control](bedrock-agentcore.md) | `/runtimes/*`, `/gateways/*`, `/memories/*`, `/identities/*`, `/browsers*`, `/browser-profiles*`, `/code-interpreters*`, `/resourcepolicy/*`, `/evaluators*`, `/online-evaluation-configs*`, `/evaluations/*`, `/tags/{resourceArn}` | REST JSON | 81 (+ 3 tagging via shared `/tags/{arn}` route) |
 | [Bedrock AgentCore](bedrock-agentcore.md#data-plane-invokeagentruntime) | `/runtimes/{agentRuntimeArn}/invocations` | REST JSON (binary payload) | 1 (canned-response stub) |

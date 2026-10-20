@@ -1,7 +1,7 @@
 # Amazon Bedrock (control plane)
 
 **Protocol:** REST-JSON
-**Endpoint:** `http://localhost:4566/guardrails` (SigV4 service `bedrock`)
+**Endpoint:** `http://localhost:4566/guardrails`, `/foundation-models`, `/inference-profiles` (SigV4 service `bedrock`)
 
 This page covers the Bedrock control plane. Model invocation is a separate service
 that shares the same signing name: see [Bedrock Runtime](bedrock-runtime.md).
@@ -11,6 +11,10 @@ that shares the same signing name: see [Bedrock Runtime](bedrock-runtime.md).
 <!-- floci:actions:start -->
 | Action | Description |
 | --- | --- |
+| `ListFoundationModels` | List the foundation model catalog, filtered by provider, output modality, inference type and customization type |
+| `GetFoundationModel` | Read one catalog model by model id or foundation-model ARN |
+| `ListInferenceProfiles` | List the system-defined cross-region inference profiles of the request region |
+| `GetInferenceProfile` | Read an inference profile by id or ARN |
 | `CreateGuardrail` | Create a guardrail; returns the `DRAFT` version, `READY` immediately |
 | `GetGuardrail` | Read a guardrail by id or ARN, at `DRAFT` or a numbered `guardrailVersion` |
 | `UpdateGuardrail` | Replace the `DRAFT` configuration |
@@ -62,17 +66,34 @@ request, so `CreateGuardrail` and `TagResource` both raise `TooManyTagsException
 the resulting total would pass 50. Replacing the value of a tag key the guardrail
 already carries does not add to that total.
 
+## Foundation models and inference profiles
+
+`ListFoundationModels` and `GetFoundationModel` serve a fixed catalog of Anthropic, Amazon,
+Meta, Mistral AI and Cohere model ids in AWS's `FoundationModelSummary` shape. The Bedrock
+Runtime stub answers for any of them, so a model picked from the list can be invoked. With
+the proxy backend, map the ids you use through
+`FLOCI_SERVICES_BEDROCK_RUNTIME_PROXY_MODEL_MAPPING`. Model ARNs carry the request region
+and no account, as in AWS.
+
+`ListInferenceProfiles` and `GetInferenceProfile` serve the system-defined cross-region
+profiles of the request region's geography: `us.` in US regions, `eu.` in EU regions and
+`apac.` in Asia Pacific regions, each listing the model's ARN in that geography's regions.
+Other regions have none.
+
+`FLOCI_SERVICES_BEDROCK_FOUNDATION_MODELS` replaces the catalog with a comma-separated list
+of model ids, for a proxy backend that serves a different set. A listed id the catalog does
+not know is served as a text model from the provider its id prefix names.
+`FLOCI_SERVICES_BEDROCK_EXTRA_FOUNDATION_MODELS` appends ids to the catalog instead.
+
 ## Not implemented
 
 The rest of the Bedrock control plane is absent rather than stubbed, because
 emulating it faithfully would require behaviour Floci has no way to model:
 
-- `ListFoundationModels` and `GetFoundationModel`. The AWS service model carries no
-  enumeration of foundation model ids, so any catalogue would be invented data.
 - Custom model, model customization, model import and distillation jobs. These
   depend on real training runs.
 - Model evaluation and evaluation jobs. These depend on real inference.
-- Provisioned throughput, inference profiles and prompt routers. These describe real
+- Provisioned throughput, application inference profiles and prompt routers. These describe real
   capacity reservations and routing.
 - Model invocation logging, batch inference and async invoke. These are data-plane
   operations backed by real model execution.
@@ -82,6 +103,8 @@ emulating it faithfully would require behaviour Floci has no way to model:
 | Variable | Default | Description |
 |---|---|---|
 | `FLOCI_SERVICES_BEDROCK_ENABLED` | `true` | Enable or disable the service |
+| `FLOCI_SERVICES_BEDROCK_FOUNDATION_MODELS` | _(built-in catalog)_ | Comma-separated model ids that replace the foundation model catalog |
+| `FLOCI_SERVICES_BEDROCK_EXTRA_FOUNDATION_MODELS` | _(none)_ | Comma-separated model ids appended to the catalog |
 
 ## Examples
 

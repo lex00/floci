@@ -2433,6 +2433,15 @@ public interface EmulatorConfig {
     interface BedrockServiceConfig {
         @WithDefault("true")
         boolean enabled();
+
+        /**
+         * Comma-separated model ids that replace the built-in foundation model catalog. An id
+         * the catalog does not know is listed as a text model.
+         */
+        Optional<String> foundationModels();
+
+        /** Comma-separated model ids appended to the foundation model catalog. */
+        Optional<String> extraFoundationModels();
     }
 
     interface BedrockRuntimeServiceConfig {

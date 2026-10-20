@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.JsonErrorResponseUtils;
 import io.github.hectorvent.floci.core.common.PaginatedResult;
 import io.github.hectorvent.floci.core.common.Pagination;
@@ -44,15 +45,80 @@ import java.util.Map;
 public class BedrockController {
 
     private final BedrockService bedrockService;
+    private final BedrockModelCatalog modelCatalog;
     private final RegionResolver regionResolver;
     private final ObjectMapper objectMapper;
 
     @Inject
-    public BedrockController(BedrockService bedrockService, RegionResolver regionResolver,
-                             ObjectMapper objectMapper) {
+    public BedrockController(BedrockService bedrockService, BedrockModelCatalog modelCatalog,
+                             RegionResolver regionResolver, ObjectMapper objectMapper) {
         this.bedrockService = bedrockService;
+        this.modelCatalog = modelCatalog;
         this.regionResolver = regionResolver;
         this.objectMapper = objectMapper;
+    }
+
+    // Foundation models
+
+    @GET
+    @Path("/foundation-models")
+    public Response listFoundationModels(@QueryParam("byProvider") String byProvider,
+                                         @QueryParam("byCustomizationType") String byCustomizationType,
+                                         @QueryParam("byOutputModality") String byOutputModality,
+                                         @QueryParam("byInferenceType") String byInferenceType,
+                                         @Context HttpHeaders headers) {
+        String region = regionResolver.resolveRegion(headers);
+        requireEnum("byCustomizationType", byCustomizationType,
+                List.of("FINE_TUNING", "CONTINUED_PRE_TRAINING", "DISTILLATION"));
+        requireEnum("byOutputModality", byOutputModality, List.of("TEXT", "IMAGE", "EMBEDDING"));
+        requireEnum("byInferenceType", byInferenceType, List.of("ON_DEMAND", "PROVISIONED"));
+        ObjectNode response = objectMapper.createObjectNode();
+        ArrayNode summaries = response.putArray("modelSummaries");
+        for (BedrockModelCatalog.FoundationModel model : modelCatalog.listFoundationModels(
+                byProvider, byOutputModality, byInferenceType, byCustomizationType)) {
+            summaries.add(foundationModelNode(model, region));
+        }
+        return Response.ok(response).build();
+    }
+
+    @GET
+    @Path("/foundation-models/{modelIdentifier: .+}")
+    public Response getFoundationModel(@PathParam("modelIdentifier") String modelIdentifier,
+                                       @Context HttpHeaders headers) {
+        String region = regionResolver.resolveRegion(headers);
+        ObjectNode response = objectMapper.createObjectNode();
+        response.set("modelDetails", foundationModelNode(modelCatalog.getFoundationModel(modelIdentifier), region));
+        return Response.ok(response).build();
+    }
+
+    // Inference profiles
+
+    @GET
+    @Path("/inference-profiles")
+    public Response listInferenceProfiles(@QueryParam("maxResults") String maxResults,
+                                          @QueryParam("nextToken") String nextToken,
+                                          @QueryParam("type") String type,
+                                          @Context HttpHeaders headers) {
+        String region = regionResolver.resolveRegion(headers);
+        requireEnum("typeEquals", type,
+                List.of(BedrockModelCatalog.SYSTEM_DEFINED, BedrockModelCatalog.APPLICATION));
+        PaginatedResult<BedrockModelCatalog.InferenceProfile> page = bedrockService.listInferenceProfiles(type,
+                Pagination.parseMaxResults(maxResults, "ValidationException"), nextToken, region);
+        ObjectNode response = objectMapper.createObjectNode();
+        ArrayNode summaries = response.putArray("inferenceProfileSummaries");
+        page.items().forEach(profile -> summaries.add(inferenceProfileNode(profile)));
+        if (page.nextToken() != null) {
+            response.put("nextToken", page.nextToken());
+        }
+        return Response.ok(response).build();
+    }
+
+    @GET
+    @Path("/inference-profiles/{inferenceProfileIdentifier: .+}")
+    public Response getInferenceProfile(@PathParam("inferenceProfileIdentifier") String identifier,
+                                        @Context HttpHeaders headers) {
+        String region = regionResolver.resolveRegion(headers);
+        return Response.ok(inferenceProfileNode(bedrockService.getInferenceProfile(identifier, region))).build();
     }
 
     // Guardrails
@@ -186,6 +252,46 @@ public class BedrockController {
     }
 
     // Helpers
+
+    private ObjectNode foundationModelNode(BedrockModelCatalog.FoundationModel model, String region) {
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("modelArn", modelCatalog.foundationModelArn(model.modelId(), region));
+        node.put("modelId", model.modelId());
+        node.put("modelName", model.modelName());
+        node.put("providerName", model.providerName());
+        model.inputModalities().forEach(node.putArray("inputModalities")::add);
+        model.outputModalities().forEach(node.putArray("outputModalities")::add);
+        node.put("responseStreamingSupported", model.responseStreamingSupported());
+        model.customizationsSupported().forEach(node.putArray("customizationsSupported")::add);
+        model.inferenceTypesSupported().forEach(node.putArray("inferenceTypesSupported")::add);
+        node.putObject("modelLifecycle").put("status", "ACTIVE");
+        return node;
+    }
+
+    private ObjectNode inferenceProfileNode(BedrockModelCatalog.InferenceProfile profile) {
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("inferenceProfileName", profile.inferenceProfileName());
+        if (profile.description() != null) {
+            node.put("description", profile.description());
+        }
+        node.put("createdAt", iso8601(profile.createdAt()));
+        node.put("updatedAt", iso8601(profile.updatedAt()));
+        node.put("inferenceProfileArn", profile.inferenceProfileArn());
+        ArrayNode models = node.putArray("models");
+        profile.modelArns().forEach(arn -> models.addObject().put("modelArn", arn));
+        node.put("inferenceProfileId", profile.inferenceProfileId());
+        node.put("status", "ACTIVE");
+        node.put("type", profile.type());
+        return node;
+    }
+
+    private static void requireEnum(String member, String value, List<String> allowed) {
+        if (value != null && !allowed.contains(value)) {
+            throw new AwsException("ValidationException", "1 validation error detected: Value '" + value
+                    + "' at '" + member + "' failed to satisfy constraint: Member must satisfy enum value set: "
+                    + allowed, 400);
+        }
+    }
 
     private ObjectNode guardrailNode(Guardrail guardrail) {
         ObjectNode node = objectMapper.createObjectNode();

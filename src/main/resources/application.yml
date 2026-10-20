@@ -763,6 +763,8 @@ floci:
       #   - MY_CONSOLE_FLAG=true       # internal-port and endpoint above instead
     bedrock:
       enabled: true
+      # foundation-models: anthropic.claude-3-haiku-20240307-v1:0,amazon.nova-lite-v1:0
+      # extra-foundation-models: qwen.qwen3-32b-v1:0
     bedrock-runtime:
       enabled: true
       backend: stub
