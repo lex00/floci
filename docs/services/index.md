@@ -149,7 +149,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [Comprehend](comprehend.md) | `POST /` + `X-Amz-Target: Comprehend_20171127.*` | JSON 1.1 | 18 |
 | [Rekognition](rekognition.md) | `POST /` + `X-Amz-Target: RekognitionService.*` | JSON 1.1 | 12 |
 | [Amazon Kendra](kendra.md) | `POST /` + `X-Amz-Target: AWSKendraFrontendService.*` | JSON 1.1 | 20 |
-| [Amazon Q Business](qbusiness.md) | `/applications`, `/applications/{applicationId}`, `/v1/tags/{resourceARN}` | REST JSON | 8 |
+| [Amazon Q Business](qbusiness.md) | `/applications`, `/applications/{applicationId}/*`, `/v1/tags/{resourceARN}` | REST JSON | 47 |
 | [Amazon Location Service](location.md) | `/geofencing/v0/*`, `/tracking/v0/*`, `/maps/v0/*`, `/places/v0/*`, `/routes/v0/*`, `/tags/{ResourceArn}` | REST JSON | 28 |
 | [Translate](translate.md) | `POST /` + `X-Amz-Target: AWSShineFrontendService_20170701.*` | JSON 1.1 | 3 |
 | [Transcribe](transcribe.md) | `POST /` + `X-Amz-Target: Transcribe.*` | JSON 1.1 | 8 |
