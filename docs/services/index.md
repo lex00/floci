@@ -59,7 +59,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [Security Hub](securityhub.md) | `/organization/*`, `/accounts`, `/findingAggregator/*`, `/configurationPolicy*`, `/tags/*` | REST JSON | 22 |
 | [Amazon Detective](detective.md) | `/orgs/*`, `/graphs/list`, `/graph/*` | REST JSON | 8 |
 | [Amazon Connect](connect.md) | `/instance`, `/instance/{instanceId}/*`, `/phone-number/*`, `/user-hierarchy-structure/*`, `/tags/*` | REST JSON | 21 |
-| [Amazon AppStream 2.0](appstream.md) | `POST /` + `X-Amz-Target: PhotonAdminProxyService.*` | JSON 1.1 | 22 |
+| [Amazon AppStream 2.0](appstream.md) | `POST /` + `X-Amz-Target: PhotonAdminProxyService.*` | JSON 1.1 | 52 |
 | [Amazon WorkSpaces](workspaces.md) | `POST /` + `X-Amz-Target: WorkspacesService.*` | JSON 1.1 | 22 |
 | [Amazon WorkSpaces Secure Browser](workspaces-web.md) | `/portals/*`, `/browserSettings/*`, `/userSettings/*` and the other settings collections, `/tags/*` | REST JSON | 63 |
 | [Amazon AppIntegrations](appintegrations.md) | `/eventIntegrations/*`, `/dataIntegrations/*`, `/tags/*` | REST JSON | 14 |

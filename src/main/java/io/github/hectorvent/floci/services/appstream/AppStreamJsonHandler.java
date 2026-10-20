@@ -74,6 +74,72 @@ public class AppStreamJsonHandler {
                 service.deleteUser(request, region);
                 yield empty();
             }
+            case "CreateImageBuilder" -> wrap("ImageBuilder", service.createImageBuilder(request, region));
+            case "DescribeImageBuilders" ->
+                    list("ImageBuilders", service.describeImageBuilders(request.get("Names"), region));
+            case "StartImageBuilder" ->
+                    wrap("ImageBuilder", service.setImageBuilderState(text(request, "Name"), region, true));
+            case "StopImageBuilder" ->
+                    wrap("ImageBuilder", service.setImageBuilderState(text(request, "Name"), region, false));
+            case "DeleteImageBuilder" -> wrap("ImageBuilder", service.deleteImageBuilder(text(request, "Name"), region));
+            case "CreateImageBuilderStreamingURL" ->
+                    Response.ok(service.createImageBuilderStreamingUrl(request, region)).build();
+            case "DescribeImages" -> list("Images", service.describeImages(request, region));
+            case "CreateUpdatedImage" -> Response.ok(service.createUpdatedImage(request, region)).build();
+            case "CopyImage" -> {
+                ObjectNode response = objectMapper.createObjectNode();
+                response.put("DestinationImageName", service.copyImage(request, region));
+                yield Response.ok(response).build();
+            }
+            case "DeleteImage" -> wrap("Image", service.deleteImage(text(request, "Name"), region));
+            case "DescribeImagePermissions" -> Response.ok(service.describeImagePermissions(request, region)).build();
+            case "UpdateImagePermissions" -> {
+                service.updateImagePermissions(request, region);
+                yield empty();
+            }
+            case "DeleteImagePermissions" -> {
+                service.deleteImagePermissions(request, region);
+                yield empty();
+            }
+            case "CreateAppBlock" -> wrap("AppBlock", service.createAppBlock(request, region));
+            case "DescribeAppBlocks" -> list("AppBlocks", service.describeAppBlocks(request.get("Arns"), region));
+            case "DeleteAppBlock" -> {
+                service.deleteAppBlock(text(request, "Name"), region);
+                yield empty();
+            }
+            case "CreateApplication" -> wrap("Application", service.createApplication(request, region));
+            case "DescribeApplications" ->
+                    list("Applications", service.describeApplications(request.get("Arns"), region));
+            case "UpdateApplication" -> wrap("Application", service.updateApplication(request, region));
+            case "DeleteApplication" -> {
+                service.deleteApplication(text(request, "Name"), region);
+                yield empty();
+            }
+            case "AssociateApplicationFleet" -> wrap("ApplicationFleetAssociation", service.associateApplicationFleet(
+                    text(request, "FleetName"), text(request, "ApplicationArn"), region));
+            case "DisassociateApplicationFleet" -> {
+                service.disassociateApplicationFleet(text(request, "FleetName"), text(request, "ApplicationArn"), region);
+                yield empty();
+            }
+            case "DescribeApplicationFleetAssociations" -> list("ApplicationFleetAssociations",
+                    service.describeApplicationFleetAssociations(request, region));
+            case "CreateEntitlement" -> wrap("Entitlement", service.createEntitlement(request, region));
+            case "DescribeEntitlements" -> list("Entitlements", service.describeEntitlements(request, region));
+            case "UpdateEntitlement" -> wrap("Entitlement", service.updateEntitlement(request, region));
+            case "DeleteEntitlement" -> {
+                service.deleteEntitlement(text(request, "Name"), text(request, "StackName"), region);
+                yield empty();
+            }
+            case "AssociateApplicationToEntitlement" -> {
+                service.setEntitledApplication(request, region, true);
+                yield empty();
+            }
+            case "DisassociateApplicationFromEntitlement" -> {
+                service.setEntitledApplication(request, region, false);
+                yield empty();
+            }
+            case "ListEntitledApplications" ->
+                    list("EntitledApplications", service.listEntitledApplications(request, region));
             case "TagResource" -> {
                 service.tagResource(text(request, "ResourceArn"), request.path("Tags"));
                 yield empty();

@@ -30,6 +30,36 @@ Floci emulates the AppStream 2.0 control plane. No streaming instances run.
 | `EnableUser` | Enable a user |
 | `DisableUser` | Disable a user |
 | `DeleteUser` | Delete a user |
+| `CreateImageBuilder` | Create an image builder in RUNNING |
+| `DescribeImageBuilders` | Describe image builders by name, or all |
+| `StartImageBuilder` | Move an image builder to RUNNING |
+| `StopImageBuilder` | Move an image builder to STOPPED |
+| `DeleteImageBuilder` | Delete an image builder |
+| `CreateImageBuilderStreamingURL` | Return a streaming URL for a running image builder |
+| `DescribeImages` | Describe public base images and private images |
+| `CreateUpdatedImage` | Create a private image from an existing image |
+| `CopyImage` | Copy a private image to a region |
+| `DeleteImage` | Delete a private image no fleet uses |
+| `DescribeImagePermissions` | List the accounts a private image is shared with |
+| `UpdateImagePermissions` | Share a private image with an account |
+| `DeleteImagePermissions` | Stop sharing a private image with an account |
+| `CreateAppBlock` | Create an app block |
+| `DescribeAppBlocks` | Describe app blocks by ARN, or all |
+| `DeleteAppBlock` | Delete an app block no application uses |
+| `CreateApplication` | Create an application on an existing app block |
+| `DescribeApplications` | Describe applications by ARN, or all |
+| `UpdateApplication` | Update an application, applying AttributesToDelete |
+| `DeleteApplication` | Delete an application with no associated fleet |
+| `AssociateApplicationFleet` | Associate an application with a fleet |
+| `DisassociateApplicationFleet` | Remove an application and fleet association |
+| `DescribeApplicationFleetAssociations` | List application and fleet associations |
+| `CreateEntitlement` | Create an entitlement on a stack |
+| `DescribeEntitlements` | Describe one entitlement of a stack, or all |
+| `UpdateEntitlement` | Update an entitlement |
+| `DeleteEntitlement` | Delete an entitlement |
+| `AssociateApplicationToEntitlement` | Add an application to an entitlement |
+| `DisassociateApplicationFromEntitlement` | Remove an application from an entitlement |
+| `ListEntitledApplications` | List the applications of an entitlement |
 | `TagResource` | Tag a resource |
 | `UntagResource` | Remove tags from a resource |
 | `ListTagsForResource` | List a resource's tags |
@@ -48,11 +78,19 @@ Floci emulates the AppStream 2.0 control plane. No streaming instances run.
   `DeleteVpcConfig`.
 - `CreateUser` starts a user in `FORCE_CHANGE_PASSWORD`, enabled. Users are keyed by user name and
   authentication type.
-- `TagResource`, `UntagResource` and `ListTagsForResource` accept stack and fleet ARNs.
+- An image builder is `RUNNING` when created. `StartImageBuilder` and `StopImageBuilder` switch it
+  between `RUNNING` and `STOPPED` at once.
+- `DescribeImages` lists eight `PUBLIC` base images in every region, such as
+  `AppStream-WinServer2022` and `AppStream-AmazonLinux2`, next to the account's `PRIVATE` images.
+  `CreateUpdatedImage` and `CopyImage` create private images, which are `AVAILABLE` at once.
+- `CreateApplication` needs an existing app block, and `DeleteAppBlock` answers
+  `ResourceInUseException` while an application uses it.
+- `TagResource`, `UntagResource` and `ListTagsForResource` accept stack, fleet, image builder,
+  private image, app block and application ARNs.
 
 ## Not emulated
 
-- Image builders and images
-- Applications and entitlements
+- App block builders, theme, usage reports and image export or import tasks
+- Software associations on image builders
 - Directory configs
 - Sessions and user to stack associations

@@ -101,4 +101,78 @@ class AppStreamIntegrationTest {
                 .statusCode(400)
                 .body("__type", equalTo("ResourceNotFoundException"));
     }
+
+    @Test
+    void imageBuilderLifecycle() {
+        call("CreateImageBuilder", """
+                {"Name":"it-builder","InstanceType":"stream.standard.medium","ImageName":"AppStream-WinServer2019"}""")
+                .statusCode(200)
+                .body("ImageBuilder.Arn", equalTo("arn:aws:appstream:us-east-1:000000000000:image-builder/it-builder"))
+                .body("ImageBuilder.State", equalTo("RUNNING"));
+        call("StopImageBuilder", "{\"Name\":\"it-builder\"}")
+                .statusCode(200)
+                .body("ImageBuilder.State", equalTo("STOPPED"));
+        call("DescribeImageBuilders", "{\"Names\":[\"it-builder\"]}")
+                .statusCode(200)
+                .body("ImageBuilders[0].State", equalTo("STOPPED"));
+        call("DeleteImageBuilder", "{\"Name\":\"it-builder\"}").statusCode(200);
+        call("DescribeImageBuilders", "{\"Names\":[\"it-builder\"]}")
+                .statusCode(400)
+                .body("__type", equalTo("ResourceNotFoundException"));
+    }
+
+    @Test
+    void imagesAndApplicationsAndEntitlements() {
+        call("DescribeImages", "{\"Type\":\"PUBLIC\",\"Names\":[\"AppStream-AmazonLinux2\"]}")
+                .statusCode(200)
+                .body("Images[0].Platform", equalTo("AMAZON_LINUX2"));
+        call("CreateUpdatedImage", "{\"existingImageName\":\"AppStream-WinServer2019\",\"newImageName\":\"it-image\"}")
+                .statusCode(200)
+                .body("image.Visibility", equalTo("PRIVATE"))
+                .body("canUpdateImage", equalTo(true));
+        call("DeleteImage", "{\"Name\":\"it-image\"}")
+                .statusCode(200)
+                .body("Image.State", equalTo("DELETING"));
+
+        String blockArn = call("CreateAppBlock", """
+                {"Name":"it-block","SourceS3Location":{"S3Bucket":"bucket","S3Key":"app.vhdx"},
+                 "SetupScriptDetails":{"ScriptS3Location":{"S3Bucket":"bucket","S3Key":"setup.ps1"},
+                 "ExecutablePath":"powershell.exe","TimeoutInSeconds":60}}""")
+                .statusCode(200)
+                .extract().path("AppBlock.Arn");
+        String appArn = call("CreateApplication", "{\"Name\":\"it-app\",\"LaunchPath\":\"app.exe\","
+                + "\"Platforms\":[\"WINDOWS_SERVER_2019\"],\"InstanceFamilies\":[\"GENERAL_PURPOSE\"],"
+                + "\"IconS3Location\":{\"S3Bucket\":\"bucket\",\"S3Key\":\"icon.png\"},"
+                + "\"AppBlockArn\":\"" + blockArn + "\",\"Tags\":{\"team\":\"euc\"}}")
+                .statusCode(200)
+                .body("Application.Enabled", equalTo(true))
+                .extract().path("Application.Arn");
+        call("DescribeApplications", "{\"Arns\":[\"" + appArn + "\"]}")
+                .statusCode(200)
+                .body("Applications", hasSize(1));
+        call("ListTagsForResource", "{\"ResourceArn\":\"" + appArn + "\"}")
+                .statusCode(200)
+                .body("Tags.team", equalTo("euc"));
+
+        call("CreateStack", "{\"Name\":\"it-ent-stack\"}").statusCode(200);
+        call("CreateEntitlement", """
+                {"Name":"it-ent","StackName":"it-ent-stack","AppVisibility":"ASSOCIATED",
+                 "Attributes":[{"Name":"roles","Value":"admin"}]}""")
+                .statusCode(200)
+                .body("Entitlement.AppVisibility", equalTo("ASSOCIATED"));
+        call("AssociateApplicationToEntitlement",
+                "{\"StackName\":\"it-ent-stack\",\"EntitlementName\":\"it-ent\",\"ApplicationIdentifier\":\"it-app\"}")
+                .statusCode(200);
+        call("ListEntitledApplications", "{\"StackName\":\"it-ent-stack\",\"EntitlementName\":\"it-ent\"}")
+                .statusCode(200)
+                .body("EntitledApplications.ApplicationIdentifier", hasItem("it-app"));
+        call("DeleteEntitlement", "{\"Name\":\"it-ent\",\"StackName\":\"it-ent-stack\"}").statusCode(200);
+        call("DescribeEntitlements", "{\"Name\":\"it-ent\",\"StackName\":\"it-ent-stack\"}")
+                .statusCode(400)
+                .body("__type", equalTo("EntitlementNotFoundException"));
+
+        call("DeleteApplication", "{\"Name\":\"it-app\"}").statusCode(200);
+        call("DeleteAppBlock", "{\"Name\":\"it-block\"}").statusCode(200);
+        call("DeleteStack", "{\"Name\":\"it-ent-stack\"}").statusCode(200);
+    }
 }
