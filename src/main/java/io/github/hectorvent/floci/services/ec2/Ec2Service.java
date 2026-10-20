@@ -3458,7 +3458,20 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
         mappedDevices.stream()
                 .filter(m -> m.getEbs() != null && m.getEbs().getVolumeType() != null)
                 .forEach(m -> requireValidVolumeType(m.getEbs().getVolumeType()));
-        String rootVolumeType = rootVolumeTypeFor(findImageForCapture(region, imageId), mappedDevices);
+        Image launchImage = findImageForCapture(region, imageId);
+        String rootVolumeType = rootVolumeTypeFor(launchImage, mappedDevices);
+        String rootDeviceName = launchImage != null && launchImage.getRootDeviceName() != null
+                ? launchImage.getRootDeviceName() : new Instance().getRootDeviceName();
+        LaunchTemplateData.Ebs rootEbs = mappedDevices.stream()
+                .filter(m -> Objects.equals(m.getDeviceName(), rootDeviceName))
+                .map(LaunchTemplateData.BlockDeviceMapping::getEbs)
+                .filter(Objects::nonNull)
+                .findFirst().orElse(null);
+        int rootVolumeSize = rootVolumeSizeFor(launchImage, rootEbs);
+        List<LaunchTemplateData.BlockDeviceMapping> extraEbsDevices = mappedDevices.stream()
+                .filter(m -> m.getEbs() != null && m.getVirtualName() == null)
+                .filter(m -> !Objects.equals(m.getDeviceName(), rootDeviceName))
+                .toList();
         List<Instance> launched = new ArrayList<>();
         // Resolving the AMI, building the instances that depend on it and publishing them is one
         // step. A DeregisterImage releases the captured layer only when no live instance resolves
@@ -3591,24 +3604,40 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                         // Root EBS volume
                         String rootVolId = "vol-" + randomHex(17);
                         inst.setRootVolumeId(rootVolId);
+                        inst.setRootDeviceName(rootDeviceName);
                         Volume rootVol = new Volume();
                         rootVol.setVolumeId(rootVolId);
                         rootVol.setAvailabilityZone(az);
                         rootVol.setVolumeType(rootVolumeType);
-                        rootVol.setSize(DEFAULT_ROOT_VOLUME_SIZE_GIB);
+                        rootVol.setSize(rootVolumeSize);
                         rootVol.setState("in-use");
                         rootVol.setRegion(region);
-                        rootVol.setEncrypted(ebsEncryptionByDefault(region));
+                        rootVol.setEncrypted(ebsEncryptionByDefault(region)
+                                || (rootEbs != null && Boolean.TRUE.equals(rootEbs.getEncrypted())));
+                        if (rootEbs != null && rootEbs.getIops() != null) {
+                            rootVol.setIops(rootEbs.getIops());
+                        }
+                        if ("gp3".equals(rootVolumeType)) {
+                            rootVol.setThroughput(rootEbs != null && rootEbs.getThroughput() != null
+                                    ? rootEbs.getThroughput() : 125);
+                        }
                         rootVol.setCreateTime(Instant.now());
-                        VolumeAttachment att = new VolumeAttachment();
-                        att.setVolumeId(rootVolId);
-                        att.setInstanceId(instanceId);
-                        att.setDevice(inst.getRootDeviceName());
-                        att.setState("attached");
-                        att.setDeleteOnTermination(true);
-                        att.setAttachTime(Instant.now());
-                        rootVol.getAttachments().add(att);
+                        rootVol.getAttachments().add(launchAttachment(rootVolId, instanceId, rootDeviceName,
+                                rootEbs == null || !Boolean.FALSE.equals(rootEbs.getDeleteOnTermination())));
                         volumes.put(key(region, rootVolId), rootVol);
+
+                        for (LaunchTemplateData.BlockDeviceMapping mapping : extraEbsDevices) {
+                            LaunchTemplateData.Ebs ebs = mapping.getEbs();
+                            Volume extraVol = createVolume(region, az, ebs.getVolumeType(),
+                                    ebs.getVolumeSize() != null ? ebs.getVolumeSize() : 0,
+                                    Boolean.TRUE.equals(ebs.getEncrypted()),
+                                    ebs.getIops() != null ? ebs.getIops() : 0,
+                                    ebs.getThroughput(), ebs.getSnapshotId(), List.of());
+                            extraVol.setState("in-use");
+                            extraVol.getAttachments().add(launchAttachment(extraVol.getVolumeId(), instanceId,
+                                    mapping.getDeviceName(), !Boolean.FALSE.equals(ebs.getDeleteOnTermination())));
+                            volumes.put(key(region, extraVol.getVolumeId()), extraVol);
+                        }
 
                         instances.put(key(region, instanceId), inst);
                         launched.add(inst);
@@ -4072,7 +4101,14 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 if (rootVol != null) {
                     boolean attachedElsewhere = rootVol.getAttachments().stream()
                             .anyMatch(a -> !inst.getInstanceId().equals(a.getInstanceId()));
-                    if (!attachedElsewhere) {
+                    boolean keep = rootVol.getAttachments().stream()
+                            .anyMatch(a -> inst.getInstanceId().equals(a.getInstanceId())
+                                    && !a.isDeleteOnTermination());
+                    if (keep) {
+                        rootVol.getAttachments().removeIf(a -> inst.getInstanceId().equals(a.getInstanceId()));
+                        rootVol.setState(rootVol.getAttachments().isEmpty() ? "available" : "in-use");
+                        volumes.put(key(region, inst.getRootVolumeId()), rootVol);
+                    } else if (!attachedElsewhere) {
                         if (volumeBlockDeviceManager != null) {
                             volumeBlockDeviceManager.deleteVolume(inst.getRootVolumeId());
                         }
@@ -7100,6 +7136,37 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 .map(m -> m.getEbs().getVolumeType())
                 .findFirst()
                 .orElse(DEFAULT_ROOT_VOLUME_TYPE);
+    }
+
+    /**
+     * The launch's root volume size: the request's root mapping VolumeSize, else the size the
+     * AMI's root mapping declares.
+     */
+    private static int rootVolumeSizeFor(Image image, LaunchTemplateData.Ebs rootEbs) {
+        if (rootEbs != null && rootEbs.getVolumeSize() != null) {
+            return rootEbs.getVolumeSize();
+        }
+        if (image == null || image.getBlockDeviceMappings() == null) {
+            return DEFAULT_ROOT_VOLUME_SIZE_GIB;
+        }
+        return image.getBlockDeviceMappings().stream()
+                .filter(m -> m.getEbs() != null && m.getEbs().getVolumeSize() != null
+                        && Objects.equals(m.getDeviceName(), image.getRootDeviceName()))
+                .map(m -> m.getEbs().getVolumeSize())
+                .findFirst()
+                .orElse(DEFAULT_ROOT_VOLUME_SIZE_GIB);
+    }
+
+    private static VolumeAttachment launchAttachment(String volumeId, String instanceId, String device,
+                                                     boolean deleteOnTermination) {
+        VolumeAttachment att = new VolumeAttachment();
+        att.setVolumeId(volumeId);
+        att.setInstanceId(instanceId);
+        att.setDevice(device);
+        att.setState("attached");
+        att.setDeleteOnTermination(deleteOnTermination);
+        att.setAttachTime(Instant.now());
+        return att;
     }
 
     /** The image a CreateImage source was launched from, whether catalog-backed or registered. */
@@ -10748,6 +10815,24 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
                 .filter(v -> volumeIds == null || volumeIds.isEmpty() || volumeIds.contains(v.getVolumeId()))
                 .filter(v -> matchesFilters(v, filters, region))
                 .collect(Collectors.toList());
+    }
+
+    /** The instance's volume attachments, root device first, as DescribeInstances lists them. */
+    public List<VolumeAttachment> instanceVolumeAttachments(String region, Instance inst) {
+        List<VolumeAttachment> attachments = new ArrayList<>();
+        for (Volume volume : volumes.scan(k -> true)) {
+            if (!region.equals(volume.getRegion())) {
+                continue;
+            }
+            for (VolumeAttachment att : volume.getAttachments()) {
+                if (inst.getInstanceId().equals(att.getInstanceId())) {
+                    attachments.add(att);
+                }
+            }
+        }
+        attachments.sort(Comparator.comparing(
+                (VolumeAttachment att) -> !att.getVolumeId().equals(inst.getRootVolumeId())));
+        return attachments;
     }
 
     public void deleteVolume(String region, String volumeId) {

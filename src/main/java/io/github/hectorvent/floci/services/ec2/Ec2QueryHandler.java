@@ -857,7 +857,7 @@ public class Ec2QueryHandler {
                 .start("groupSet").end("groupSet")
                 .start("instancesSet");
         for (Instance inst : res.getInstances()) {
-            xml.start("item").raw(instanceXml(inst)).end("item");
+            xml.start("item").raw(instanceXml(region, inst)).end("item");
         }
         xml.end("instancesSet")
                 .end("RunInstancesResponse");
@@ -1297,7 +1297,7 @@ public class Ec2QueryHandler {
                     .start("groupSet").end("groupSet")
                     .start("instancesSet");
             for (Instance inst : res.getInstances()) {
-                xml.start("item").raw(instanceXml(inst)).end("item");
+                xml.start("item").raw(instanceXml(region, inst)).end("item");
             }
             xml.end("instancesSet").end("item");
         }
@@ -4799,7 +4799,7 @@ public class Ec2QueryHandler {
 
     // ─── XML fragment builders ────────────────────────────────────────────────
 
-    private String instanceXml(Instance inst) {
+    private String instanceXml(String region, Instance inst) {
         XmlBuilder xml = new XmlBuilder()
                 .elem("instanceId", inst.getInstanceId())
                 .elem("imageId", inst.getImageId())
@@ -4914,18 +4914,22 @@ public class Ec2QueryHandler {
                 .start("capacityReservationSpecification")
                 .elem("capacityReservationPreference", "open")
                 .end("capacityReservationSpecification");
-        if (inst.getRootVolumeId() != null) {
-            xml.start("blockDeviceMapping")
-                    .start("item")
-                    .elem("deviceName", inst.getRootDeviceName())
-                    .start("ebs")
-                    .elem("volumeId", inst.getRootVolumeId())
-                    .elem("status", "attached")
-                    .elem("deleteOnTermination", "true")
-                    .elem("attachTime", inst.getLaunchTime() != null ? ISO_FMT.format(inst.getLaunchTime()) : "")
-                    .end("ebs")
-                    .end("item")
-                    .end("blockDeviceMapping");
+        List<VolumeAttachment> attachments = service.instanceVolumeAttachments(region, inst);
+        if (!attachments.isEmpty()) {
+            xml.start("blockDeviceMapping");
+            for (VolumeAttachment att : attachments) {
+                Instant attachTime = att.getAttachTime() != null ? att.getAttachTime() : inst.getLaunchTime();
+                xml.start("item")
+                        .elem("deviceName", att.getDevice())
+                        .start("ebs")
+                        .elem("volumeId", att.getVolumeId())
+                        .elem("status", att.getState())
+                        .elem("deleteOnTermination", String.valueOf(att.isDeleteOnTermination()))
+                        .elem("attachTime", attachTime != null ? ISO_FMT.format(attachTime) : "")
+                        .end("ebs")
+                        .end("item");
+            }
+            xml.end("blockDeviceMapping");
         }
         if (inst.getIamInstanceProfileArn() != null) {
             xml.start("iamInstanceProfile")
