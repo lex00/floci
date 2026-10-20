@@ -1413,6 +1413,15 @@ public interface EmulatorConfig {
          */
         @WithDefault("standard")
         String endpointStrategy();
+
+        /**
+         * Seconds a deleted queue stays visible to GetQueueUrl, ListQueues, GetQueueAttributes and
+         * ListQueueTags, as AWS's eventually consistent DeleteQueue keeps it for up to 60 seconds.
+         * A CreateQueue of the same name fails with QueueDeletedRecently for the same window.
+         * Zero deletes at once.
+         */
+        @WithDefault("0")
+        int deleteVisibleSeconds();
     }
 
     interface S3ServiceConfig {

@@ -80,6 +80,9 @@ public class SqsService implements Resettable, ResourceProvider {
     private final StorageBackend<String, Map<String, Long>> dedupStore;
     private final StorageBackend<String, Map<String, Map<String, String>>> dedupIdentityStore;
     private final ConcurrentHashMap<String, GuardedMessageQueue> messagesByQueue = new ConcurrentHashMap<>();
+    /** Queues deleted within the delete-visible window, which reads still return. */
+    private final ConcurrentHashMap<String, PendingDelete> pendingDeletes = new ConcurrentHashMap<>();
+    private Duration deleteVisibleFor = Duration.ZERO;
     private final ConcurrentHashMap<String, Object> queueLocks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, RedrivePolicy> redrivePolicyCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ConcurrentHashMap<String, Instant>> deduplicationCache = new ConcurrentHashMap<>();
@@ -326,6 +329,27 @@ public class SqsService implements Resettable, ResourceProvider {
                 iamService,
                 config.services().sqs().endpointStrategy()
         );
+        this.deleteVisibleFor = Duration.ofSeconds(Math.max(0, config.services().sqs().deleteVisibleSeconds()));
+    }
+
+    /** How long a deleted queue stays visible to reads, zero for an immediate delete. */
+    void setDeleteVisibleFor(Duration deleteVisibleFor) {
+        this.deleteVisibleFor = deleteVisibleFor;
+    }
+
+    private record PendingDelete(Queue queue, Instant visibleUntil) {}
+
+    /** The queue a recent delete still shows to reads, if its window is open. */
+    private Optional<Queue> recentlyDeleted(String storageKey) {
+        PendingDelete pending = pendingDeletes.get(storageKey);
+        if (pending == null) {
+            return Optional.empty();
+        }
+        if (!clock.instant().isBefore(pending.visibleUntil())) {
+            pendingDeletes.remove(storageKey, pending);
+            return Optional.empty();
+        }
+        return Optional.of(pending.queue());
     }
 
     /**
@@ -449,6 +473,7 @@ public class SqsService implements Resettable, ResourceProvider {
     public void clear() {
         messagesByQueue.values().forEach(GuardedMessageQueue::close);
         messagesByQueue.clear();
+        pendingDeletes.clear();
         queueLocks.clear();
         redrivePolicyCache.clear();
         deduplicationCache.clear();
@@ -653,6 +678,11 @@ public class SqsService implements Resettable, ResourceProvider {
         String accountId = regionResolver.getAccountId();
         String queueUrl = buildQueueUrl(region, accountId, queueName);
         String storageKey = regionKey(region, queueUrl);
+        if (recentlyDeleted(storageKey).isPresent()) {
+            throw new AwsException("AWS.SimpleQueueService.QueueDeletedRecently",
+                    "You must wait 60 seconds after deleting a queue before you can create another with the same name.",
+                    400);
+        }
 
         // If queue already exists with same name, check for attribute conflicts
         Queue existing = queueStore.get(storageKey).orElse(null);
@@ -718,11 +748,15 @@ public class SqsService implements Resettable, ResourceProvider {
 
     public void deleteQueue(String queueUrl, String region) {
         String storageKey = regionKey(region, queueUrl);
-        if (queueStore.get(storageKey).isEmpty()) {
+        Optional<Queue> deleting = queueStore.get(storageKey);
+        if (deleting.isEmpty()) {
             throw new AwsException("AWS.SimpleQueueService.NonExistentQueue",
                     "The specified queue does not exist.", 400);
         }
         queueStore.delete(storageKey);
+        if (deleteVisibleFor.isPositive()) {
+            pendingDeletes.put(storageKey, new PendingDelete(deleting.get(), clock.instant().plus(deleteVisibleFor)));
+        }
         GuardedMessageQueue removed = messagesByQueue.remove(storageKey);
         if (removed != null) {
             removed.close();
@@ -762,6 +796,19 @@ public class SqsService implements Resettable, ResourceProvider {
                 return name.startsWith(namePrefix);
             });
         }
+        if (!pendingDeletes.isEmpty()) {
+            queues = new ArrayList<>(queues);
+            for (String key : new ArrayList<>(pendingDeletes.keySet())) {
+                if (!key.startsWith(prefix)) {
+                    continue;
+                }
+                Optional<Queue> pending = recentlyDeleted(key);
+                if (pending.isPresent() && (namePrefix == null || namePrefix.isEmpty()
+                        || pending.get().getQueueName().startsWith(namePrefix))) {
+                    queues.add(pending.get());
+                }
+            }
+        }
         queues.forEach(q -> withCurrentQueueUrl(q, region));
         return queues;
     }
@@ -770,7 +817,7 @@ public class SqsService implements Resettable, ResourceProvider {
         String accountId = regionResolver.getAccountId();
         String queueUrl = buildQueueUrl(region, accountId, queueName);
         String storageKey = regionKey(region, queueUrl);
-        if (queueStore.get(storageKey).isEmpty()) {
+        if (queueStore.get(storageKey).isEmpty() && recentlyDeleted(storageKey).isEmpty()) {
             throw new AwsException("AWS.SimpleQueueService.NonExistentQueue",
                     "The specified queue does not exist for this wsdl version.", 400);
         }
@@ -783,7 +830,8 @@ public class SqsService implements Resettable, ResourceProvider {
 
     public Map<String, String> getQueueAttributes(String queueUrl, List<String> attributeNames, String region) {
         String storageKey = regionKey(region, queueUrl);
-        Queue queue = queueStore.get(storageKey)
+        Optional<Queue> live = queueStore.get(storageKey);
+        Queue queue = live.or(() -> recentlyDeleted(storageKey))
                 .orElseThrow(() -> new AwsException("AWS.SimpleQueueService.NonExistentQueue",
                         "The specified queue does not exist.", 400));
 
@@ -793,7 +841,9 @@ public class SqsService implements Resettable, ResourceProvider {
         attrs.put("CreatedTimestamp", String.valueOf(queue.getCreatedTimestamp().getEpochSecond()));
         attrs.put("LastModifiedTimestamp", String.valueOf(queue.getLastModifiedTimestamp().getEpochSecond()));
 
-        GuardedMessageQueue.MessageCounts counts = unexpiredMessages(storageKey, queue).messageCounts();
+        GuardedMessageQueue.MessageCounts counts = live.isPresent()
+                ? unexpiredMessages(storageKey, queue).messageCounts()
+                : new GuardedMessageQueue.MessageCounts(0, 0, 0);
         attrs.put("ApproximateNumberOfMessages", String.valueOf(counts.visible()));
         attrs.put("ApproximateNumberOfMessagesNotVisible", String.valueOf(counts.inFlight()));
         attrs.put("ApproximateNumberOfMessagesDelayed", String.valueOf(counts.delayed()));
@@ -1980,7 +2030,7 @@ public class SqsService implements Resettable, ResourceProvider {
 
     public Map<String, String> listQueueTags(String queueUrl, String region) {
         String storageKey = regionKey(region, queueUrl);
-        Queue queue = queueStore.get(storageKey)
+        Queue queue = queueStore.get(storageKey).or(() -> recentlyDeleted(storageKey))
                 .orElseThrow(() -> new AwsException("AWS.SimpleQueueService.NonExistentQueue",
                         "The specified queue does not exist.", 400));
         return new LinkedHashMap<>(queue.getTags());

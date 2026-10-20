@@ -210,6 +210,7 @@ See [Initialization Hooks](./initialization-hooks.md) for lifecycle phases and s
 | `FLOCI_SERVICES_SQS_CLEAR_FIFO_DEDUPLICATION_CACHE_ON_PURGE` | `false` | Reset the deduplication cache when a FIFO queue is purged |
 | `FLOCI_SERVICES_SQS_RECEIPT_HANDLE_SECRET` | `local-emulator-secret` | HMAC secret that signs receipt handles |
 | `FLOCI_SERVICES_SQS_ENDPOINT_STRATEGY` | `standard` | Shape of the returned `QueueUrl`: `standard` for `https://sqs.<region>.<dns-suffix>/<account>/<name>`, `path` for `<FLOCI_BASE_URL>/<account>/<name>`. Both forms are accepted as input |
+| `FLOCI_SERVICES_SQS_DELETE_VISIBLE_SECONDS` | `0` | Seconds a deleted queue stays visible to `GetQueueUrl`, `ListQueues`, `GetQueueAttributes` and `ListQueueTags`, as AWS's eventually consistent `DeleteQueue` keeps it for up to 60 seconds. A `CreateQueue` of the same name fails with `QueueDeletedRecently` meanwhile. `0` deletes at once |
 
 ### SNS
 

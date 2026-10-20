@@ -395,6 +395,8 @@ floci:
       # standard -> https://sqs.<region>.<partition dns suffix>/<account>/<name>
       # path     -> <base-url>/<account>/<name>
       endpoint-strategy: standard
+      # Seconds a deleted queue stays visible to reads; 0 deletes at once.
+      delete-visible-seconds: 0
     s3:
       enabled: true
       enforce-auth: false
