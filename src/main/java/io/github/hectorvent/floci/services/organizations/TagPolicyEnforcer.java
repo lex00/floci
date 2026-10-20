@@ -3,7 +3,9 @@ package io.github.hectorvent.floci.services.organizations;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.hectorvent.floci.config.EmulatorConfig;
+import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
+import io.github.hectorvent.floci.core.common.TagWriteGuard;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -21,7 +23,7 @@ import java.util.Map;
  * {@code tag_key}.
  */
 @ApplicationScoped
-public class TagPolicyEnforcer {
+public class TagPolicyEnforcer implements TagWriteGuard {
 
     private static final Logger LOG = Logger.getLogger(TagPolicyEnforcer.class);
 
@@ -74,6 +76,15 @@ public class TagPolicyEnforcer {
                 }
             }
         }
+    }
+
+    /** As {@link #enforce}, for the resource an ARN names. An ARN that does not parse is left to its service. */
+    @Override
+    public void checkArn(String accountId, String resourceArn, Map<String, String> tags, String errorCode) {
+        if (!enabled || tags == null || tags.isEmpty() || !AwsArnUtils.isArn(resourceArn)) {
+            return;
+        }
+        enforce(accountId, TagWriteGuard.resourceTypeOf(resourceArn), tags, errorCode);
     }
 
     private JsonNode effectivePolicyTags(String accountId) {

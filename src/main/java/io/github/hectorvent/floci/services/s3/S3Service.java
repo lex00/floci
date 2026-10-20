@@ -34,6 +34,7 @@ import io.github.hectorvent.floci.services.iam.RequestPrincipal;
 import io.github.hectorvent.floci.services.lambda.LambdaService;
 import io.github.hectorvent.floci.services.lambda.model.InvocationType;
 import io.github.hectorvent.floci.services.lambda.model.LambdaFunction;
+import io.github.hectorvent.floci.services.organizations.TagPolicyEnforcer;
 import io.github.hectorvent.floci.services.s3.model.*;
 import io.github.hectorvent.floci.services.sns.SnsService;
 import io.github.hectorvent.floci.services.sqs.SqsService;
@@ -101,6 +102,9 @@ import java.util.stream.Stream;
 
 @ApplicationScoped
 public class S3Service implements Resettable, ResourceProvider {
+    @Inject
+    Instance<TagPolicyEnforcer> tagPolicyEnforcer;
+
     private String ownerId() {
         if (regionResolver != null) {
             return regionResolver.getAccountId();
@@ -3467,6 +3471,9 @@ public class S3Service implements Resettable, ResourceProvider {
         Bucket bucket = bucketStore.get(bucketName)
                 .orElseThrow(() -> new AwsException("NoSuchBucket",
                         "The specified bucket does not exist.", 404));
+        if (tagPolicyEnforcer != null && tagPolicyEnforcer.isResolvable()) {
+            tagPolicyEnforcer.get().enforce(ownerId(), "s3:bucket", tags, "InvalidTag");
+        }
         bucket.setTags(tags != null ? tags : new java.util.HashMap<>());
         bucketStore.put(bucketName, bucket);
         LOG.debugv("Put tags on bucket: {0}", bucketName);

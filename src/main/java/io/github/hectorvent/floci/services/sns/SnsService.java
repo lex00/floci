@@ -30,6 +30,7 @@ import io.github.hectorvent.floci.services.firehose.FirehoseService;
 import io.github.hectorvent.floci.services.firehose.model.Record;
 import io.github.hectorvent.floci.services.lambda.LambdaService;
 import io.github.hectorvent.floci.services.lambda.model.InvocationType;
+import io.github.hectorvent.floci.services.organizations.TagPolicyEnforcer;
 import io.github.hectorvent.floci.services.sns.model.PlatformApplication;
 import io.github.hectorvent.floci.services.sns.model.PlatformEndpoint;
 import io.github.hectorvent.floci.services.sns.model.PushNotification;
@@ -40,6 +41,7 @@ import io.github.hectorvent.floci.services.sns.model.Topic;
 import io.github.hectorvent.floci.services.sqs.SqsService;
 import io.github.hectorvent.floci.services.sqs.model.MessageAttributeValue;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
@@ -215,6 +217,16 @@ public class SnsService implements Resettable, ResourceProvider {
                 messageSigner
         );
         deletedTopics.setWindow(Duration.ofSeconds(config.services().sns().deleteVisibleSeconds()));
+    }
+
+    @Inject
+    Instance<TagPolicyEnforcer> tagPolicyEnforcer;
+
+    /** Refuses tags the account's tag policy does not allow on the resource an ARN names. */
+    private void enforceTagPolicy(String resourceArn, Map<String, String> tags) {
+        if (tagPolicyEnforcer != null && tagPolicyEnforcer.isResolvable() && regionResolver != null) {
+            tagPolicyEnforcer.get().checkArn(regionResolver.getAccountId(), resourceArn, tags, "TagPolicyException");
+        }
     }
 
     /** How long a deleted topic stays visible to reads, zero for an immediate delete. */
@@ -582,6 +594,7 @@ public class SnsService implements Resettable, ResourceProvider {
         }
         String topicArn = regionResolver.buildArn("sns", region, name);
         String key = topicKey(region, topicArn);
+        enforceTagPolicy(topicArn, tags);
 
         Topic existing = topicStore.get(key).orElse(null);
         if (existing != null) return existing;
@@ -1613,6 +1626,7 @@ public class SnsService implements Resettable, ResourceProvider {
     }
 
     public void tagResource(String resourceArn, Map<String, String> tags, String region) {
+        enforceTagPolicy(resourceArn, tags);
         String key = topicKey(region, resourceArn);
         Topic topic = topicStore.get(key)
                 .orElseThrow(() -> new AwsException("ResourceNotFoundException",

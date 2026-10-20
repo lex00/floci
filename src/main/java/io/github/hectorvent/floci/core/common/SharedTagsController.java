@@ -37,8 +37,9 @@ public class SharedTagsController extends AbstractTagsController {
     @Inject
     public SharedTagsController(Instance<TagHandler> handlers,
                                 RegionResolver regionResolver,
-                                ObjectMapper objectMapper) {
-        super(new TagDispatcher(handlers, regionResolver, objectMapper));
+                                ObjectMapper objectMapper,
+                                Instance<TagWriteGuard> guards) {
+        super(new TagDispatcher(handlers, regionResolver, objectMapper, guards));
     }
 
     @GET

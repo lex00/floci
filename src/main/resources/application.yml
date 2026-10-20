@@ -968,7 +968,7 @@ floci:
       enabled: true
     organizations:
       enabled: true
-      # Enforce the effective tag policy on EC2 and SQS tag writes.
+      # Enforce the effective tag policy on tag writes.
       tag-policy-enforcement-enabled: false
       # management-account-email: ""  # When set, overrides the management-account email reported by DescribeOrganization and account listings.
     rum:

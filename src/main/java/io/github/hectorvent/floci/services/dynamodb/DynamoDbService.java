@@ -30,8 +30,10 @@ import io.github.hectorvent.floci.services.dynamodb.model.LocalSecondaryIndex;
 import io.github.hectorvent.floci.services.dynamodb.model.StreamDescription;
 import io.github.hectorvent.floci.services.dynamodb.model.TableDefinition;
 import io.github.hectorvent.floci.services.dynamodb.model.VectorIndex;
+import io.github.hectorvent.floci.services.organizations.TagPolicyEnforcer;
 import io.github.hectorvent.floci.services.s3.S3Service;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
@@ -2792,8 +2794,26 @@ public class DynamoDbService {
 
     // --- Tag Operations ---
 
+    @Inject
+    Instance<TagPolicyEnforcer> tagPolicyEnforcer;
+
+    /** Refuses CreateTable tags the account's tag policy does not allow, before the table exists. */
+    void enforceCreateTagPolicy(String region, String tableName, Map<String, String> tags) {
+        if (regionResolver != null) {
+            enforceTagPolicy(regionResolver.buildArn("dynamodb", region, "table/" + tableName), tags);
+        }
+    }
+
+    /** Refuses tags the account's tag policy does not allow on the resource an ARN names. */
+    private void enforceTagPolicy(String resourceArn, Map<String, String> tags) {
+        if (tagPolicyEnforcer != null && tagPolicyEnforcer.isResolvable() && regionResolver != null) {
+            tagPolicyEnforcer.get().checkArn(regionResolver.getAccountId(), resourceArn, tags, "ValidationException");
+        }
+    }
+
     public void tagResource(String resourceArn, Map<String, String> tags, String region) {
         TableDefinition table = findTableByArn(resourceArn, region);
+        enforceTagPolicy(resourceArn, tags);
         if (table.getTags() == null) {
             table.setTags(new HashMap<>());
         }

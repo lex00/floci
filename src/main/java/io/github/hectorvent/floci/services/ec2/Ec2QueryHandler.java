@@ -629,6 +629,9 @@ public class Ec2QueryHandler {
             };
             throw new AwsException(code, "Tag keys starting with 'aws:' are reserved for internal use", 400);
         }
+        if (!tags.isEmpty()) {
+            service.enforceTagPolicy(resourceType, tags);
+        }
         return tags;
     }
 

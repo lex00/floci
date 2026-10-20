@@ -28,10 +28,18 @@ public class TagDispatcher {
     private final Map<String, TagHandler> handlersByServiceKey;
     private final RegionResolver regionResolver;
     private final ObjectMapper objectMapper;
+    private final Iterable<TagWriteGuard> guards;
 
     public TagDispatcher(Iterable<TagHandler> handlers,
                          RegionResolver regionResolver,
                          ObjectMapper objectMapper) {
+        this(handlers, regionResolver, objectMapper, List.of());
+    }
+
+    public TagDispatcher(Iterable<TagHandler> handlers,
+                         RegionResolver regionResolver,
+                         ObjectMapper objectMapper,
+                         Iterable<TagWriteGuard> guards) {
         Map<String, TagHandler> map = new HashMap<>();
         for (TagHandler h : handlers) {
             String serviceKey = h.serviceKey();
@@ -46,6 +54,7 @@ public class TagDispatcher {
         this.handlersByServiceKey = Map.copyOf(map);
         this.regionResolver = regionResolver;
         this.objectMapper = objectMapper;
+        this.guards = guards;
     }
 
     public ObjectNode emptyObject() {
@@ -84,6 +93,9 @@ public class TagDispatcher {
         try {
             JsonNode node = objectMapper.readTree(effectiveBody);
             Map<String, String> tags = parseTags(handler, node);
+            for (TagWriteGuard guard : guards) {
+                guard.checkArn(regionResolver.getAccountId(), arn, tags, handler.tagValidationErrorCode());
+            }
             handler.tagResource(region, arn, tags);
             return successResponse;
         } catch (AwsException e) {

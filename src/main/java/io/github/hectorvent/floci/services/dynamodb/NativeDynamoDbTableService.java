@@ -106,6 +106,10 @@ public class NativeDynamoDbTableService {
             validateSseType(sseType);
         }
 
+        if (request.tags() != null && !request.tags().isEmpty()) {
+            dynamoDbService.enforceCreateTagPolicy(region, tableName, request.tags());
+        }
+
         Throughput throughput = request.provisionedThroughput();
         if ("PAY_PER_REQUEST".equals(billingMode) && throughput != null) {
             throw new AwsException("ValidationException",

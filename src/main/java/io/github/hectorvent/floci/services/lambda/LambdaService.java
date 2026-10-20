@@ -38,6 +38,7 @@ import io.github.hectorvent.floci.services.lambda.model.LambdaUrlConfig;
 import io.github.hectorvent.floci.services.lambda.model.ScalingConfig;
 import io.github.hectorvent.floci.services.lambda.zip.CodeStore;
 import io.github.hectorvent.floci.services.lambda.zip.ZipExtractor;
+import io.github.hectorvent.floci.services.organizations.TagPolicyEnforcer;
 import io.github.hectorvent.floci.services.s3.S3Service;
 import io.github.hectorvent.floci.services.s3.model.S3Object;
 import io.github.hectorvent.floci.services.s3.model.S3ObjectUpdatedEvent;
@@ -45,6 +46,7 @@ import io.github.hectorvent.floci.services.sqs.SqsService;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
@@ -495,6 +497,8 @@ public class LambdaService implements ResourceProvider {
         @SuppressWarnings("unchecked")
         Map<String, String> tags = (Map<String, String>) request.get("Tags");
         validateTagKeys(tags);
+        enforceTagPolicy(regionResolver != null
+                ? regionResolver.buildArn("lambda", region, "function:" + functionName) : null, tags);
         if (functionStore.get(region, functionName).isPresent()) {
             throw new AwsException("ResourceConflictException",
                     "Function already exist: " + functionName, 409);
@@ -3874,6 +3878,7 @@ public class LambdaService implements ResourceProvider {
 
     public void tagResource(String functionArn, Map<String, String> tags) {
         validateTagKeys(tags);
+        enforceTagPolicy(functionArn, tags);
         EventSourceMapping esm = taggedEventSourceMapping(functionArn);
         if (esm != null) {
             esm.getTags().putAll(tags);
@@ -3885,6 +3890,16 @@ public class LambdaService implements ResourceProvider {
         if (fn.getTags() == null) fn.setTags(new HashMap<>());
         fn.getTags().putAll(tags);
         functionStore.save(target.region, fn);
+    }
+
+    @Inject
+    Instance<TagPolicyEnforcer> tagPolicyEnforcer;
+
+    /** Refuses tags the account's tag policy does not allow on the resource an ARN names. */
+    private void enforceTagPolicy(String resourceArn, Map<String, String> tags) {
+        if (tagPolicyEnforcer != null && tagPolicyEnforcer.isResolvable() && regionResolver != null) {
+            tagPolicyEnforcer.get().checkArn(regionResolver.getAccountId(), resourceArn, tags, "InvalidParameterValueException");
+        }
     }
 
     /**
