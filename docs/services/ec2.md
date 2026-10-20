@@ -625,6 +625,24 @@ still carrying instances on release, goes to `unsuccessful` instead of failing t
 tenancy to `host` and, without a subnet, the zone to the host's. `hostProperties` reports a
 fixed socket/core/vCPU shape rather than one derived from the instance family.
 
+### Client VPN
+
+| Action | Description |
+|--------|-------------|
+| CreateClientVpnEndpoint | Creates an endpoint in `pending-associate`, with `client-vpn-endpoint` tags from `TagSpecification`. |
+| DescribeClientVpnEndpoints | Lists endpoints by id and the `endpoint-id` and `transport-protocol` filters. |
+| ModifyClientVpnEndpoint | Updates any endpoint setting the request names. |
+| DeleteClientVpnEndpoint | Deletes an endpoint once it has no target networks. |
+| AssociateClientVpnTargetNetwork | Associates a subnet, `associated` immediately; the first one sets the endpoint's VPC and makes it `available`. |
+| DescribeClientVpnTargetNetworks | Lists an endpoint's target network associations. |
+| DisassociateClientVpnTargetNetwork | Removes a target network association. |
+| AuthorizeClientVpnIngress | Adds an authorization rule, `active` immediately. |
+| DescribeClientVpnAuthorizationRules | Lists an endpoint's authorization rules. |
+| RevokeClientVpnIngress | Removes an authorization rule. |
+
+Without `SecurityGroupId.N`, the first association applies the VPC's default security group. The
+endpoints model the control plane only, so no VPN client can connect to them.
+
 ### Placement Groups
 
 | Action | Description |

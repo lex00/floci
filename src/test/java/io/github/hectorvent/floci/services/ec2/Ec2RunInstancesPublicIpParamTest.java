@@ -71,7 +71,7 @@ class Ec2RunInstancesPublicIpParamTest {
                 mock(FlowLogService.class), mock(Ec2EbsEncryptionService.class),
                 mock(Ec2SnapshotBlockPublicAccessService.class), mock(Ec2IpamService.class),
                 mock(RegionResolver.class), mock(Ec2PlacementGroupService.class),
-                mock(Ec2SecurityGroupVpcAssociationService.class));
+                mock(Ec2SecurityGroupVpcAssociationService.class), mock(Ec2ClientVpnService.class));
         handler.handle("RunInstances", p, REGION);
 
         ArgumentCaptor<Boolean> associatePublicIp = ArgumentCaptor.forClass(Boolean.class);

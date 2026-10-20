@@ -8489,6 +8489,9 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
         if (resourceId.startsWith("pg-")) {
             return "placement-group";
         }
+        if (resourceId.startsWith("cvpn-endpoint-")) {
+            return "client-vpn-endpoint";
+        }
         if (resourceId.startsWith("vpc-")) {
             return "vpc";
         }

@@ -56,7 +56,7 @@ class Ec2CreateFleetRollbackTest {
                 mock(FlowLogService.class), mock(Ec2EbsEncryptionService.class),
                 mock(Ec2SnapshotBlockPublicAccessService.class), mock(Ec2IpamService.class),
                 mock(RegionResolver.class), mock(Ec2PlacementGroupService.class),
-                mock(Ec2SecurityGroupVpcAssociationService.class));
+                mock(Ec2SecurityGroupVpcAssociationService.class), mock(Ec2ClientVpnService.class));
         Response response = handler.handle("CreateFleet", params(), REGION);
 
         assertEquals(400, response.getStatus());

@@ -49,6 +49,7 @@ public class Ec2QueryHandler {
     private final RegionResolver regionResolver;
     private final Ec2PlacementGroupService placementGroupService;
     private final Ec2SecurityGroupVpcAssociationService securityGroupVpcAssociationService;
+    private final Ec2ClientVpnService clientVpnService;
 
     @Inject
     public Ec2QueryHandler(Ec2Service service, EmulatorConfig config, FlowLogService flowLogService,
@@ -56,7 +57,8 @@ public class Ec2QueryHandler {
                            Ec2SnapshotBlockPublicAccessService snapshotBlockPublicAccessService,
                            Ec2IpamService ipamService, RegionResolver regionResolver,
                            Ec2PlacementGroupService placementGroupService,
-                           Ec2SecurityGroupVpcAssociationService securityGroupVpcAssociationService) {
+                           Ec2SecurityGroupVpcAssociationService securityGroupVpcAssociationService,
+                           Ec2ClientVpnService clientVpnService) {
         this.service = service;
         this.config = config;
         this.flowLogService = flowLogService;
@@ -66,6 +68,7 @@ public class Ec2QueryHandler {
         this.regionResolver = regionResolver;
         this.placementGroupService = placementGroupService;
         this.securityGroupVpcAssociationService = securityGroupVpcAssociationService;
+        this.clientVpnService = clientVpnService;
     }
 
     public Response handle(String action, MultivaluedMap<String, String> params, String region) {
@@ -266,6 +269,18 @@ public class Ec2QueryHandler {
                 // Dedicated Hosts
                 case "AllocateHosts" -> handleAllocateHosts(params, region);
                 case "CreatePlacementGroup" -> handleCreatePlacementGroup(params, region);
+                case "CreateClientVpnEndpoint" -> handleCreateClientVpnEndpoint(params, region);
+                case "DescribeClientVpnEndpoints" -> handleDescribeClientVpnEndpoints(params, region);
+                case "ModifyClientVpnEndpoint" -> handleModifyClientVpnEndpoint(params, region);
+                case "DeleteClientVpnEndpoint" -> handleDeleteClientVpnEndpoint(params, region);
+                case "AssociateClientVpnTargetNetwork" -> handleAssociateClientVpnTargetNetwork(params, region);
+                case "DescribeClientVpnTargetNetworks" -> handleDescribeClientVpnTargetNetworks(params, region);
+                case "DisassociateClientVpnTargetNetwork" ->
+                        handleDisassociateClientVpnTargetNetwork(params, region);
+                case "AuthorizeClientVpnIngress" -> handleAuthorizeClientVpnIngress(params, region);
+                case "DescribeClientVpnAuthorizationRules" ->
+                        handleDescribeClientVpnAuthorizationRules(params, region);
+                case "RevokeClientVpnIngress" -> handleRevokeClientVpnIngress(params, region);
                 case "DescribePlacementGroups" -> handleDescribePlacementGroups(params, region);
                 case "DeletePlacementGroup" -> handleDeletePlacementGroup(params, region);
                 case "DescribeHosts" -> handleDescribeHosts(params, region);
@@ -4261,6 +4276,322 @@ public class Ec2QueryHandler {
     }
 
     // ─── Dedicated Host handlers ──────────────────────────────────────────────
+
+    private Response handleCreateClientVpnEndpoint(MultivaluedMap<String, String> p, String region) {
+        List<Tag> endpointTags = parseTagsForResource(p, "client-vpn-endpoint");
+        ClientVpnEndpoint request = new ClientVpnEndpoint();
+        request.setClientCidrBlock(p.getFirst("ClientCidrBlock"));
+        request.setServerCertificateArn(p.getFirst("ServerCertificateArn"));
+        List<ClientVpnEndpoint.Authentication> authentication = new ArrayList<>();
+        for (int i = 1; p.getFirst("Authentication." + i + ".Type") != null; i++) {
+            String base = "Authentication." + i + ".";
+            ClientVpnEndpoint.Authentication option = new ClientVpnEndpoint.Authentication();
+            option.setType(p.getFirst(base + "Type"));
+            option.setDirectoryId(p.getFirst(base + "ActiveDirectory.DirectoryId"));
+            option.setClientRootCertificateChainArn(
+                    p.getFirst(base + "MutualAuthentication.ClientRootCertificateChainArn"));
+            option.setSamlProviderArn(p.getFirst(base + "FederatedAuthentication.SAMLProviderArn"));
+            option.setSelfServiceSamlProviderArn(
+                    p.getFirst(base + "FederatedAuthentication.SelfServiceSAMLProviderArn"));
+            authentication.add(option);
+        }
+        request.setAuthenticationOptions(authentication);
+        request.setConnectionLogEnabled(parseOptionalBoolean(p.getFirst("ConnectionLogOptions.Enabled"),
+                "ConnectionLogOptions.Enabled"));
+        request.setConnectionLogGroup(p.getFirst("ConnectionLogOptions.CloudwatchLogGroup"));
+        request.setConnectionLogStream(p.getFirst("ConnectionLogOptions.CloudwatchLogStream"));
+        request.setDnsServers(getList(p, "DnsServers"));
+        if (p.getFirst("TransportProtocol") != null) {
+            request.setTransportProtocol(p.getFirst("TransportProtocol"));
+        }
+        Integer vpnPort = intOrNull(p, "VpnPort");
+        if (vpnPort != null) {
+            request.setVpnPort(vpnPort);
+        }
+        request.setDescription(p.getFirst("Description"));
+        request.setSplitTunnel(Boolean.TRUE.equals(parseOptionalBoolean(p.getFirst("SplitTunnel"), "SplitTunnel")));
+        request.setSecurityGroupIds(getList(p, "SecurityGroupId"));
+        request.setVpcId(p.getFirst("VpcId"));
+        applyClientVpnOptions(p, request);
+        ClientVpnEndpoint endpoint = clientVpnService.create(region, request);
+        applyResourceTags(endpointTags, region, endpoint.getClientVpnEndpointId());
+        return xmlResponse(new XmlBuilder()
+                .start("CreateClientVpnEndpointResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .elem("clientVpnEndpointId", endpoint.getClientVpnEndpointId())
+                .start("status").elem("code", endpoint.statusCode()).end("status")
+                .elem("dnsName", endpoint.getDnsName())
+                .end("CreateClientVpnEndpointResponse").build());
+    }
+
+    /** The options CreateClientVpnEndpoint and ModifyClientVpnEndpoint share. */
+    private void applyClientVpnOptions(MultivaluedMap<String, String> p, ClientVpnEndpoint endpoint) {
+        if (p.getFirst("SelfServicePortal") != null) {
+            endpoint.setSelfServicePortal(p.getFirst("SelfServicePortal"));
+        }
+        Boolean connectEnabled = parseOptionalBoolean(p.getFirst("ClientConnectOptions.Enabled"),
+                "ClientConnectOptions.Enabled");
+        if (connectEnabled != null) {
+            endpoint.setClientConnectEnabled(connectEnabled);
+            endpoint.setClientConnectLambdaFunctionArn(p.getFirst("ClientConnectOptions.LambdaFunctionArn"));
+        }
+        Integer sessionTimeout = intOrNull(p, "SessionTimeoutHours");
+        if (sessionTimeout != null) {
+            endpoint.setSessionTimeoutHours(sessionTimeout);
+        }
+        Boolean bannerEnabled = parseOptionalBoolean(p.getFirst("ClientLoginBannerOptions.Enabled"),
+                "ClientLoginBannerOptions.Enabled");
+        if (bannerEnabled != null) {
+            endpoint.setClientLoginBannerEnabled(bannerEnabled);
+            endpoint.setClientLoginBannerText(p.getFirst("ClientLoginBannerOptions.BannerText"));
+        }
+        Boolean enforced = parseOptionalBoolean(p.getFirst("ClientRouteEnforcementOptions.Enforced"),
+                "ClientRouteEnforcementOptions.Enforced");
+        if (enforced != null) {
+            endpoint.setClientRouteEnforced(enforced);
+        }
+        Boolean disconnect = parseOptionalBoolean(p.getFirst("DisconnectOnSessionTimeout"),
+                "DisconnectOnSessionTimeout");
+        if (disconnect != null) {
+            endpoint.setDisconnectOnSessionTimeout(disconnect);
+        }
+        if (p.getFirst("EndpointIpAddressType") != null) {
+            endpoint.setEndpointIpAddressType(p.getFirst("EndpointIpAddressType"));
+        }
+        if (p.getFirst("TrafficIpAddressType") != null) {
+            endpoint.setTrafficIpAddressType(p.getFirst("TrafficIpAddressType"));
+        }
+    }
+
+    private Response handleDescribeClientVpnEndpoints(MultivaluedMap<String, String> p, String region) {
+        List<ClientVpnEndpoint> found = clientVpnService.describe(region, getList(p, "ClientVpnEndpointId"),
+                getFilters(p));
+        XmlBuilder xml = new XmlBuilder()
+                .start("DescribeClientVpnEndpointsResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .start("clientVpnEndpoint");
+        for (ClientVpnEndpoint endpoint : found) {
+            xml.start("item").raw(clientVpnEndpointXml(endpoint)).end("item");
+        }
+        xml.end("clientVpnEndpoint").end("DescribeClientVpnEndpointsResponse");
+        return xmlResponse(xml.build());
+    }
+
+    private String clientVpnEndpointXml(ClientVpnEndpoint endpoint) {
+        XmlBuilder xml = new XmlBuilder()
+                .elem("clientVpnEndpointId", endpoint.getClientVpnEndpointId())
+                .elem("description", endpoint.getDescription())
+                .start("status").elem("code", endpoint.statusCode()).end("status")
+                .elem("creationTime", endpoint.getCreationTime())
+                .elem("dnsName", endpoint.getDnsName())
+                .elem("clientCidrBlock", endpoint.getClientCidrBlock())
+                .start("dnsServer");
+        for (String server : endpoint.getDnsServers()) {
+            xml.elem("item", server);
+        }
+        xml.end("dnsServer")
+                .elem("splitTunnel", String.valueOf(endpoint.isSplitTunnel()))
+                .elem("vpnProtocol", "openvpn")
+                .elem("transportProtocol", endpoint.getTransportProtocol())
+                .elem("vpnPort", String.valueOf(endpoint.getVpnPort()))
+                .elem("serverCertificateArn", endpoint.getServerCertificateArn())
+                .start("authenticationOptions");
+        for (ClientVpnEndpoint.Authentication option : endpoint.getAuthenticationOptions()) {
+            xml.start("item").elem("type", option.getType());
+            if (option.getDirectoryId() != null) {
+                xml.start("activeDirectory").elem("directoryId", option.getDirectoryId()).end("activeDirectory");
+            }
+            if (option.getClientRootCertificateChainArn() != null) {
+                xml.start("mutualAuthentication")
+                        .elem("clientRootCertificateChain", option.getClientRootCertificateChainArn())
+                        .end("mutualAuthentication");
+            }
+            if (option.getSamlProviderArn() != null) {
+                xml.start("federatedAuthentication")
+                        .elem("samlProviderArn", option.getSamlProviderArn())
+                        .elem("selfServiceSamlProviderArn", option.getSelfServiceSamlProviderArn())
+                        .end("federatedAuthentication");
+            }
+            xml.end("item");
+        }
+        // ConnectionLogResponseOptions members carry no locationName, so they keep their capitals.
+        xml.end("authenticationOptions")
+                .start("connectionLogOptions")
+                .elem("Enabled", String.valueOf(Boolean.TRUE.equals(endpoint.getConnectionLogEnabled())))
+                .elem("CloudwatchLogGroup", endpoint.getConnectionLogGroup())
+                .elem("CloudwatchLogStream", endpoint.getConnectionLogStream())
+                .end("connectionLogOptions")
+                .raw(tagSetXml(service.resourceTags(endpoint.getClientVpnEndpointId())))
+                .start("securityGroupIdSet");
+        for (String groupId : endpoint.getSecurityGroupIds()) {
+            xml.elem("item", groupId);
+        }
+        xml.end("securityGroupIdSet")
+                .elem("vpcId", endpoint.getVpcId())
+                .start("clientConnectOptions")
+                .elem("enabled", String.valueOf(Boolean.TRUE.equals(endpoint.getClientConnectEnabled())))
+                .elem("lambdaFunctionArn", endpoint.getClientConnectLambdaFunctionArn())
+                .start("status").elem("code", "applied").end("status")
+                .end("clientConnectOptions")
+                .elem("sessionTimeoutHours", String.valueOf(endpoint.getSessionTimeoutHours()))
+                .start("clientLoginBannerOptions")
+                .elem("enabled", String.valueOf(Boolean.TRUE.equals(endpoint.getClientLoginBannerEnabled())))
+                .elem("bannerText", endpoint.getClientLoginBannerText())
+                .end("clientLoginBannerOptions")
+                .start("clientRouteEnforcementOptions")
+                .elem("enforced", String.valueOf(Boolean.TRUE.equals(endpoint.getClientRouteEnforced())))
+                .end("clientRouteEnforcementOptions")
+                .elem("disconnectOnSessionTimeout", String.valueOf(endpoint.isDisconnectOnSessionTimeout()))
+                .elem("endpointIpAddressType", endpoint.getEndpointIpAddressType())
+                .elem("trafficIpAddressType", endpoint.getTrafficIpAddressType());
+        if ("enabled".equals(endpoint.getSelfServicePortal())) {
+            xml.elem("selfServicePortalUrl",
+                    "https://self-service.clientvpn.amazonaws.com/endpoints/" // partition-literal: Client VPN self-service portal host
+                            + endpoint.getClientVpnEndpointId());
+        }
+        return xml.build();
+    }
+
+    private Response handleModifyClientVpnEndpoint(MultivaluedMap<String, String> p, String region) {
+        clientVpnService.modify(region, p.getFirst("ClientVpnEndpointId"), endpoint -> {
+            if (p.getFirst("ServerCertificateArn") != null) {
+                endpoint.setServerCertificateArn(p.getFirst("ServerCertificateArn"));
+            }
+            Boolean logEnabled = parseOptionalBoolean(p.getFirst("ConnectionLogOptions.Enabled"),
+                    "ConnectionLogOptions.Enabled");
+            if (logEnabled != null) {
+                endpoint.setConnectionLogEnabled(logEnabled);
+                endpoint.setConnectionLogGroup(p.getFirst("ConnectionLogOptions.CloudwatchLogGroup"));
+                endpoint.setConnectionLogStream(p.getFirst("ConnectionLogOptions.CloudwatchLogStream"));
+            }
+            Boolean dnsEnabled = parseOptionalBoolean(p.getFirst("DnsServers.Enabled"), "DnsServers.Enabled");
+            if (dnsEnabled != null) {
+                endpoint.setDnsServers(dnsEnabled ? getList(p, "DnsServers.CustomDnsServers") : List.of());
+            }
+            Integer vpnPort = intOrNull(p, "VpnPort");
+            if (vpnPort != null) {
+                endpoint.setVpnPort(vpnPort);
+            }
+            if (p.getFirst("Description") != null) {
+                endpoint.setDescription(p.getFirst("Description"));
+            }
+            Boolean splitTunnel = parseOptionalBoolean(p.getFirst("SplitTunnel"), "SplitTunnel");
+            if (splitTunnel != null) {
+                endpoint.setSplitTunnel(splitTunnel);
+            }
+            List<String> groupIds = getList(p, "SecurityGroupId");
+            if (!groupIds.isEmpty()) {
+                endpoint.setSecurityGroupIds(groupIds);
+            }
+            if (p.getFirst("VpcId") != null) {
+                endpoint.setVpcId(p.getFirst("VpcId"));
+            }
+            applyClientVpnOptions(p, endpoint);
+        });
+        return booleanResponse("ModifyClientVpnEndpoint");
+    }
+
+    private Response handleDeleteClientVpnEndpoint(MultivaluedMap<String, String> p, String region) {
+        ClientVpnEndpoint deleted = clientVpnService.delete(region, p.getFirst("ClientVpnEndpointId"));
+        service.removeResourceTags(deleted.getClientVpnEndpointId());
+        return xmlResponse(new XmlBuilder()
+                .start("DeleteClientVpnEndpointResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .start("status").elem("code", "deleting").end("status")
+                .end("DeleteClientVpnEndpointResponse").build());
+    }
+
+    private Response handleAssociateClientVpnTargetNetwork(MultivaluedMap<String, String> p, String region) {
+        ClientVpnEndpoint.TargetNetwork network = clientVpnService.associateTargetNetwork(region,
+                p.getFirst("ClientVpnEndpointId"), p.getFirst("SubnetId"));
+        return xmlResponse(new XmlBuilder()
+                .start("AssociateClientVpnTargetNetworkResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .elem("associationId", network.getAssociationId())
+                .start("status").elem("code", "associated").end("status")
+                .end("AssociateClientVpnTargetNetworkResponse").build());
+    }
+
+    private Response handleDescribeClientVpnTargetNetworks(MultivaluedMap<String, String> p, String region) {
+        String endpointId = p.getFirst("ClientVpnEndpointId");
+        List<ClientVpnEndpoint.TargetNetwork> networks = clientVpnService.describeTargetNetworks(region,
+                endpointId, getList(p, "AssociationIds"), getFilters(p));
+        XmlBuilder xml = new XmlBuilder()
+                .start("DescribeClientVpnTargetNetworksResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .start("clientVpnTargetNetworks");
+        for (ClientVpnEndpoint.TargetNetwork network : networks) {
+            xml.start("item")
+                    .elem("associationId", network.getAssociationId())
+                    .elem("vpcId", network.getVpcId())
+                    .elem("targetNetworkId", network.getSubnetId())
+                    .elem("clientVpnEndpointId", endpointId)
+                    .start("status").elem("code", "associated").end("status")
+                    .start("securityGroups");
+            for (String groupId : network.getSecurityGroups()) {
+                xml.elem("item", groupId);
+            }
+            xml.end("securityGroups").end("item");
+        }
+        xml.end("clientVpnTargetNetworks").end("DescribeClientVpnTargetNetworksResponse");
+        return xmlResponse(xml.build());
+    }
+
+    private Response handleDisassociateClientVpnTargetNetwork(MultivaluedMap<String, String> p, String region) {
+        ClientVpnEndpoint.TargetNetwork network = clientVpnService.disassociateTargetNetwork(region,
+                p.getFirst("ClientVpnEndpointId"), p.getFirst("AssociationId"));
+        return xmlResponse(new XmlBuilder()
+                .start("DisassociateClientVpnTargetNetworkResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .elem("associationId", network.getAssociationId())
+                .start("status").elem("code", "disassociating").end("status")
+                .end("DisassociateClientVpnTargetNetworkResponse").build());
+    }
+
+    private Response handleAuthorizeClientVpnIngress(MultivaluedMap<String, String> p, String region) {
+        clientVpnService.authorizeIngress(region, p.getFirst("ClientVpnEndpointId"),
+                p.getFirst("TargetNetworkCidr"), p.getFirst("AccessGroupId"),
+                Boolean.TRUE.equals(parseOptionalBoolean(p.getFirst("AuthorizeAllGroups"), "AuthorizeAllGroups")),
+                p.getFirst("Description"));
+        return xmlResponse(new XmlBuilder()
+                .start("AuthorizeClientVpnIngressResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .start("status").elem("code", "active").end("status")
+                .end("AuthorizeClientVpnIngressResponse").build());
+    }
+
+    private Response handleDescribeClientVpnAuthorizationRules(MultivaluedMap<String, String> p, String region) {
+        String endpointId = p.getFirst("ClientVpnEndpointId");
+        List<ClientVpnEndpoint.AuthorizationRule> rules =
+                clientVpnService.describeAuthorizationRules(region, endpointId, getFilters(p));
+        XmlBuilder xml = new XmlBuilder()
+                .start("DescribeClientVpnAuthorizationRulesResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .start("authorizationRule");
+        for (ClientVpnEndpoint.AuthorizationRule rule : rules) {
+            xml.start("item")
+                    .elem("clientVpnEndpointId", endpointId)
+                    .elem("description", rule.getDescription())
+                    .elem("groupId", rule.getGroupId())
+                    .elem("accessAll", String.valueOf(rule.isAccessAll()))
+                    .elem("destinationCidr", rule.getDestinationCidr())
+                    .start("status").elem("code", "active").end("status")
+                    .end("item");
+        }
+        xml.end("authorizationRule").end("DescribeClientVpnAuthorizationRulesResponse");
+        return xmlResponse(xml.build());
+    }
+
+    private Response handleRevokeClientVpnIngress(MultivaluedMap<String, String> p, String region) {
+        clientVpnService.revokeIngress(region, p.getFirst("ClientVpnEndpointId"),
+                p.getFirst("TargetNetworkCidr"), p.getFirst("AccessGroupId"),
+                Boolean.TRUE.equals(parseOptionalBoolean(p.getFirst("RevokeAllGroups"), "RevokeAllGroups")));
+        return xmlResponse(new XmlBuilder()
+                .start("RevokeClientVpnIngressResponse", AwsNamespaces.EC2)
+                .elem("requestId", UUID.randomUUID().toString())
+                .start("status").elem("code", "revoking").end("status")
+                .end("RevokeClientVpnIngressResponse").build());
+    }
 
     private Response handleCreatePlacementGroup(MultivaluedMap<String, String> p, String region) {
         List<Tag> groupTags = parseTagsForResource(p, "placement-group");
