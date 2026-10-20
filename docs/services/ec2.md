@@ -1151,6 +1151,9 @@ aws ec2 associate-address \
 
 ## Notes
 
+- A `Filter.N.Name` the describe operation does not support fails the call with
+  `InvalidParameterValue` (`The filter '<name>' is invalid`), as on EC2. A filter Floci does not
+  implement surfaces the same error.
 - `DescribeImages` returns AMIs from the EC2 image catalog, including common AMIs and Floci-native AMI IDs.
 - Security group rules are not enforced as a firewall (Docker bridge networking handles routing), but TCP ingress rules opened to a CIDR source are published on the host via socat sidecars so the instance's app is reachable from `localhost` — see [Security Group Port Publishing](#security-group-port-publishing).
 - The IMDS server identifies which instance is calling via IMDSv2 tokens (mapped at token issuance time) or by the container's bridge IP for IMDSv1.
