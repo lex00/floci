@@ -2,10 +2,12 @@ package io.github.hectorvent.floci.services.redshift.model;
 
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RegisterForReflection
 public class Cluster {
@@ -21,6 +23,16 @@ public class Cluster {
     private String clusterParameterGroupName;
     private List<String> vpcSecurityGroupIds = new ArrayList<>();
     private List<String> iamRoleArns = new ArrayList<>();
+
+    private String clusterNamespaceId;
+
+    /** The namespace id in ClusterNamespaceArn, derived from the identifier for older records. */
+    public String getClusterNamespaceId() {
+        return clusterNamespaceId != null ? clusterNamespaceId
+                : UUID.nameUUIDFromBytes(("redshift-namespace:" + clusterIdentifier).getBytes(StandardCharsets.UTF_8))
+                        .toString();
+    }
+    public void setClusterNamespaceId(String clusterNamespaceId) { this.clusterNamespaceId = clusterNamespaceId; }
 
     public String getClusterIdentifier() { return clusterIdentifier; }
     public void setClusterIdentifier(String clusterIdentifier) { this.clusterIdentifier = clusterIdentifier; }
