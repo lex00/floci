@@ -1758,6 +1758,15 @@ public interface EmulatorConfig {
         @WithDefault("7099")
         int proxyMaxPort();
 
+        /**
+         * Whether a requested Port outside the proxy range is honored: the proxy listens on it when
+         * it is free and Endpoint.Port reports it. Off, such a port falls back to one in the range,
+         * which a Docker deployment publishes to the host.
+         * Env: FLOCI_SERVICES_RDS_LISTEN_ON_REQUESTED_PORT
+         */
+        @WithDefault("false")
+        boolean listenOnRequestedPort();
+
         /** Empty when Floci should adapt its built-in image to the requested engine version. */
         Optional<String> defaultPostgresImage();
 

@@ -71,6 +71,9 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
@@ -7346,7 +7349,24 @@ public class RdsService implements Resettable, ResourceProvider {
             }
             return requestedPort;
         }
+        // With listen-on-requested-port, a port outside the proxy range is still honored when it is
+        // free, so Endpoint.Port reports the port the caller asked for and connections reach it.
+        if (config.services().rds().listenOnRequestedPort()
+                && (config.services().rds().mock() || canListenOn(requestedPort))
+                && usedPorts.add(requestedPort)) {
+            return requestedPort;
+        }
         return allocateProxyPort();
+    }
+
+    private static boolean canListenOn(int port) {
+        try (ServerSocket probe = new ServerSocket()) {
+            probe.setReuseAddress(true);
+            probe.bind(new InetSocketAddress(port));
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     private int allocateProxyPort() {
