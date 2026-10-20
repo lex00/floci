@@ -10,17 +10,10 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
- * Floci implements no Audit Manager operation yet, so every request signed for the
- * {@code auditmanager} credential scope has to come back as the clean
- * {@code UnknownOperationException} a rest-json SDK can deserialize, never as an S3 XML
- * error from the path-style wildcard routes those paths would otherwise match.
- *
- * <p>{@code AwsProtocolClaimFilter} gives that for free by rejecting any REST request whose
- * SigV4 scope names a service absent from {@code ResolvedServiceCatalog}. Registering an
- * operationless Audit Manager controller in the catalog would take these paths off that
- * pre-matching guard and leave them to the narrower post-matching
- * {@code AwsRestRouteScopeFilter}, which only covers paths S3's wildcards actually claim.
- * This test pins the behaviour such a registration would cost.
+ * Floci serves Audit Manager frameworks and controls only. A request signed for the
+ * {@code auditmanager} credential scope on any other path has to come back as the clean
+ * {@code UnknownOperationException} a rest-json SDK can deserialize, never as an S3 XML error
+ * from the path-style wildcard routes those paths would otherwise match.
  */
 @QuarkusTest
 class AuditManagerScopeIntegrationTest {
@@ -64,11 +57,11 @@ class AuditManagerScopeIntegrationTest {
     }
 
     @Test
-    void listControlsIsRejectedAsUnknownOperation() {
+    void getSettingsIsRejectedAsUnknownOperation() {
         given()
             .header("Authorization", authorization())
         .when()
-            .get("/controls?controlType=Standard")
+            .get("/settings/ALL")
         .then()
             .statusCode(404)
             .contentType(containsString("application/json"))

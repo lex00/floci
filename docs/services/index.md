@@ -120,6 +120,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [AWS RAM](ram.md) | `POST /{operationname}` (lowercase), `DELETE /deleteresourceshare` | REST JSON | 15 |
 | [Control Catalog](controlcatalog.md) | `/get-control`, `/list-controls` | REST JSON | 2 |
 | [AWS Marketplace](marketplace.md) | Marketplace Catalog API | REST JSON | 56 |
+| [AWS Audit Manager](auditmanager.md) | `/assessmentFrameworks/*`, `/controls/*`, `/tags/*` | REST JSON | 13 |
 | [Control Tower](controltower.md) | `/list-landingzones`, `/get-landingzone`, `/create-landingzone`, `/*-baseline*` | REST JSON | 15 |
 | [Managed Prometheus (AMP)](managed-prometheus.md) | `/workspaces/*`, `/workspaces/*/rulegroupsnamespaces/*`, `/tags/*` | REST JSON | 13 |
 | [AWS Backup](backup.md) | `/backup-vaults/*`, `/backup/plans/*`, `/backup-jobs/*`, `/supported-resource-types` | REST JSON | 20 |

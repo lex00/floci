@@ -881,6 +881,8 @@ public interface EmulatorConfig {
         IvschatServiceConfig ivschat();
         EfsServiceConfig efs();
         CodeGuruReviewerServiceConfig codegurureviewer();
+
+        AuditManagerServiceConfig auditmanager();
         CodeArtifactServiceConfig codeartifact();
         MarketplaceServiceConfig marketplace();
         DmsServiceConfig dms();
@@ -1028,6 +1030,11 @@ public interface EmulatorConfig {
     }
 
     interface CodeGuruReviewerServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface AuditManagerServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }

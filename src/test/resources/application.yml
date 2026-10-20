@@ -571,6 +571,8 @@ floci:
       enabled: true
     codegurureviewer:
       enabled: true
+    auditmanager:
+      enabled: true
     codeartifact:
       enabled: true
     marketplace:

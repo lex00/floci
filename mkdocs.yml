@@ -137,6 +137,7 @@ nav:
     - Control Catalog: services/controlcatalog.md
     - AWS Marketplace: services/marketplace.md
     - Control Tower: services/controltower.md
+    - AWS Audit Manager: services/auditmanager.md
     - AWS Service Catalog: services/service-catalog.md
     - ElastiCache: services/elasticache.md
     - MemoryDB: services/memorydb.md

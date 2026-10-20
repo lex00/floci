@@ -1041,6 +1041,8 @@ floci:
       enabled: true
     codegurureviewer:
       enabled: true
+    auditmanager:
+      enabled: true
     codeartifact:
       enabled: true
       # maven-url: http://floci-reposilite:8080  # set to skip Reposilite sidecar container management

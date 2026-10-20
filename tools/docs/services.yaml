@@ -94,6 +94,19 @@ services:
       - ListTags
       - TagResourcePost
       - TagResourcePut
+  - service: auditmanager
+    doc: docs/services/auditmanager.md
+    sources:
+      - { path: src/main/java/io/github/hectorvent/floci/services/auditmanager/AuditManagerController.java, mode: rest }
+      - { path: src/main/java/io/github/hectorvent/floci/core/common/SharedTagsController.java, mode: rest }
+    rename_actions:
+      ListTags: ListTagsForResource
+      TagResourcePost: TagResource
+    exclude_actions:
+      - ListTagsByQuery
+      - TagResourceByBody
+      - TagResourcePut
+      - UntagResourceByQuery
   - service: codegurureviewer
     doc: docs/services/codegurureviewer.md
     sources:
