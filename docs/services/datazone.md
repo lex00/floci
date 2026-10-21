@@ -4,8 +4,8 @@
 
 **Endpoint:** `/v2/domains/...` (e.g. `POST /v2/domains`), SigV4 service `datazone`
 
-Floci emulates the part of DataZone that business glossaries need, together with the domains
-and projects that hold them.
+Floci emulates the DataZone control plane listed below. Runs that AWS carries out in the
+background finish at once and reach no other AWS service.
 
 ## Supported Actions
 
