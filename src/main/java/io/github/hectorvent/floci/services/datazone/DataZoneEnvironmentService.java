@@ -43,6 +43,8 @@ public class DataZoneEnvironmentService implements Resettable {
     private static final List<String> MANAGED_BLUEPRINTS = List.of("DefaultDataLake", "DefaultDataWarehouse");
     private static final Set<String> USER_STATUSES = Set.of("ASSIGNED", "NOT_ASSIGNED", "ACTIVATED", "DEACTIVATED");
 
+    private static final String CUSTOM_PROVIDER = "Custom";
+    private static final String BLUEPRINT = "blueprint";
     private static final String BLUEPRINT_CONFIGURATION = "blueprint-configuration";
     private static final String ENVIRONMENT_PROFILE = "environment-profile";
     private static final String ENVIRONMENT = "environment";
@@ -77,22 +79,99 @@ public class DataZoneEnvironmentService implements Resettable {
 
     public List<ObjectNode> listEnvironmentBlueprints(String region, String domainId, String name, Boolean managed) {
         DataZoneDomain domain = domains.getDomain(region, domainId);
-        if (Boolean.FALSE.equals(managed)) {
-            return List.of();
-        }
         List<ObjectNode> result = new ArrayList<>();
-        for (String blueprint : MANAGED_BLUEPRINTS) {
-            if (name == null || blueprint.equals(name)) {
-                ObjectNode summary = blueprint(domain, blueprint, region);
-                summary.remove(List.of("deploymentProperties", "userParameters", "glossaryTerms"));
-                result.add(summary);
+        if (!Boolean.FALSE.equals(managed)) {
+            for (String blueprint : MANAGED_BLUEPRINTS) {
+                result.add(blueprint(domain, blueprint, region));
             }
         }
-        return result;
+        if (!Boolean.TRUE.equals(managed)) {
+            result.addAll(list(BLUEPRINT, region, domain.getId(), "createdAt"));
+        }
+        return result.stream()
+                .filter(b -> name == null || name.equals(b.path("name").asText()))
+                .peek(b -> b.remove(List.of("deploymentProperties", "userParameters", "glossaryTerms")))
+                .toList();
     }
 
     public ObjectNode getEnvironmentBlueprint(String region, String domainId, String identifier) {
-        return blueprint(domains.getDomain(region, domainId), blueprintName(region, domainId, identifier), region);
+        DataZoneDomain domain = domains.getDomain(region, domainId);
+        Optional<ObjectNode> custom = records.get(key(BLUEPRINT, region, domain.getId(), identifier));
+        if (custom.isPresent()) {
+            return custom.get().deepCopy();
+        }
+        return blueprint(domain, blueprintName(region, domainId, identifier), region);
+    }
+
+    public synchronized ObjectNode createEnvironmentBlueprint(String region, String domainId, JsonNode request) {
+        DataZoneDomain domain = domains.getDomain(region, domainId);
+        String name = requiredText(request, "name");
+        JsonNode provisioning = request.get("provisioningProperties");
+        if (provisioning == null || !provisioning.path("cloudFormation").hasNonNull("templateUrl")) {
+            throw required("provisioningProperties");
+        }
+        boolean taken = listEnvironmentBlueprints(region, domainId, name, null).stream().findAny().isPresent();
+        if (taken) {
+            throw conflict("An environment blueprint with name " + name + " already exists.");
+        }
+        String now = Instant.now().toString();
+        ObjectNode blueprint = JSON.objectNode();
+        blueprint.put("id", DataZoneService.randomId());
+        blueprint.put("name", name);
+        if (request.hasNonNull("description")) {
+            blueprint.put("description", request.get("description").asText());
+        }
+        blueprint.put("provider", CUSTOM_PROVIDER);
+        blueprint.set("provisioningProperties", provisioning.deepCopy());
+        blueprint.set("userParameters", request.path("userParameters").isArray()
+                ? request.get("userParameters").deepCopy() : JSON.arrayNode());
+        blueprint.putArray("glossaryTerms");
+        blueprint.put("createdAt", now);
+        blueprint.put("updatedAt", now);
+        records.put(key(BLUEPRINT, region, domain.getId(), blueprint.path("id").asText()), blueprint);
+        return blueprint.deepCopy();
+    }
+
+    public synchronized ObjectNode updateEnvironmentBlueprint(String region, String domainId, String identifier,
+                                                              JsonNode request) {
+        ObjectNode blueprint = requireCustomBlueprint(region, domainId, identifier);
+        if (request.hasNonNull("description")) {
+            blueprint.put("description", request.get("description").asText());
+        }
+        if (request.path("provisioningProperties").path("cloudFormation").hasNonNull("templateUrl")) {
+            blueprint.set("provisioningProperties", request.get("provisioningProperties").deepCopy());
+        }
+        if (request.path("userParameters").isArray()) {
+            blueprint.set("userParameters", request.get("userParameters").deepCopy());
+        }
+        blueprint.put("updatedAt", Instant.now().toString());
+        records.put(key(BLUEPRINT, region, domains.getDomain(region, domainId).getId(), identifier), blueprint);
+        return blueprint.deepCopy();
+    }
+
+    public synchronized void deleteEnvironmentBlueprint(String region, String domainId, String identifier) {
+        requireCustomBlueprint(region, domainId, identifier);
+        String domain = domains.getDomain(region, domainId).getId();
+        boolean inUse = list(ENVIRONMENT_PROFILE, region, domain, "id").stream()
+                .anyMatch(p -> identifier.equals(p.path("environmentBlueprintId").asText()))
+                || list(ENVIRONMENT, region, domain, "id").stream()
+                .anyMatch(e -> identifier.equals(e.path("environmentBlueprintId").asText()));
+        if (inUse) {
+            throw conflict("Environment blueprint " + identifier + " is used by an environment profile or environment.");
+        }
+        records.delete(key(BLUEPRINT, region, domain, identifier));
+        records.delete(key(BLUEPRINT_CONFIGURATION, region, domain, identifier));
+    }
+
+    private ObjectNode requireCustomBlueprint(String region, String domainId, String identifier) {
+        DataZoneDomain domain = domains.getDomain(region, domainId);
+        Optional<ObjectNode> custom = records.get(key(BLUEPRINT, region, domain.getId(), identifier));
+        if (custom.isPresent()) {
+            return custom.get();
+        }
+        blueprintName(region, domainId, identifier);
+        throw SmithyValidationErrors.validationException("Managed environment blueprint " + identifier
+                + " cannot be changed.");
     }
 
     private ObjectNode blueprint(DataZoneDomain domain, String name, String region) {
@@ -141,7 +220,7 @@ public class DataZoneEnvironmentService implements Resettable {
     public synchronized ObjectNode putEnvironmentBlueprintConfiguration(String region, String domainId,
                                                                         String blueprintId, JsonNode request) {
         DataZoneDomain domain = domains.getDomain(region, domainId);
-        blueprintName(region, domainId, blueprintId);
+        getEnvironmentBlueprint(region, domainId, blueprintId);
         if (!request.path("enabledRegions").isArray()) {
             throw required("enabledRegions");
         }
@@ -187,7 +266,7 @@ public class DataZoneEnvironmentService implements Resettable {
         String name = requiredText(request, "name");
         String blueprintId = requiredText(request, "environmentBlueprintIdentifier");
         String projectId = requiredText(request, "projectIdentifier");
-        blueprintName(region, domainId, blueprintId);
+        getEnvironmentBlueprint(region, domainId, blueprintId);
         domains.getProject(region, domainId, projectId);
         boolean taken = list(ENVIRONMENT_PROFILE, region, domain.getId(), "id").stream()
                 .anyMatch(p -> name.equals(p.path("name").asText()));

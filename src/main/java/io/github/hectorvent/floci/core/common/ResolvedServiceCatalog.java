@@ -35,6 +35,7 @@ import io.github.hectorvent.floci.services.connect.ConnectDirectoryController;
 import io.github.hectorvent.floci.services.controlcatalog.ControlCatalogController;
 import io.github.hectorvent.floci.services.controltower.ControlTowerControlController;
 import io.github.hectorvent.floci.services.controltower.ControlTowerController;
+import io.github.hectorvent.floci.services.datazone.DataZoneAdministrationController;
 import io.github.hectorvent.floci.services.datazone.DataZoneCatalogController;
 import io.github.hectorvent.floci.services.datazone.DataZoneController;
 import io.github.hectorvent.floci.services.datazone.DataZoneGovernanceController;
@@ -873,7 +874,7 @@ public class ResolvedServiceCatalog {
                         protocols(ServiceProtocol.REST_JSON),
                         Set.of(), Set.of("datazone"), Set.of(), Set.of(DataZoneController.class,
                                 DataZoneGovernanceController.class, DataZoneCatalogController.class,
-                                DataZoneSubscriptionController.class)),
+                                DataZoneSubscriptionController.class, DataZoneAdministrationController.class)),
                 descriptor("ivs", "ivs", config.services().ivs().enabled(), true,
                         "ivs", storageMode(config.storage().services().ivs().mode(), config.storage().mode()),
                         config.storage().services().ivs().flushIntervalMs(), null, ServiceProtocol.REST_JSON,
