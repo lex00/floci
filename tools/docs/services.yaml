@@ -359,6 +359,7 @@ services:
       - { path: src/main/java/io/github/hectorvent/floci/services/datazone/DataZoneController.java, mode: rest }
       - { path: src/main/java/io/github/hectorvent/floci/services/datazone/DataZoneGovernanceController.java, mode: rest }
       - { path: src/main/java/io/github/hectorvent/floci/services/datazone/DataZoneCatalogController.java, mode: rest }
+      - { path: src/main/java/io/github/hectorvent/floci/services/datazone/DataZoneSubscriptionController.java, mode: rest }
   - service: ivs
     doc: docs/services/ivs.md
     sources:

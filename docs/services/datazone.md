@@ -93,6 +93,27 @@ and projects that hold them.
 | `SearchListings` | Search active listings |
 | `Search` | Search assets, data products, glossaries or glossary terms |
 | `SearchTypes` | Search custom asset types and form types |
+| `CreateSubscriptionRequest` | Request a project, user, group or IAM principal's subscription to active listings |
+| `GetSubscriptionRequestDetails` | Get a subscription request |
+| `UpdateSubscriptionRequest` | Change a pending request's reason |
+| `DeleteSubscriptionRequest` | Delete a subscription request |
+| `AcceptSubscriptionRequest` | Accept a pending request and create its subscriptions |
+| `RejectSubscriptionRequest` | Reject a pending request |
+| `ListSubscriptionRequests` | List subscription requests by status, listing, approver or principal |
+| `GetSubscription` | Get a subscription |
+| `CancelSubscription` | Cancel an approved subscription and revoke its grants |
+| `RevokeSubscription` | Revoke an approved subscription, keeping its grants if asked |
+| `ListSubscriptions` | List subscriptions by status, request, listing, approver or principal |
+| `CreateSubscriptionTarget` | Create a subscription target on an environment |
+| `GetSubscriptionTarget` | Get a subscription target |
+| `UpdateSubscriptionTarget` | Change a subscription target |
+| `DeleteSubscriptionTarget` | Delete a subscription target with no grants |
+| `ListSubscriptionTargets` | List an environment's subscription targets |
+| `CreateSubscriptionGrant` | Grant a listing to an environment's subscription target |
+| `GetSubscriptionGrant` | Get a subscription grant |
+| `DeleteSubscriptionGrant` | Delete a subscription grant |
+| `UpdateSubscriptionGrantStatus` | Set the status of one asset in a grant |
+| `ListSubscriptionGrants` | List subscription grants by environment, target, listing, subscription or project |
 <!-- floci:actions:end -->
 
 Tagging rides the shared `/tags/{resourceArn}` routes, so `ListTagsForResource`,
@@ -123,9 +144,16 @@ and `SearchTypes` match `searchText` against names and descriptions, apply filte
 result's top-level attributes, and sort on one of them. `SearchTypes` with `managed` set returns
 no items.
 
+Accepting a subscription request creates an `APPROVED` subscription for each principal and
+listing it names. For a project principal, each `AUTOMATIC` subscription target in that project's
+environments whose `applicableAssetTypes` covers a listed asset gets a `COMPLETED` grant at once,
+with every asset `GRANTED`. A `MANUAL` target gets one only through `CreateSubscriptionGrant`.
+Grants record access and change no AWS permissions. `CancelSubscription`, and `RevokeSubscription`
+without `retainPermissions`, mark the subscription's grant assets `REVOKED`. A grant's overall
+status follows its assets' statuses as `UpdateSubscriptionGrantStatus` sets them.
+
 ## Not emulated
 
-- Subscriptions
 - Metadata predictions; `AcceptPredictions` and `RejectPredictions` change nothing
 - Data sources and their runs, connections and lineage
 - Project profiles and rules
@@ -152,6 +180,12 @@ member that matches `policyType`, such as `createGlossary` for `CREATE_GLOSSARY`
 `CreateAsset` returns `ResourceNotFoundException` for an unknown custom asset type, and
 `CreateDataProduct` for an unknown asset item. `DeleteAsset` returns `ConflictException` while a
 data product holds the asset. Asset filter names are unique per asset.
+
+`CreateSubscriptionRequest` returns `ConflictException` for a listing that is not `ACTIVE` or
+that the principal already holds an approved subscription to. A request that is no longer
+`PENDING`, or a subscription that is no longer `APPROVED`, returns `ConflictException` to any
+change. Subscription target names are unique per environment, and
+`DeleteSubscriptionTarget` returns `ConflictException` while a grant uses the target.
 
 ## Configuration
 
