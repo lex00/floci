@@ -184,6 +184,21 @@ and projects that hold them.
 | `StartNotebookSync` | Sync a notebook from S3 or Git |
 | `GetJobRun` | Get a job run |
 | `ListJobRuns` | List a job's runs |
+| `PostLineageEvent` | Record an OpenLineage run event and the lineage nodes it names |
+| `GetLineageEvent` | Get a lineage event as it was posted |
+| `ListLineageEvents` | List lineage events by event time and processing status |
+| `DeleteLineageEvent` | Delete a lineage event |
+| `GetLineageNode` | Get a lineage node and its neighbours, now or at a past time |
+| `ListLineageNodeHistory` | List a lineage node's snapshots |
+| `QueryGraph` | Follow lineage edges from matched lineage nodes |
+| `PostTimeSeriesDataPoints` | Add time series data points to an asset or listing |
+| `GetTimeSeriesDataPoint` | Get one time series data point |
+| `ListTimeSeriesDataPoints` | List an entity's data points of one form |
+| `DeleteTimeSeriesDataPoints` | Delete an entity's data points of one form |
+| `BatchGetAttributesMetadata` | Get the forms of an asset or listing's attributes |
+| `BatchPutAttributesMetadata` | Set the forms of an asset or listing's attributes |
+| `AssociateGovernedTerms` | Add governed glossary terms to an asset |
+| `DisassociateGovernedTerms` | Remove governed glossary terms from an asset |
 <!-- floci:actions:end -->
 
 Tagging rides the shared `/tags/{resourceArn}` routes, so `ListTagsForResource`,
@@ -203,9 +218,9 @@ revision.
 A custom blueprint created with `CreateEnvironmentBlueprint` reports the provider `Custom` and
 lists beside the managed ones; `managed` set to `false` lists only custom blueprints. Environment
 actions and associated roles are stored and change nothing else. `CreateProject` does not read
-project profiles. `GetEnvironmentCredentials` returns the same placeholder keys for every environment, valid
-for one hour. Project profiles and account pools sit in the root domain unit unless a profile names
-another one.
+project profiles. `GetEnvironmentCredentials` returns the same placeholder keys for every
+environment, valid for one hour. Project profiles and account pools sit in the root domain unit
+unless a profile names another one.
 
 A rule's type follows its `detail`: a metadata form detail makes a `METADATA_FORM_ENFORCEMENT`
 rule and a glossary term detail makes a `GLOSSARY_TERM_ENFORCEMENT` rule. Each `UpdateRule` makes
@@ -238,20 +253,21 @@ status follows its assets' statuses as `UpdateSubscriptionGrantStatus` sets them
 
 A data source is `READY` as soon as `CreateDataSource` returns. Its configuration reports the
 account and region of its environment, or of its connection when it has no environment.
-`StartDataSourceRun` imports no assets and returns a run that is already `SUCCESS`. The data source's `lastRunStatus` follows its latest run. Each connection takes its type
-from the `props` member given, or from the Glue connection type for `glueProperties`. Created on
-an environment, it belongs to that environment's project with `PROJECT` scope; without one it has
-`DOMAIN` scope. Redshift connections report a JDBC URL built from the given host and database. A
-metadata generation run is `SUCCEEDED` when it returns and generates no predictions.
+`StartDataSourceRun` imports no assets and returns a run that is already `SUCCESS`. The data
+source's `lastRunStatus` follows its latest run. Each connection takes its type from the `props`
+member given, or from the Glue connection type for `glueProperties`. Created on an environment, it
+belongs to that environment's project with `PROJECT` scope; without one it has `DOMAIN` scope.
+Redshift connections report a JDBC URL built from the given host and database. A metadata
+generation run is `SUCCEEDED` when it returns and generates no predictions.
 
 A group profile is found by its id or its group name. `SearchGroupProfiles` with
 `IAM_ROLE_SESSION_GROUP` finds the profiles created with a `rolePrincipalArn`, and the SSO group
 types find the others. `SearchUserProfiles` searches the profiles `CreateUserProfile` stored.
 `DATAZONE_USER` matches every profile. `DATAZONE_IAM_USER` narrows that to IAM profiles, and
-`SSO_USER` or `DATAZONE_SSO_USER` to SSO ones. `GetIamPortalLoginUrl` creates or reuses a user profile for the account root.
-Its URL points at the domain's portal and logs nobody in. `PutDataExportConfiguration` records
-the setting as `COMPLETED` and exports nothing. Floci raises no notifications, so
-`ListNotifications` has none to list.
+`SSO_USER` or `DATAZONE_SSO_USER` to SSO ones. `GetIamPortalLoginUrl` creates or reuses a user
+profile for the account root. Its URL points at the domain's portal and logs nobody in.
+`PutDataExportConfiguration` records the setting as `COMPLETED` and exports nothing. Floci raises
+no notifications, so `ListNotifications` has none to list.
 
 Every notebook operation that starts work finishes at once and executes nothing. A run is
 `SUCCEEDED` and copies its notebook's parameters when the request has none. An export is
@@ -259,10 +275,26 @@ Every notebook operation that starts work finishes at once and executes nothing.
 A sync records `gitMetadata` on the named notebook, or on a new one. Floci runs no jobs, so
 `ListJobRuns` is always empty.
 
+`PostLineageEvent` takes an OpenLineage run event and processes it at once, so its status is
+`SUCCESS`. The event's job and each input and output dataset become lineage nodes, found again by a
+source identifier of `namespace/name`. Each input is upstream of the job and each output is
+downstream of it. A node keeps a snapshot for every event time it appears at, and an edge stays in
+every later snapshot, so `GetLineageNode` with a `timestamp` shows the graph as it stood then.
+`QueryGraph` reads its match clauses in order. An entity pattern picks nodes by id or source
+identifier and applies its filters. A relation pattern walks up to `maxPathLength` edges. `OUT`
+follows edges downstream and `IN` follows them upstream. The result holds every node on the matched
+paths. Lineage nodes carry no forms, and deleting an event leaves its nodes in place.
+
+Time series data points belong to an asset or listing. An asset's
+`latestTimeSeriesDataPointFormsOutput` holds the newest data point of each form, and
+`ListTimeSeriesDataPoints` returns a form's points oldest first. Attribute metadata stores forms
+for any attribute name on an asset or listing. `BatchGetAttributesMetadata` reports each name it
+holds nothing for as a `ResourceNotFoundException` entry in `errors`. Governed terms change the
+asset's `governedGlossaryTerms` across all its revisions.
+
 ## Not emulated
 
 - Metadata predictions; `AcceptPredictions` and `RejectPredictions` change nothing
-- Lineage
 - Connection credentials; `GetConnection` with `withSecret` returns none
 
 ## AWS-compatible failures
@@ -316,6 +348,13 @@ Group profiles are unique per group name, and a second `CreateGroupProfile` retu
 `ResourceNotFoundException` for a domain with no configuration. Notebooks, exports and imports
 need an existing owning project. `StopNotebookRun` answers `ConflictException` because every run
 has already finished, and `GetJobRun` answers `ResourceNotFoundException`.
+
+`PostLineageEvent` returns `ValidationException` for a body that is not a JSON object. The event
+needs `eventTime` and `run.runId`, and the job and each dataset need a `namespace` and `name`.
+`GetLineageNode` returns `ResourceNotFoundException` for a time before the node's first snapshot.
+The time series, attribute metadata and governed term operations return
+`ResourceNotFoundException` for an entity or glossary term that does not exist, and the time series
+operations need `formName` on every call except a post.
 
 ## Configuration
 

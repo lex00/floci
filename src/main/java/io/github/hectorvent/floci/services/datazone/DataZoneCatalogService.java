@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * The DataZone catalog: assets with their revisions and filters, data products, and the listings
@@ -546,6 +547,19 @@ public class DataZoneCatalogService extends DataZoneRecords {
 
     Optional<ObjectNode> findListing(String region, String domainId, String identifier) {
         return find(LISTING, region, domainId, identifier);
+    }
+
+    Optional<ObjectNode> findAsset(String region, String domainId, String identifier) {
+        return find(ASSET, region, domainId, identifier);
+    }
+
+    /** Changes an asset member that every revision shares, such as its governed glossary terms. */
+    synchronized void updateAssetEverywhere(String region, String domainId, String identifier,
+                                            Consumer<ObjectNode> change) {
+        ObjectNode asset = require(ASSET, region, domainId, identifier, "Asset");
+        change.accept(asset);
+        asset.path("revisions").forEach(snapshot -> change.accept((ObjectNode) snapshot));
+        put(ASSET, region, domainId, identifier, asset);
     }
 
     private static ObjectNode searchDocument(ObjectNode listing) {
