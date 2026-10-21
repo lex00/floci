@@ -261,6 +261,119 @@ class CloudFormationRoute53RecordSetIntegrationTest {
         .when().post("/").then().statusCode(200);
     }
 
+    @Test
+    void latencyRecordsKeepTheirRoutingPolicyAndHealthCheck() {
+        String suffix = Long.toString(System.nanoTime(), 36);
+        String stackName = "r53-routing-" + suffix;
+        String zoneName = suffix + ".cfn-routing-it.example.test";
+        String template = """
+                {
+                  "Resources": {
+                    "Zone": {
+                      "Type": "AWS::Route53::HostedZone",
+                      "Properties": {"Name": "%1$s"}
+                    },
+                    "Check": {
+                      "Type": "AWS::Route53::HealthCheck",
+                      "Properties": {
+                        "HealthCheckConfig": {"Type": "HTTPS", "FullyQualifiedDomainName": "app.example.net",
+                                              "ResourcePath": "/", "RequestInterval": 10, "FailureThreshold": 2},
+                        "HealthCheckTags": [{"Key": "cloud", "Value": "aws"}]
+                      }
+                    },
+                    "Latency": {
+                      "Type": "AWS::Route53::RecordSet",
+                      "Properties": {
+                        "HostedZoneId": {"Ref": "Zone"},
+                        "Name": "www.%1$s.",
+                        "Type": "CNAME",
+                        "TTL": "60",
+                        "SetIdentifier": "aws",
+                        "Region": "us-east-1",
+                        "HealthCheckId": {"Ref": "Check"},
+                        "ResourceRecords": ["app.example.net"]
+                      }
+                    },
+                    "Weighted": {
+                      "Type": "AWS::Route53::RecordSet",
+                      "Properties": {
+                        "HostedZoneId": {"Ref": "Zone"},
+                        "Name": "api.%1$s.",
+                        "Type": "A",
+                        "TTL": "60",
+                        "SetIdentifier": "blue",
+                        "Weight": 70,
+                        "ResourceRecords": ["10.0.0.7"]
+                      }
+                    },
+                    "Primary": {
+                      "Type": "AWS::Route53::RecordSet",
+                      "Properties": {
+                        "HostedZoneId": {"Ref": "Zone"},
+                        "Name": "db.%1$s.",
+                        "Type": "A",
+                        "TTL": "60",
+                        "SetIdentifier": "primary",
+                        "Failover": "PRIMARY",
+                        "HealthCheckId": {"Fn::GetAtt": ["Check", "HealthCheckId"]},
+                        "ResourceRecords": ["10.0.0.8"]
+                      }
+                    },
+                    "CheckRef": {
+                      "Type": "AWS::SSM::Parameter",
+                      "Properties": {"Name": "/r53-routing/%2$s/ref", "Type": "String", "Value": {"Ref": "Check"}}
+                    },
+                    "CheckAttr": {
+                      "Type": "AWS::SSM::Parameter",
+                      "Properties": {"Name": "/r53-routing/%2$s/attr", "Type": "String",
+                                     "Value": {"Fn::GetAtt": ["Check", "HealthCheckId"]}}
+                    },
+                    "ZoneParam": {
+                      "Type": "AWS::SSM::Parameter",
+                      "Properties": {"Name": "/r53-routing/%2$s/zone", "Type": "String", "Value": {"Ref": "Zone"}}
+                    }
+                  }
+                }
+                """.formatted(zoneName, suffix);
+
+        createStack(stackName, template);
+        assertEquals("CREATE_COMPLETE", CfnStackWaits.awaitTerminal(stackName).status());
+        String checkId = parameterValue("/r53-routing/" + suffix + "/ref");
+        try {
+            assertEquals(checkId, parameterValue("/r53-routing/" + suffix + "/attr"));
+            assertFalse(checkId.startsWith("arn:aws:stub"), "health check was stubbed: " + checkId);
+
+            String check = given()
+                .header("Authorization", ROUTE53_AUTH)
+            .when().get("/2013-04-01/healthcheck/" + checkId)
+            .then().statusCode(200)
+                .extract().asString();
+            assertTrue(check.contains("<Type>HTTPS</Type>"), check);
+            assertTrue(check.contains("<FullyQualifiedDomainName>app.example.net</FullyQualifiedDomainName>"), check);
+            assertTrue(check.contains("<RequestInterval>10</RequestInterval>"), check);
+            assertTrue(check.contains("<FailureThreshold>2</FailureThreshold>"), check);
+            String tags = given()
+                .header("Authorization", ROUTE53_AUTH)
+            .when().get("/2013-04-01/tags/healthcheck/" + checkId)
+            .then().statusCode(200)
+                .extract().asString();
+            assertTrue(tags.contains("<Key>cloud</Key>") && tags.contains("<Value>aws</Value>"), tags);
+
+            String records = listResourceRecordSets(parameterValue("/r53-routing/" + suffix + "/zone"));
+            assertTrue(records.contains("<SetIdentifier>aws</SetIdentifier><Region>us-east-1</Region>"), records);
+            assertTrue(records.contains("<SetIdentifier>blue</SetIdentifier><Weight>70</Weight>"), records);
+            assertTrue(records.contains("<SetIdentifier>primary</SetIdentifier><Failover>PRIMARY</Failover>"), records);
+            assertEquals(2, records.split("<HealthCheckId>" + checkId + "</HealthCheckId>", -1).length - 1, records);
+        } finally {
+            deleteStack(stackName);
+            CfnStackWaits.awaitStackDeleted(stackName);
+        }
+        given()
+            .header("Authorization", ROUTE53_AUTH)
+        .when().get("/2013-04-01/healthcheck/" + checkId)
+        .then().statusCode(404);
+    }
+
     private String listResourceRecordSets(String zoneId) {
         return given()
             .header("Authorization", ROUTE53_AUTH)
