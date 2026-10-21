@@ -602,6 +602,12 @@ public class DataZoneEnvironmentService implements Resettable {
         return publicProfile(profile);
     }
 
+    public List<ObjectNode> listUserProfiles(String region, String domainId) {
+        return list(USER_PROFILE, region, domains.getDomain(region, domainId).getId(), "id").stream()
+                .map(DataZoneEnvironmentService::publicProfile)
+                .toList();
+    }
+
     /** The id of the user profile for a user identifier or profile id, or the identifier itself. */
     public String userId(String region, String domainId, String userIdentifier) {
         return findUserProfile(region, domainId, userIdentifier).map(p -> p.path("id").asText()).orElse(userIdentifier);

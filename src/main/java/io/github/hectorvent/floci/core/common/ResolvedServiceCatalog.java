@@ -40,6 +40,8 @@ import io.github.hectorvent.floci.services.datazone.DataZoneCatalogController;
 import io.github.hectorvent.floci.services.datazone.DataZoneController;
 import io.github.hectorvent.floci.services.datazone.DataZoneDataSourceController;
 import io.github.hectorvent.floci.services.datazone.DataZoneGovernanceController;
+import io.github.hectorvent.floci.services.datazone.DataZoneNotebookController;
+import io.github.hectorvent.floci.services.datazone.DataZoneProfileController;
 import io.github.hectorvent.floci.services.datazone.DataZoneSubscriptionController;
 import io.github.hectorvent.floci.services.detective.DetectiveController;
 import io.github.hectorvent.floci.services.dlm.DlmController;
@@ -876,7 +878,8 @@ public class ResolvedServiceCatalog {
                         Set.of(), Set.of("datazone"), Set.of(), Set.of(DataZoneController.class,
                                 DataZoneGovernanceController.class, DataZoneCatalogController.class,
                                 DataZoneSubscriptionController.class, DataZoneDataSourceController.class,
-                                DataZoneAdministrationController.class)),
+                                DataZoneAdministrationController.class, DataZoneProfileController.class,
+                                DataZoneNotebookController.class)),
                 descriptor("ivs", "ivs", config.services().ivs().enabled(), true,
                         "ivs", storageMode(config.storage().services().ivs().mode(), config.storage().mode()),
                         config.storage().services().ivs().flushIntervalMs(), null, ServiceProtocol.REST_JSON,
