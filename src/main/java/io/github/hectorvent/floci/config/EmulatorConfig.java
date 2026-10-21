@@ -1332,6 +1332,20 @@ public interface EmulatorConfig {
          */
         @WithDefault("0")
         long vpcAssociationControlPlaneDelayMs();
+
+        /**
+         * True keeps health checks from probing their endpoints: every one reports a single
+         * successful observation, as before probing existed. False probes HTTP, HTTPS, string
+         * match and TCP health checks on their request interval.
+         */
+        @WithDefault("false")
+        boolean mock();
+
+        /**
+         * Probes health checks this often instead of on their own {@code RequestInterval}, so a
+         * test can watch a health check change state in well under the 10 seconds AWS allows.
+         */
+        Optional<Long> healthCheckProbeIntervalMs();
     }
 
     interface ConfigServiceConfig {

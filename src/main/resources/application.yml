@@ -866,6 +866,8 @@ floci:
     route53:
       enabled: true
       vpc-association-control-plane-delay-ms: 0
+      mock: false                                 # FLOCI_SERVICES_ROUTE53_MOCK; true = health checks report success without probing
+      # health-check-probe-interval-ms: 1000      # FLOCI_SERVICES_ROUTE53_HEALTH_CHECK_PROBE_INTERVAL_MS; overrides each check's RequestInterval
     transfer:
       enabled: true
     textract:
