@@ -1424,8 +1424,10 @@ class PartitionCrossServiceSmokeIntegrationTest {
         cleanup.register(() -> json11(region, "codecommit", "CodeCommit_20150413.DeleteRepository",
                 "{\"repositoryName\":\"" + name + "\"}").when().post("/"));
         PartitionMatrix.assertArnIn(partitionCase, metadata.getString("repositoryMetadata.Arn"));
-        assertTrue(metadata.getString("repositoryMetadata.cloneUrlHttp")
+        assertTrue(metadata.getString("repositoryMetadata.cloneUrlSsh")
                 .contains("." + region + "." + partitionCase.dnsSuffix() + "/"));
+        assertTrue(metadata.getString("repositoryMetadata.cloneUrlHttp")
+                .contains("git-codecommit." + region + "."));
     }
 
     @ParameterizedTest
