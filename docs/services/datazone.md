@@ -22,8 +22,8 @@ and projects that hold them.
 | `GetProject` | Get a project |
 | `DeleteProject` | Delete a project |
 | `UpdateProject` | Change a project's name, description, domain unit or glossary terms |
-| `ListEnvironmentBlueprints` | List the managed blueprints DefaultDataLake and DefaultDataWarehouse |
-| `GetEnvironmentBlueprint` | Get a managed blueprint |
+| `ListEnvironmentBlueprints` | List the managed blueprints DefaultDataLake and DefaultDataWarehouse and the custom blueprints |
+| `GetEnvironmentBlueprint` | Get a managed or custom blueprint |
 | `PutEnvironmentBlueprintConfiguration` | Enable a blueprint in a domain |
 | `GetEnvironmentBlueprintConfiguration` | Get a blueprint configuration |
 | `ListEnvironmentBlueprintConfigurations` | List a domain's blueprint configurations |
@@ -132,6 +132,33 @@ and projects that hold them.
 | `GetMetadataGenerationRun` | Get a metadata generation run with its per-type status |
 | `ListMetadataGenerationRuns` | List metadata generation runs |
 | `CancelMetadataGenerationRun` | Cancel a metadata generation run that has not finished |
+| `CreateProjectProfile` | Create a project profile with its environment configurations |
+| `GetProjectProfile` | Get a project profile |
+| `UpdateProjectProfile` | Change a project profile |
+| `DeleteProjectProfile` | Delete a project profile |
+| `ListProjectProfiles` | List project profiles, by name |
+| `CreateRule` | Create a metadata form or glossary term rule on a domain unit |
+| `GetRule` | Get a rule, or one of its revisions |
+| `UpdateRule` | Change a rule and start its next revision |
+| `DeleteRule` | Delete a rule with its revisions |
+| `ListRules` | List a domain unit's rules, with the ones it inherits if asked |
+| `CreateAccountPool` | Create an account pool from accounts or a Lambda handler |
+| `GetAccountPool` | Get an account pool |
+| `UpdateAccountPool` | Change an account pool |
+| `DeleteAccountPool` | Delete an account pool |
+| `ListAccountPools` | List account pools, by name |
+| `ListAccountsInAccountPool` | List the accounts of an account pool |
+| `CreateEnvironmentBlueprint` | Create a custom blueprint from a CloudFormation template URL |
+| `UpdateEnvironmentBlueprint` | Change a custom blueprint's description, template or parameters |
+| `DeleteEnvironmentBlueprint` | Delete a custom blueprint no profile or environment uses |
+| `CreateEnvironmentAction` | Add a console link action to an environment |
+| `GetEnvironmentAction` | Get an environment action |
+| `UpdateEnvironmentAction` | Change an environment action |
+| `DeleteEnvironmentAction` | Delete an environment action |
+| `ListEnvironmentActions` | List an environment's actions |
+| `AssociateEnvironmentRole` | Associate an IAM role with an environment |
+| `DisassociateEnvironmentRole` | Remove an IAM role from an environment |
+| `GetEnvironmentCredentials` | Get placeholder credentials for an environment |
 <!-- floci:actions:end -->
 
 Tagging rides the shared `/tags/{resourceArn}` routes, so `ListTagsForResource`,
@@ -147,6 +174,20 @@ id that stays the same for the domain. An environment is `ACTIVE` as soon as `Cr
 returns and provisions no AWS resources. It takes its account, region and blueprint from its
 environment profile. A form type or asset type created again under the same name gets the next
 revision.
+
+A custom blueprint created with `CreateEnvironmentBlueprint` reports the provider `Custom` and
+lists beside the managed ones; `managed` set to `false` lists only custom blueprints. Environment
+actions and associated roles are stored and change nothing else. `CreateProject` does not read
+project profiles. `GetEnvironmentCredentials` returns the same placeholder keys for every environment, valid
+for one hour. Project profiles and account pools sit in the root domain unit unless a profile names
+another one.
+
+A rule's type follows its `detail`: a metadata form detail makes a `METADATA_FORM_ENFORCEMENT`
+rule and a glossary term detail makes a `GLOSSARY_TERM_ENFORCEMENT` rule. Each `UpdateRule` makes
+the next revision, and `GetRule` returns any revision. `ListRules` with `includeCascaded` adds the
+rules of the unit's ancestors that set `includeChildDomainUnits`. Rules are recorded but enforce
+nothing on listings or subscription requests. `ListAccountsInAccountPool` lists a pool's static
+accounts, and a pool backed by a Lambda handler lists none.
 
 Each domain has a root domain unit, named after the domain, whose id is the domain's
 `rootDomainUnitId`. New domain units and projects start with no owners or members; add them with
@@ -183,7 +224,6 @@ metadata generation run is `SUCCEEDED` when it returns and generates no predicti
 - Metadata predictions; `AcceptPredictions` and `RejectPredictions` change nothing
 - Lineage
 - Connection credentials; `GetConnection` with `withSecret` returns none
-- Project profiles and rules
 
 ## AWS-compatible failures
 
@@ -221,6 +261,14 @@ needs `projectIdentifier`, and deleting a connection that a data source still us
 `ResourceNotFoundException`, and leaving out both `types` and `type` gives `ValidationException`.
 Because every run has finished by the time it is read, `CancelMetadataGenerationRun` always
 answers `ConflictException`.
+
+A custom blueprint's name must differ from every blueprint in the domain, and
+`DeleteEnvironmentBlueprint` returns `ConflictException` while an environment profile or
+environment uses it. Changing or deleting a managed blueprint returns `ValidationException`.
+Names of project profiles and account pools are unique per domain, as are rule names. A rule keeps
+its type, so `UpdateRule` rejects a `detail` of the other kind with `ValidationException`.
+`CreateRule` and `ListRules` return `ResourceNotFoundException` for an unknown domain unit, and
+disassociating a role that was never associated returns it too.
 
 ## Configuration
 
