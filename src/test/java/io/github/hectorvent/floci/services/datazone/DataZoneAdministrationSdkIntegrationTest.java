@@ -45,6 +45,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -215,8 +216,10 @@ class DataZoneAdministrationSdkIntegrationTest {
 
             GetEnvironmentCredentialsResponse credentials = dz.getEnvironmentCredentials(r -> r
                     .domainIdentifier(domainId).environmentIdentifier(environmentId));
-            assertNotNull(credentials.accessKeyId());
+            assertTrue(credentials.accessKeyId().matches("ASIA[A-Z0-9]{16}"));
             assertNotNull(credentials.sessionToken());
+            assertNotEquals(credentials.accessKeyId(), dz.getEnvironmentCredentials(r -> r
+                    .domainIdentifier(domainId).environmentIdentifier(environmentId)).accessKeyId());
             assertTrue(credentials.expiration().isAfter(Instant.now()));
             assertThrows(ResourceNotFoundException.class, () -> dz.getEnvironmentCredentials(r -> r
                     .domainIdentifier(domainId).environmentIdentifier("missing")));

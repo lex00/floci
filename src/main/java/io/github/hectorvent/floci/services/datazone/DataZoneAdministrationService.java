@@ -23,6 +23,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * DataZone domain administration: project profiles, metadata rules, account pools, and the
@@ -30,6 +31,10 @@ import java.util.Set;
  */
 @ApplicationScoped
 public class DataZoneAdministrationService extends DataZoneRecords {
+
+    private static final String UPPER_ALPHANUMERIC = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    private static final String SECRET_CHARACTERS =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     private static final String PROJECT_PROFILE = "project-profile";
     private static final String RULE = "rule";
@@ -504,14 +509,22 @@ public class DataZoneAdministrationService extends DataZoneRecords {
                                                              String environmentIdentifier) {
         environments.getEnvironment(region, domainId(region, domainIdentifier), environmentIdentifier);
         ObjectNode credentials = JSON.objectNode();
-        credentials.put("accessKeyId", "ASIAFLOCIDATAZONEENV");
-        credentials.put("secretAccessKey", "floci/datazone/environment/secret/access/key");
-        credentials.put("sessionToken", "FwoGZXIvYXdzEFlociDataZoneEnvironmentSessionToken");
+        credentials.put("accessKeyId", "ASIA" + random(UPPER_ALPHANUMERIC, 16));
+        credentials.put("secretAccessKey", random(SECRET_CHARACTERS, 40));
+        credentials.put("sessionToken", random(SECRET_CHARACTERS, 200));
         credentials.put("expiration", iso(Instant.now().plus(1, ChronoUnit.HOURS)));
         return credentials;
     }
 
     // ──────────────────────────── Helpers ────────────────────────────
+
+    private static String random(String characters, int length) {
+        StringBuilder out = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            out.append(characters.charAt(ThreadLocalRandom.current().nextInt(characters.length())));
+        }
+        return out.toString();
+    }
 
     private String domainUnitId(String region, DataZoneDomain domain, String identifier) {
         if (identifier == null) {

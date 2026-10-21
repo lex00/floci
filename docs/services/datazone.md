@@ -218,8 +218,8 @@ revision.
 A custom blueprint created with `CreateEnvironmentBlueprint` reports the provider `Custom` and
 lists beside the managed ones; `managed` set to `false` lists only custom blueprints. Environment
 actions and associated roles are stored and change nothing else. `CreateProject` does not read
-project profiles. `GetEnvironmentCredentials` returns the same placeholder keys for every
-environment, valid for one hour. Project profiles and account pools sit in the root domain unit
+project profiles. `GetEnvironmentCredentials` returns newly generated placeholder keys on every
+call, valid for one hour. Project profiles and account pools sit in the root domain unit
 unless a profile names another one.
 
 A rule's type follows its `detail`: a metadata form detail makes a `METADATA_FORM_ENFORCEMENT`
