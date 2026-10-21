@@ -416,6 +416,7 @@ floci:
       enabled: true
     route53:
       enabled: true
+      mock: true
     textract:
       enabled: true
     comprehend:

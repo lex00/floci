@@ -26,7 +26,6 @@ import jakarta.ws.rs.core.Response;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamReader;
 import java.net.URI;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -43,6 +42,9 @@ public class Route53Controller {
 
     @Inject
     Route53Service service;
+
+    @Inject
+    Route53HealthChecker healthChecker;
 
     // ── Hosted Zones ──────────────────────────────────────────────────────────
 
@@ -627,23 +629,23 @@ public class Route53Controller {
     @Path("/healthcheck/{HealthCheckId}/status")
     public Response getHealthCheckStatus(@PathParam("HealthCheckId") String id) {
         try {
-            service.getHealthCheck(id);
-            String now = Instant.now().toString();
-            String xml = new XmlBuilder()
+            HealthCheck hc = service.getHealthCheck(id);
+            XmlBuilder xml = new XmlBuilder()
                     .start("GetHealthCheckStatusResponse", NS)
-                    .start("HealthCheckObservations")
-                    .start("HealthCheckObservation")
-                    .elem("IPAddress", "1.2.3.4")
-                    .elem("Region", "us-east-1") // partition-literal: health-check observation fixture
-                    .start("StatusReport")
-                    .elem("Status", "Success: HTTP Status Code 200, OK")
-                    .elem("CheckedTime", now)
-                    .end("StatusReport")
-                    .end("HealthCheckObservation")
-                    .end("HealthCheckObservations")
-                    .end("GetHealthCheckStatusResponse")
-                    .build();
-            return Response.ok(xml, XML).build();
+                    .start("HealthCheckObservations");
+            for (Route53HealthChecker.Observation observation : healthChecker.observations(hc)) {
+                xml.start("HealthCheckObservation")
+                   .elem("Region", observation.region())
+                   .elem("IPAddress", observation.ipAddress())
+                   .start("StatusReport")
+                   .elem("Status", observation.status())
+                   .elem("CheckedTime", observation.checkedTime().toString())
+                   .end("StatusReport")
+                   .end("HealthCheckObservation");
+            }
+            xml.end("HealthCheckObservations")
+               .end("GetHealthCheckStatusResponse");
+            return Response.ok(xml.build(), XML).build();
         } catch (AwsException e) {
             return xmlErrorResponse(e);
         }
@@ -818,7 +820,18 @@ public class Route53Controller {
                        cfg.getRequestInterval() != null ? String.valueOf(cfg.getRequestInterval()) : null)
                .elem("FailureThreshold",
                        cfg.getFailureThreshold() != null ? String.valueOf(cfg.getFailureThreshold()) : null)
-               .end("HealthCheckConfig");
+               .elem("SearchString", cfg.getSearchString())
+               .elem("Inverted", cfg.getInverted() != null ? String.valueOf(cfg.getInverted()) : null)
+               .elem("Disabled", cfg.getDisabled() != null ? String.valueOf(cfg.getDisabled()) : null)
+               .elem("EnableSNI", cfg.getEnableSni() != null ? String.valueOf(cfg.getEnableSni()) : null);
+            if (cfg.getRegions() != null && !cfg.getRegions().isEmpty()) {
+                xml.start("Regions");
+                for (String region : cfg.getRegions()) {
+                    xml.elem("Region", region);
+                }
+                xml.end("Regions");
+            }
+            xml.end("HealthCheckConfig");
         }
         xml.elem("HealthCheckVersion", hc.getHealthCheckVersion())
            .end("HealthCheck");
@@ -1112,7 +1125,24 @@ public class Route53Controller {
         cfg.setFullyQualifiedDomainName(XmlParser.extractFirst(body, "FullyQualifiedDomainName", null));
         cfg.setRequestInterval(integerElement(body, "RequestInterval"));
         cfg.setFailureThreshold(integerElement(body, "FailureThreshold"));
+        cfg.setSearchString(XmlParser.extractFirst(body, "SearchString", null));
+        cfg.setInverted(booleanElement(body, "Inverted"));
+        cfg.setDisabled(booleanElement(body, "Disabled"));
+        cfg.setEnableSni(booleanElement(body, "EnableSNI"));
+        XmlParser.XmlElement regions = XmlParser.extractElementTree(body, "Regions");
+        if (regions != null) {
+            List<String> names = new ArrayList<>();
+            for (XmlParser.XmlElement region : regions.children()) {
+                names.add(region.text().trim());
+            }
+            cfg.setRegions(names);
+        }
         return cfg;
+    }
+
+    private static Boolean booleanElement(String body, String name) {
+        String value = XmlParser.extractFirst(body, name, null);
+        return value == null ? null : Boolean.parseBoolean(value.trim());
     }
 
     private static Integer integerElement(String body, String name) {

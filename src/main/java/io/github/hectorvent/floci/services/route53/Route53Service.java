@@ -45,6 +45,7 @@ public class Route53Service implements Resettable {
 
     public record CreateZoneResult(HostedZone zone, ChangeInfo change) {}
     private record OwnedZone(String accountId, HostedZone zone) {}
+    public record OwnedHealthCheck(String accountId, HealthCheck healthCheck) {}
 
     private final StorageBackend<String, HostedZone> zoneStore;
     private final StorageBackend<String, List<ResourceRecordSet>> recordStore;
@@ -504,6 +505,24 @@ public class Route53Service implements Resettable {
         tagStore.delete("healthcheck/" + id);
     }
 
+    /** Every account's health checks, keyed by id, for work that runs outside a request. */
+    public Map<String, OwnedHealthCheck> allHealthChecksAcrossAccounts() {
+        Map<String, OwnedHealthCheck> out = new LinkedHashMap<>();
+        if (healthCheckStore instanceof AccountAwareStorageBackend<?> rawAccountAware) {
+            @SuppressWarnings("unchecked")
+            AccountAwareStorageBackend<HealthCheck> accountAware =
+                    (AccountAwareStorageBackend<HealthCheck>) rawAccountAware;
+            for (var entry : accountAware.scanAllAccountEntries(k -> true)) {
+                out.put(entry.value().getId(), new OwnedHealthCheck(entry.accountId(), entry.value()));
+            }
+        } else {
+            for (HealthCheck hc : healthCheckStore.scan(k -> true)) {
+                out.put(hc.getId(), new OwnedHealthCheck(defaultAccountId, hc));
+            }
+        }
+        return out;
+    }
+
     public List<HealthCheck> listHealthChecks(String marker, int maxItems) {
         List<HealthCheck> all = new ArrayList<>(healthCheckStore.scan(k -> true));
         if (marker != null && !marker.isEmpty()) {
@@ -522,9 +541,44 @@ public class Route53Service implements Resettable {
         return all;
     }
 
+    /**
+     * {@code UpdateHealthCheck} names only the settings it changes and never the type, so each
+     * setting given replaces the stored one and the rest stay.
+     */
     public HealthCheck updateHealthCheck(String id, HealthCheckConfig cfg) {
         HealthCheck hc = getHealthCheck(id);
-        hc.setConfig(cfg);
+        HealthCheckConfig current = hc.getConfig() != null ? hc.getConfig() : new HealthCheckConfig();
+        if (cfg.getIpAddress() != null) {
+            current.setIpAddress(cfg.getIpAddress());
+        }
+        if (cfg.getPort() != null) {
+            current.setPort(cfg.getPort());
+        }
+        if (cfg.getResourcePath() != null) {
+            current.setResourcePath(cfg.getResourcePath());
+        }
+        if (cfg.getFullyQualifiedDomainName() != null) {
+            current.setFullyQualifiedDomainName(cfg.getFullyQualifiedDomainName());
+        }
+        if (cfg.getFailureThreshold() != null) {
+            current.setFailureThreshold(cfg.getFailureThreshold());
+        }
+        if (cfg.getSearchString() != null) {
+            current.setSearchString(cfg.getSearchString());
+        }
+        if (cfg.getInverted() != null) {
+            current.setInverted(cfg.getInverted());
+        }
+        if (cfg.getDisabled() != null) {
+            current.setDisabled(cfg.getDisabled());
+        }
+        if (cfg.getEnableSni() != null) {
+            current.setEnableSni(cfg.getEnableSni());
+        }
+        if (cfg.getRegions() != null) {
+            current.setRegions(cfg.getRegions());
+        }
+        hc.setConfig(current);
         hc.setHealthCheckVersion(hc.getHealthCheckVersion() + 1);
         healthCheckStore.put(id, hc);
         return hc;

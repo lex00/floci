@@ -55,6 +55,26 @@ Route53 emulation supporting hosted zones, resource record sets, health checks, 
 - Private hosted zones support up to 300 VPC associations and up to 1000 outstanding cross-account VPC association authorizations, matching the documented Route 53 default quotas.
 - Set `FLOCI_SERVICES_ROUTE53_VPC_ASSOCIATION_CONTROL_PLANE_DELAY_MS` above `0` to emulate a short in-flight control-plane window for retry testing. During that window, a subsequent `AssociateVPCWithHostedZone` for the same hosted zone returns `PriorRequestNotComplete`; overlapping create/delete authorization requests return `ConcurrentModification`. These are the retryable overlap errors documented by Route 53 for those operations.
 
+## Health Check Probing
+
+Floci probes `HTTP`, `HTTPS`, `HTTP_STR_MATCH`, `HTTPS_STR_MATCH` and `TCP` health checks once per `RequestInterval` (30 seconds unless set).
+
+- The probe connects to `IPAddress`, or to `FullyQualifiedDomainName` when no address is set.
+- `Port` defaults to 80 for the HTTP types and 443 for the HTTPS types.
+- The connection must open within four seconds, which is all a `TCP` check needs.
+- The HTTP types send a `GET` for `ResourcePath` and pass on a 2xx or 3xx status that arrives within two seconds.
+- `FullyQualifiedDomainName` is the `Host` header when it is set, with `:Port` added for a port other than 80 or 443. An HTTPS probe also sends it as the TLS server name unless `EnableSNI` is `false`. With `IPAddress` set, the name is never resolved, so it can be a name that only the endpoint's router knows.
+- Redirects are not followed, and HTTPS certificates are not validated, as in AWS.
+- The string-match types also need `SearchString` in the first 5,120 bytes of the body.
+- `GetHealthCheckStatus` reports the latest probe's result for each checker region. Those are the health check's `Regions`, or Route 53's eight default regions. One probe per interval serves every region, so the regions always agree.
+- A `Status` reads like `Success: HTTP Status Code 200, OK` or `Failure: Connection refused. ...`. The list is empty until the first probe finishes.
+- A health check starts healthy and changes status after `FailureThreshold` consecutive results that disagree with it (3 unless set).
+- A disabled health check stops probing and counts as healthy. `Inverted` flips the status after that.
+- The status goes to CloudWatch once a minute as `AWS/Route53` `HealthCheckStatus` in `us-east-1`, with a `HealthCheckId` dimension, so alarms can watch it.
+- The embedded DNS server answers every record set whatever its health check reports.
+- `CALCULATED`, `CLOUDWATCH_METRIC` and `RECOVERY_CONTROL` health checks report one successful observation. With `FLOCI_SERVICES_ROUTE53_MOCK` set to `true`, every health check does.
+- Probe state lives in memory and starts over when Floci restarts.
+
 ## Private Hosted Zone DNS Resolution
 
 Floci resolves private hosted zone DNS records directly through its embedded DNS server on port 53. Cluster containers (such as EKS k3s containers) and workloads wired to embedded DNS automatically query Floci as their primary resolver.
@@ -87,6 +107,8 @@ ns-4.awsdns-04.co.uk
 | `FLOCI_SERVICES_ROUTE53_DEFAULT_NAMESERVER3` | `ns-3.awsdns-03.com` | Third default nameserver |
 | `FLOCI_SERVICES_ROUTE53_DEFAULT_NAMESERVER4` | `ns-4.awsdns-04.co.uk` | Fourth default nameserver |
 | `FLOCI_SERVICES_ROUTE53_VPC_ASSOCIATION_CONTROL_PLANE_DELAY_MS` | `0` | Optional VPC association/auth processing window used to reproduce documented retryable overlap errors |
+| `FLOCI_SERVICES_ROUTE53_MOCK` | `false` | `true` stops health check probing; every health check reports one successful observation |
+| `FLOCI_SERVICES_ROUTE53_HEALTH_CHECK_PROBE_INTERVAL_MS` | unset | Probe every health check this often instead of on its `RequestInterval` |
 
 ## CLI Examples
 

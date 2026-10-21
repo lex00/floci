@@ -2,6 +2,8 @@ package io.github.hectorvent.floci.services.route53.model;
 
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
+import java.util.List;
+
 @RegisterForReflection
 public class HealthCheckConfig {
 
@@ -12,6 +14,11 @@ public class HealthCheckConfig {
     private String fullyQualifiedDomainName;
     private Integer requestInterval;
     private Integer failureThreshold;
+    private String searchString;
+    private Boolean inverted;
+    private Boolean disabled;
+    private Boolean enableSni;
+    private List<String> regions;
 
     public HealthCheckConfig() {}
 
@@ -37,4 +44,19 @@ public class HealthCheckConfig {
 
     public Integer getFailureThreshold() { return failureThreshold; }
     public void setFailureThreshold(Integer failureThreshold) { this.failureThreshold = failureThreshold; }
+
+    public String getSearchString() { return searchString; }
+    public void setSearchString(String searchString) { this.searchString = searchString; }
+
+    public Boolean getInverted() { return inverted; }
+    public void setInverted(Boolean inverted) { this.inverted = inverted; }
+
+    public Boolean getDisabled() { return disabled; }
+    public void setDisabled(Boolean disabled) { this.disabled = disabled; }
+
+    public Boolean getEnableSni() { return enableSni; }
+    public void setEnableSni(Boolean enableSni) { this.enableSni = enableSni; }
+
+    public List<String> getRegions() { return regions; }
+    public void setRegions(List<String> regions) { this.regions = regions; }
 }
