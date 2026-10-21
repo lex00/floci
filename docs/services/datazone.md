@@ -114,6 +114,21 @@ and projects that hold them.
 | `DeleteSubscriptionGrant` | Delete a subscription grant |
 | `UpdateSubscriptionGrantStatus` | Set the status of one asset in a grant |
 | `ListSubscriptionGrants` | List subscription grants by environment, target, listing, subscription or project |
+| `PostLineageEvent` | Record an OpenLineage run event and the lineage nodes it names |
+| `GetLineageEvent` | Get a lineage event as it was posted |
+| `ListLineageEvents` | List lineage events by event time and processing status |
+| `DeleteLineageEvent` | Delete a lineage event |
+| `GetLineageNode` | Get a lineage node and its neighbours, now or at a past time |
+| `ListLineageNodeHistory` | List a lineage node's snapshots |
+| `QueryGraph` | Follow lineage edges from matched lineage nodes |
+| `PostTimeSeriesDataPoints` | Add time series data points to an asset or listing |
+| `GetTimeSeriesDataPoint` | Get one time series data point |
+| `ListTimeSeriesDataPoints` | List an entity's data points of one form |
+| `DeleteTimeSeriesDataPoints` | Delete an entity's data points of one form |
+| `BatchGetAttributesMetadata` | Get the forms of an asset or listing's attributes |
+| `BatchPutAttributesMetadata` | Set the forms of an asset or listing's attributes |
+| `AssociateGovernedTerms` | Add governed glossary terms to an asset |
+| `DisassociateGovernedTerms` | Remove governed glossary terms from an asset |
 <!-- floci:actions:end -->
 
 Tagging rides the shared `/tags/{resourceArn}` routes, so `ListTagsForResource`,
@@ -152,10 +167,28 @@ Grants record access and change no AWS permissions. `CancelSubscription`, and `R
 without `retainPermissions`, mark the subscription's grant assets `REVOKED`. A grant's overall
 status follows its assets' statuses as `UpdateSubscriptionGrantStatus` sets them.
 
+`PostLineageEvent` takes an OpenLineage run event and processes it at once, so its status is
+`SUCCESS`. The event's job and each input and output dataset become lineage nodes, found again by
+a source identifier of `namespace/name`. Each input is upstream of the job and each output is
+downstream of it. A node keeps a snapshot for every event time it appears at, and an edge stays in
+every later snapshot, so `GetLineageNode` with a `timestamp` shows the graph as it stood then.
+`QueryGraph` reads its match clauses in order. An entity pattern picks nodes by id or source
+identifier and applies its filters. A relation pattern walks up to `maxPathLength` edges.
+`OUT` follows edges downstream and `IN` follows them upstream. The result holds every node on the matched
+paths. Lineage nodes carry
+no forms, and deleting an event leaves its nodes in place.
+
+Time series data points belong to an asset or listing. An asset's
+`latestTimeSeriesDataPointFormsOutput` holds the newest data point of each form, and
+`ListTimeSeriesDataPoints` returns a form's points oldest first. Attribute metadata stores forms
+for any attribute name on an asset or listing. `BatchGetAttributesMetadata` reports each name it
+holds nothing for as a `ResourceNotFoundException` entry in `errors`. Governed terms change the asset's `governedGlossaryTerms` across all its
+revisions.
+
 ## Not emulated
 
 - Metadata predictions; `AcceptPredictions` and `RejectPredictions` change nothing
-- Data sources and their runs, connections and lineage
+- Data sources and their runs, and connections
 - Project profiles and rules
 
 ## AWS-compatible failures
@@ -186,6 +219,13 @@ that the principal already holds an approved subscription to. A request that is 
 `PENDING`, or a subscription that is no longer `APPROVED`, returns `ConflictException` to any
 change. Subscription target names are unique per environment, and
 `DeleteSubscriptionTarget` returns `ConflictException` while a grant uses the target.
+
+`PostLineageEvent` returns `ValidationException` for a body that is not a JSON object. The event
+needs `eventTime` and `run.runId`, and the job and each dataset need a `namespace` and `name`.
+`GetLineageNode` returns `ResourceNotFoundException` for a time before the node's first snapshot.
+The time series, attribute metadata and governed term operations return
+`ResourceNotFoundException` for an entity or glossary term that does not exist, and the time series
+operations need `formName` on every call except a post.
 
 ## Configuration
 
