@@ -114,6 +114,31 @@ and projects that hold them.
 | `DeleteSubscriptionGrant` | Delete a subscription grant |
 | `UpdateSubscriptionGrantStatus` | Set the status of one asset in a grant |
 | `ListSubscriptionGrants` | List subscription grants by environment, target, listing, subscription or project |
+| `CreateGroupProfile` | Create a profile for an SSO group or IAM role session group |
+| `GetGroupProfile` | Get a group profile by id or group name |
+| `UpdateGroupProfile` | Change a group profile's status |
+| `SearchGroupProfiles` | Search group profiles of one group type by name |
+| `SearchUserProfiles` | Search user profiles of one user type |
+| `GetIamPortalLoginUrl` | Get a portal login URL and the caller's user profile |
+| `PutDataExportConfiguration` | Turn catalog export on or off for a domain |
+| `GetDataExportConfiguration` | Get a domain's data export configuration |
+| `DeleteDataExportConfiguration` | Delete a domain's data export configuration |
+| `ListNotifications` | List a domain's notifications |
+| `CreateNotebook` | Create a notebook in a project |
+| `GetNotebook` | Get a notebook |
+| `UpdateNotebook` | Change a notebook's name, status, cells or parameters |
+| `DeleteNotebook` | Delete a notebook |
+| `ListNotebooks` | List notebooks by project, status or type |
+| `StartNotebookRun` | Run a notebook |
+| `GetNotebookRun` | Get a notebook run |
+| `StopNotebookRun` | Stop a notebook run |
+| `ListNotebookRuns` | List notebook runs by project, notebook, status or schedule |
+| `StartNotebookExport` | Export a notebook as PDF or IPYNB |
+| `GetNotebookExport` | Get a notebook export |
+| `StartNotebookImport` | Import a notebook from S3 |
+| `StartNotebookSync` | Sync a notebook from S3 or Git |
+| `GetJobRun` | Get a job run |
+| `ListJobRuns` | List a job's runs |
 <!-- floci:actions:end -->
 
 Tagging rides the shared `/tags/{resourceArn}` routes, so `ListTagsForResource`,
@@ -152,6 +177,21 @@ Grants record access and change no AWS permissions. `CancelSubscription`, and `R
 without `retainPermissions`, mark the subscription's grant assets `REVOKED`. A grant's overall
 status follows its assets' statuses as `UpdateSubscriptionGrantStatus` sets them.
 
+A group profile is found by its id or its group name. `SearchGroupProfiles` with
+`IAM_ROLE_SESSION_GROUP` finds the profiles created with a `rolePrincipalArn`, and the SSO group
+types find the others. `SearchUserProfiles` searches the profiles `CreateUserProfile` stored.
+`DATAZONE_USER` matches every profile. `DATAZONE_IAM_USER` narrows that to IAM profiles, and
+`SSO_USER` or `DATAZONE_SSO_USER` to SSO ones. `GetIamPortalLoginUrl` creates or reuses a user profile for the account root.
+Its URL points at the domain's portal and logs nobody in. `PutDataExportConfiguration` records
+the setting as `COMPLETED` and exports nothing. Floci raises no notifications, so
+`ListNotifications` has none to list.
+
+Every notebook operation that starts work finishes at once and executes nothing. A run is
+`SUCCEEDED` and copies its notebook's parameters when the request has none. An export is
+`SUCCEEDED`, and no file exists at the S3 URI it reports. An import creates an `ACTIVE` notebook.
+A sync records `gitMetadata` on the named notebook, or on a new one. Floci runs no jobs, so
+`ListJobRuns` is always empty.
+
 ## Not emulated
 
 - Metadata predictions; `AcceptPredictions` and `RejectPredictions` change nothing
@@ -186,6 +226,13 @@ that the principal already holds an approved subscription to. A request that is 
 `PENDING`, or a subscription that is no longer `APPROVED`, returns `ConflictException` to any
 change. Subscription target names are unique per environment, and
 `DeleteSubscriptionTarget` returns `ConflictException` while a grant uses the target.
+
+Group profiles are unique per group name, and a second `CreateGroupProfile` returns
+`ConflictException`. Each search needs its type member, as does `ListNotifications`.
+`GetDataExportConfiguration` and `DeleteDataExportConfiguration` answer
+`ResourceNotFoundException` for a domain with no configuration. Notebooks, exports and imports
+need an existing owning project. `StopNotebookRun` answers `ConflictException` because every run
+has already finished, and `GetJobRun` answers `ResourceNotFoundException`.
 
 ## Configuration
 
