@@ -114,6 +114,24 @@ and projects that hold them.
 | `DeleteSubscriptionGrant` | Delete a subscription grant |
 | `UpdateSubscriptionGrantStatus` | Set the status of one asset in a grant |
 | `ListSubscriptionGrants` | List subscription grants by environment, target, listing, subscription or project |
+| `CreateDataSource` | Create a data source in a project, on an environment or a connection |
+| `GetDataSource` | Get a data source |
+| `UpdateDataSource` | Change a data source's name, settings, schedule, forms or configuration |
+| `DeleteDataSource` | Delete a data source with its runs |
+| `ListDataSources` | List a project's data sources |
+| `StartDataSourceRun` | Run a data source; the run succeeds at once and imports no assets |
+| `GetDataSourceRun` | Get a data source run |
+| `ListDataSourceRuns` | List a data source's runs, newest first |
+| `ListDataSourceRunActivities` | List a run's asset activities, always empty |
+| `CreateConnection` | Create a domain or project connection |
+| `GetConnection` | Get a connection |
+| `UpdateConnection` | Change a connection's description, configurations, location or properties |
+| `DeleteConnection` | Delete a connection no data source uses |
+| `ListConnections` | List connections by name, environment, project, type or scope |
+| `StartMetadataGenerationRun` | Start a metadata generation run on an asset |
+| `GetMetadataGenerationRun` | Get a metadata generation run with its per-type status |
+| `ListMetadataGenerationRuns` | List metadata generation runs |
+| `CancelMetadataGenerationRun` | Cancel a metadata generation run that has not finished |
 <!-- floci:actions:end -->
 
 Tagging rides the shared `/tags/{resourceArn}` routes, so `ListTagsForResource`,
@@ -152,10 +170,19 @@ Grants record access and change no AWS permissions. `CancelSubscription`, and `R
 without `retainPermissions`, mark the subscription's grant assets `REVOKED`. A grant's overall
 status follows its assets' statuses as `UpdateSubscriptionGrantStatus` sets them.
 
+A data source is `READY` as soon as `CreateDataSource` returns. Its configuration reports the
+account and region of its environment, or of its connection when it has no environment.
+`StartDataSourceRun` imports no assets and returns a run that is already `SUCCESS`. The data source's `lastRunStatus` follows its latest run. Each connection takes its type
+from the `props` member given, or from the Glue connection type for `glueProperties`. Created on
+an environment, it belongs to that environment's project with `PROJECT` scope; without one it has
+`DOMAIN` scope. Redshift connections report a JDBC URL built from the given host and database. A
+metadata generation run is `SUCCEEDED` when it returns and generates no predictions.
+
 ## Not emulated
 
 - Metadata predictions; `AcceptPredictions` and `RejectPredictions` change nothing
-- Data sources and their runs, connections and lineage
+- Lineage
+- Connection credentials; `GetConnection` with `withSecret` returns none
 - Project profiles and rules
 
 ## AWS-compatible failures
@@ -186,6 +213,14 @@ that the principal already holds an approved subscription to. A request that is 
 `PENDING`, or a subscription that is no longer `APPROVED`, returns `ConflictException` to any
 change. Subscription target names are unique per environment, and
 `DeleteSubscriptionTarget` returns `ConflictException` while a grant uses the target.
+
+Data source names are unique per project. Connection names are unique per project, or per domain
+for domain connections. A duplicate of either returns `ConflictException`. `ListDataSources`
+needs `projectIdentifier`, and deleting a connection that a data source still uses returns
+`ConflictException`. An unknown asset in `StartMetadataGenerationRun` gives
+`ResourceNotFoundException`, and leaving out both `types` and `type` gives `ValidationException`.
+Because every run has finished by the time it is read, `CancelMetadataGenerationRun` always
+answers `ConflictException`.
 
 ## Configuration
 
