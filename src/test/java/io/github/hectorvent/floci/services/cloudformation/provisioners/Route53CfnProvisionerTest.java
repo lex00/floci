@@ -6,6 +6,8 @@ import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.services.cloudformation.CloudFormationTemplateEngine;
 import io.github.hectorvent.floci.services.cloudformation.model.StackResource;
 import io.github.hectorvent.floci.services.route53.Route53Service;
+import io.github.hectorvent.floci.services.route53.model.HealthCheck;
+import io.github.hectorvent.floci.services.route53.model.HealthCheckConfig;
 import io.github.hectorvent.floci.services.route53.model.HostedZone;
 import io.github.hectorvent.floci.services.route53.model.ResourceRecord;
 import io.github.hectorvent.floci.services.route53.model.ResourceRecordSet;
@@ -698,6 +700,155 @@ class Route53CfnProvisionerTest {
         new Route53CfnProvisioner(service).delete("AWS::Route53::RecordSet", "www.example.com", "us-east-1");
 
         verifyNoInteractions(service);
+    }
+
+    @Test
+    void recordSetCarriesItsRoutingPolicy() {
+        Route53Service service = mock(Route53Service.class);
+        JsonNode props = new ObjectMapper().createObjectNode()
+                .put("HostedZoneId", "Z1")
+                .put("Name", "www.example.test.")
+                .put("Type", "CNAME")
+                .put("TTL", "60")
+                .put("SetIdentifier", "aws")
+                .put("Region", "us-east-1")
+                .put("Failover", "PRIMARY")
+                .put("Weight", "10")
+                .put("HealthCheckId", "hc-1");
+        StackResource resource = new StackResource();
+        resource.setLogicalId("Record");
+        resource.setResourceType("AWS::Route53::RecordSet");
+
+        new Route53CfnProvisioner(service).provision(resource, props,
+                new ProvisionContext(recordEngine(), "us-east-1", "000000000000", "dns-stack"));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Map<String, Object>>> captor = ArgumentCaptor.forClass(List.class);
+        verify(service).changeResourceRecordSets(eq("Z1"), captor.capture(), any());
+        ResourceRecordSet rrs = (ResourceRecordSet) captor.getValue().get(0).get("rrs");
+        assertEquals("us-east-1", rrs.getRegion());
+        assertEquals("PRIMARY", rrs.getFailover());
+        assertEquals(Long.valueOf(10), rrs.getWeight());
+        assertEquals("hc-1", rrs.getHealthCheckId());
+    }
+
+    @Test
+    void recordSetWithANonNumericWeightIsRejected() {
+        assertRecordSetRejected("{\"HostedZoneId\":\"Z1\",\"Name\":\"a.example.com\",\"Type\":\"A\","
+                + "\"SetIdentifier\":\"a\",\"Weight\":\"heavy\"}");
+    }
+
+    @Test
+    void healthCheckIsCreatedWithItsConfigTagsAndExactAttributes() throws Exception {
+        Route53Service service = mock(Route53Service.class);
+        when(service.createHealthCheck(any(), any(), any()))
+                .thenAnswer(inv -> new HealthCheck("hc-1", inv.getArgument(0), inv.getArgument(1), inv.getArgument(2)));
+        JsonNode props = new ObjectMapper().readTree("""
+                {"HealthCheckConfig": {"Type": "HTTPS", "FullyQualifiedDomainName": "app.example.net",
+                  "ResourcePath": "/", "Port": 443, "RequestInterval": 10, "FailureThreshold": 2},
+                 "HealthCheckTags": [{"Key": "team", "Value": "web"}]}""");
+        StackResource resource = new StackResource();
+        resource.setLogicalId("Check");
+        resource.setResourceType("AWS::Route53::HealthCheck");
+
+        new Route53CfnProvisioner(service).provision(resource, props, healthCheckContext(null));
+
+        assertEquals("hc-1", resource.getPhysicalId());
+        assertEquals(Map.of("HealthCheckId", "hc-1"), resource.getAttributes());
+        ArgumentCaptor<HealthCheckConfig> config = ArgumentCaptor.forClass(HealthCheckConfig.class);
+        verify(service).createHealthCheck(argThat(ref -> ref.startsWith("dns-stack/Check/")), config.capture(), any());
+        assertEquals("HTTPS", config.getValue().getType());
+        assertEquals("app.example.net", config.getValue().getFullyQualifiedDomainName());
+        assertEquals("/", config.getValue().getResourcePath());
+        assertEquals(Integer.valueOf(443), config.getValue().getPort());
+        assertEquals(Integer.valueOf(10), config.getValue().getRequestInterval());
+        assertEquals(Integer.valueOf(2), config.getValue().getFailureThreshold());
+        verify(service).changeTagsForResource("healthcheck", "hc-1",
+                List.of(Map.of("Key", "team", "Value", "web")), List.of());
+    }
+
+    @Test
+    void healthCheckUpdateKeepsTheCheckAndDropsRemovedTags() throws Exception {
+        Route53Service service = mock(Route53Service.class);
+        HealthCheckConfig priorConfig = new HealthCheckConfig();
+        priorConfig.setType("HTTP");
+        HealthCheck prior = new HealthCheck("hc-1", "ref", priorConfig, "");
+        when(service.getHealthCheck("hc-1")).thenReturn(prior);
+        when(service.updateHealthCheck(eq("hc-1"), any())).thenReturn(prior);
+        when(service.listTagsForResource("healthcheck", "hc-1")).thenReturn(Map.of("old", "x"));
+        JsonNode props = new ObjectMapper().readTree("""
+                {"HealthCheckConfig": {"Type": "HTTP", "IPAddress": "10.0.0.5", "Port": 8080}}""");
+        StackResource resource = new StackResource();
+        resource.setLogicalId("Check");
+        resource.setResourceType("AWS::Route53::HealthCheck");
+        resource.setPhysicalId("hc-1");
+
+        new Route53CfnProvisioner(service).provision(resource, props, healthCheckContext("hc-1"));
+
+        assertEquals("hc-1", resource.getPhysicalId());
+        verify(service, never()).createHealthCheck(any(), any(), any());
+        verify(service).updateHealthCheck(eq("hc-1"), argThat(cfg -> "10.0.0.5".equals(cfg.getIpAddress())
+                && Integer.valueOf(8080).equals(cfg.getPort())));
+        verify(service).changeTagsForResource("healthcheck", "hc-1", List.of(), List.of("old"));
+    }
+
+    @Test
+    void healthCheckTypeChangeReplacesTheCheck() throws Exception {
+        Route53Service service = mock(Route53Service.class);
+        HealthCheckConfig priorConfig = new HealthCheckConfig();
+        priorConfig.setType("HTTP");
+        when(service.getHealthCheck("hc-1")).thenReturn(new HealthCheck("hc-1", "ref", priorConfig, ""));
+        when(service.createHealthCheck(any(), any(), any()))
+                .thenAnswer(inv -> new HealthCheck("hc-2", inv.getArgument(0), inv.getArgument(1), inv.getArgument(2)));
+        JsonNode props = new ObjectMapper().readTree("""
+                {"HealthCheckConfig": {"Type": "TCP", "IPAddress": "10.0.0.5", "Port": 22}}""");
+        StackResource resource = new StackResource();
+        resource.setLogicalId("Check");
+        resource.setResourceType("AWS::Route53::HealthCheck");
+        resource.setPhysicalId("hc-1");
+
+        new Route53CfnProvisioner(service).provision(resource, props, healthCheckContext("hc-1"));
+
+        assertEquals("hc-2", resource.getPhysicalId());
+        assertEquals("hc-2", resource.getAttributes().get("HealthCheckId"));
+        verify(service).deleteHealthCheck("hc-1");
+        verify(service, never()).updateHealthCheck(any(), any());
+    }
+
+    @Test
+    void healthCheckWithoutAConfigTypeIsRejected() throws Exception {
+        Route53Service service = mock(Route53Service.class);
+        JsonNode props = new ObjectMapper().readTree("{\"HealthCheckConfig\": {\"Port\": 80}}");
+        StackResource resource = new StackResource();
+        resource.setLogicalId("Check");
+        resource.setResourceType("AWS::Route53::HealthCheck");
+
+        assertThrows(AwsException.class, () -> new Route53CfnProvisioner(service)
+                .provision(resource, props, healthCheckContext(null)));
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void deletingAHealthCheckAlreadyGoneIsTolerated() {
+        Route53Service service = mock(Route53Service.class);
+        org.mockito.Mockito.doThrow(new AwsException("NoSuchHealthCheck", "gone", 404))
+                .when(service).deleteHealthCheck("hc-1");
+        StackResource resource = new StackResource();
+        resource.setLogicalId("Check");
+        resource.setResourceType("AWS::Route53::HealthCheck");
+        resource.setPhysicalId("hc-1");
+
+        new Route53CfnProvisioner(service).delete(resource, "us-east-1");
+
+        verify(service).deleteHealthCheck("hc-1");
+    }
+
+    private static ProvisionContext healthCheckContext(String priorPhysicalId) {
+        CloudFormationTemplateEngine engine = recordEngine();
+        when(engine.resolveNode(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        return priorPhysicalId == null
+                ? new ProvisionContext(engine, "us-east-1", "000000000000", "dns-stack")
+                : new ProvisionContext(engine, "us-east-1", "000000000000", "dns-stack", priorPhysicalId);
     }
 
     private static CloudFormationTemplateEngine recordEngine() {

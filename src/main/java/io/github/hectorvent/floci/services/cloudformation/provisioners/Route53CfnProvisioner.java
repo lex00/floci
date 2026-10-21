@@ -5,6 +5,8 @@ import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.services.cloudformation.model.StackResource;
 import io.github.hectorvent.floci.services.route53.Route53Service;
 import io.github.hectorvent.floci.services.route53.model.AliasTarget;
+import io.github.hectorvent.floci.services.route53.model.HealthCheck;
+import io.github.hectorvent.floci.services.route53.model.HealthCheckConfig;
 import io.github.hectorvent.floci.services.route53.model.HostedZone;
 import io.github.hectorvent.floci.services.route53.model.ResourceRecord;
 import io.github.hectorvent.floci.services.route53.model.ResourceRecordSet;
@@ -15,13 +17,16 @@ import org.jboss.logging.Logger;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 /**
- * Provisions {@code AWS::Route53::HostedZone} and {@code AWS::Route53::RecordSet}.
+ * Provisions {@code AWS::Route53::HostedZone}, {@code AWS::Route53::RecordSet} and
+ * {@code AWS::Route53::HealthCheck}.
  *
  * <p>A record set is written into its hosted zone through {@code ChangeResourceRecordSets}. On stack
  * create, and on an update that changes the record's identity (zone, Name, Type or SetIdentifier), the
@@ -38,6 +43,7 @@ import java.util.Set;
 public class Route53CfnProvisioner implements CfnResourceProvisioner {
     static final String HOSTED_ZONE = "AWS::Route53::HostedZone";
     static final String RECORD_SET = "AWS::Route53::RecordSet";
+    static final String HEALTH_CHECK = "AWS::Route53::HealthCheck";
 
     // Create-time values a record's delete needs to build a matching DELETE change; kept off the
     // published attributes by the __Floci prefix, as the other provisioners do.
@@ -56,7 +62,7 @@ public class Route53CfnProvisioner implements CfnResourceProvisioner {
 
     @Override
     public Set<String> resourceTypes() {
-        return Set.of(HOSTED_ZONE, RECORD_SET);
+        return Set.of(HOSTED_ZONE, RECORD_SET, HEALTH_CHECK);
     }
 
     @Override
@@ -64,6 +70,7 @@ public class Route53CfnProvisioner implements CfnResourceProvisioner {
         switch (resource.getResourceType()) {
             case "AWS::Route53::HostedZone" -> provisionHostedZone(resource, props, ctx);
             case "AWS::Route53::RecordSet" -> provisionRecordSet(resource, props, ctx);
+            case "AWS::Route53::HealthCheck" -> provisionHealthCheck(resource, props, ctx);
             default -> throw new IllegalStateException(
                     "Route53CfnProvisioner received an unsupported type: " + resource.getResourceType());
         }
@@ -103,6 +110,18 @@ public class Route53CfnProvisioner implements CfnResourceProvisioner {
         rrs.setSetIdentifier(setIdentifier);
         rrs.setRecords(parseResourceRecords(props, ctx));
         rrs.setAliasTarget(parseAliasTarget(props, ctx));
+        rrs.setRegion(ctx.resolveOrDefault(props, "Region", null));
+        rrs.setFailover(ctx.resolveOrDefault(props, "Failover", null));
+        rrs.setHealthCheckId(ctx.resolveOrDefault(props, "HealthCheckId", null));
+        String weight = ctx.resolveOrDefault(props, "Weight", null);
+        if (weight != null) {
+            try {
+                rrs.setWeight(Long.parseLong(weight.trim()));
+            } catch (NumberFormatException e) {
+                throw new AwsException("ValidationError",
+                        "AWS::Route53::RecordSet Weight must be an integer: " + weight, 400);
+            }
+        }
 
         // The record's identity is Name + Type + SetIdentifier within a zone. Re-applying the identity
         // this resource wrote last time is an UPSERT, which replaces whatever record holds that
@@ -230,6 +249,88 @@ public class Route53CfnProvisioner implements CfnResourceProvisioner {
         return target;
     }
 
+    /**
+     * Creates the health check, or updates it in place on a stack update. {@code Type} cannot change
+     * on a health check, so an update that changes it creates a new check and deletes the prior one.
+     * {@code Ref} and {@code Fn::GetAtt HealthCheckId} are the health check id.
+     */
+    private void provisionHealthCheck(StackResource resource, JsonNode props, ProvisionContext ctx) {
+        JsonNode resolved = ctx.engine().resolveNode(props);
+        JsonNode configNode = resolved != null ? resolved.path("HealthCheckConfig") : null;
+        if (configNode == null || !configNode.isObject()) {
+            throw new AwsException("ValidationError",
+                    "AWS::Route53::HealthCheck requires HealthCheckConfig.", 400);
+        }
+        HealthCheckConfig config = parseHealthCheckConfig(configNode);
+
+        String priorId = ctx.isUpdate() ? ctx.priorPhysicalId() : null;
+        HealthCheck prior = priorId != null ? findHealthCheck(priorId) : null;
+        String id;
+        if (prior != null && Objects.equals(prior.getConfig().getType(), config.getType())) {
+            id = route53Service.updateHealthCheck(priorId, config).getId();
+        } else {
+            String callerReference = ctx.stackName() + "/" + resource.getLogicalId() + "/" + UUID.randomUUID();
+            id = route53Service.createHealthCheck(callerReference, config, configNode.toString()).getId();
+            if (prior != null) {
+                route53Service.deleteHealthCheck(priorId);
+            }
+        }
+
+        resource.setPhysicalId(id);
+        resource.getAttributes().put("HealthCheckId", id);
+
+        List<Map<String, String>> tags = parseTags(resolved.path("HealthCheckTags"));
+        Set<String> keep = new HashSet<>();
+        tags.forEach(tag -> keep.add(tag.get("Key")));
+        List<String> remove = route53Service.listTagsForResource("healthcheck", id).keySet().stream()
+                .filter(key -> !keep.contains(key))
+                .toList();
+        if (!tags.isEmpty() || !remove.isEmpty()) {
+            route53Service.changeTagsForResource("healthcheck", id, tags, remove);
+        }
+    }
+
+    private HealthCheck findHealthCheck(String id) {
+        try {
+            return route53Service.getHealthCheck(id);
+        } catch (AwsException e) {
+            if (!"NoSuchHealthCheck".equals(e.getErrorCode())) {
+                throw e;
+            }
+            return null;
+        }
+    }
+
+    private static HealthCheckConfig parseHealthCheckConfig(JsonNode node) {
+        String type = node.path("Type").asText(null);
+        if (type == null || type.isBlank()) {
+            throw new AwsException("ValidationError",
+                    "AWS::Route53::HealthCheck HealthCheckConfig requires Type.", 400);
+        }
+        HealthCheckConfig config = new HealthCheckConfig();
+        config.setType(type);
+        config.setIpAddress(node.path("IPAddress").asText(null));
+        config.setPort(integerMember(node, "Port"));
+        config.setResourcePath(node.path("ResourcePath").asText(null));
+        config.setFullyQualifiedDomainName(node.path("FullyQualifiedDomainName").asText(null));
+        config.setRequestInterval(integerMember(node, "RequestInterval"));
+        config.setFailureThreshold(integerMember(node, "FailureThreshold"));
+        return config;
+    }
+
+    private static Integer integerMember(JsonNode node, String name) {
+        JsonNode value = node.get(name);
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(value.asText().trim());
+        } catch (NumberFormatException e) {
+            throw new AwsException("ValidationError",
+                    "AWS::Route53::HealthCheck " + name + " must be an integer: " + value.asText(), 400);
+        }
+    }
+
     private void provisionHostedZone(StackResource resource, JsonNode props, ProvisionContext ctx) {
         String name = ctx.resolveOptional(props, "Name");
         if (name == null || name.isBlank()) {
@@ -344,6 +445,8 @@ public class Route53CfnProvisioner implements CfnResourceProvisioner {
     public void delete(String resourceType, String physicalId, String region) {
         switch (resourceType) {
             case "AWS::Route53::HostedZone" -> route53Service.deleteHostedZone(physicalId);
+            case "AWS::Route53::HealthCheck" -> CfnDeletes.safeDelete("Route53 health check", physicalId,
+                    () -> route53Service.deleteHealthCheck(physicalId), "NoSuchHealthCheck");
             // The record's zone and type live on the StackResource, not the physical id, so the
             // id-only path has nothing to match a DELETE change against; delete(resource, region)
             // is the real removal.
