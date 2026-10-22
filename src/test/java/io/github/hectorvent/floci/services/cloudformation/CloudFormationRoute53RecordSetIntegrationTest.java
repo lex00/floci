@@ -2,6 +2,7 @@ package io.github.hectorvent.floci.services.cloudformation;
 
 import io.github.hectorvent.floci.testing.RestAssuredJsonUtils;
 import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.response.Response;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -11,6 +12,7 @@ import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -372,6 +374,128 @@ class CloudFormationRoute53RecordSetIntegrationTest {
             .header("Authorization", ROUTE53_AUTH)
         .when().get("/2013-04-01/healthcheck/" + checkId)
         .then().statusCode(404);
+    }
+
+    @Test
+    void requestIntervalChangeReplacesTheCheckAndDeletesTheOldOneOnceTheUpdateCommits() {
+        String stackName = "r53-hc-replace-" + Long.toString(System.nanoTime(), 36);
+        createStack(stackName, healthCheckTemplate(30, false, false));
+        assertEquals("CREATE_COMPLETE", CfnStackWaits.awaitTerminal(stackName).status());
+        String oldId = physicalId(stackName, "Check");
+        try {
+            updateStack(stackName, healthCheckTemplate(10, false, false));
+            assertEquals("UPDATE_COMPLETE", CfnStackWaits.awaitTerminal(stackName).status());
+
+            String newId = physicalId(stackName, "Check");
+            assertNotEquals(oldId, newId);
+            assertTrue(healthCheck(newId).contains("<RequestInterval>10</RequestInterval>"));
+            healthCheckRequest(oldId).then().statusCode(404);
+        } finally {
+            deleteStack(stackName);
+            CfnStackWaits.awaitStackDeleted(stackName);
+        }
+    }
+
+    @Test
+    void retainedCheckOutlivesItsReplacement() {
+        String stackName = "r53-hc-retain-" + Long.toString(System.nanoTime(), 36);
+        createStack(stackName, healthCheckTemplate(30, true, false));
+        assertEquals("CREATE_COMPLETE", CfnStackWaits.awaitTerminal(stackName).status());
+        String oldId = physicalId(stackName, "Check");
+        try {
+            updateStack(stackName, healthCheckTemplate(10, true, false));
+            assertEquals("UPDATE_COMPLETE", CfnStackWaits.awaitTerminal(stackName).status());
+
+            assertNotEquals(oldId, physicalId(stackName, "Check"));
+            assertTrue(healthCheck(oldId).contains("<RequestInterval>30</RequestInterval>"));
+        } finally {
+            deleteStack(stackName);
+            CfnStackWaits.awaitStackDeleted(stackName);
+            given().header("Authorization", ROUTE53_AUTH)
+                .when().delete("/2013-04-01/healthcheck/" + oldId);
+        }
+    }
+
+    @Test
+    void failedUpdateRollsBackToTheOldCheck() {
+        String stackName = "r53-hc-rollback-" + Long.toString(System.nanoTime(), 36);
+        createStack(stackName, healthCheckTemplate(30, false, false));
+        assertEquals("CREATE_COMPLETE", CfnStackWaits.awaitTerminal(stackName).status());
+        String oldId = physicalId(stackName, "Check");
+        try {
+            updateStack(stackName, healthCheckTemplate(10, false, true));
+            assertEquals("UPDATE_ROLLBACK_COMPLETE", CfnStackWaits.awaitTerminal(stackName).status());
+
+            assertEquals(oldId, physicalId(stackName, "Check"));
+            assertTrue(healthCheck(oldId).contains("<RequestInterval>30</RequestInterval>"));
+            String checks = given().header("Authorization", ROUTE53_AUTH)
+                .when().get("/2013-04-01/healthcheck")
+                .then().statusCode(200)
+                .extract().asString();
+            assertEquals(1, checks.split("<CallerReference>" + stackName + "/Check/", -1).length - 1, checks);
+        } finally {
+            deleteStack(stackName);
+            CfnStackWaits.awaitStackDeleted(stackName);
+        }
+    }
+
+    /**
+     * One TCP health check; {@code failing} adds a record set in a zone that does not exist, created
+     * after the check, so the update fails once the check has been replaced.
+     */
+    private static String healthCheckTemplate(int requestInterval, boolean retain, boolean failing) {
+        String policy = retain ? ", \"UpdateReplacePolicy\": \"Retain\"" : "";
+        String broken = !failing ? "" : """
+                ,
+                "Broken": {
+                  "Type": "AWS::Route53::RecordSet",
+                  "DependsOn": "Check",
+                  "Properties": {"HostedZoneId": "ZNOSUCHZONE00", "Name": "x.example.test.", "Type": "A",
+                                 "TTL": "60", "ResourceRecords": ["10.0.0.1"]}
+                }""";
+        return """
+                {
+                  "Resources": {
+                    "Check": {
+                      "Type": "AWS::Route53::HealthCheck"%s,
+                      "Properties": {
+                        "HealthCheckConfig": {"Type": "TCP", "IPAddress": "10.0.0.5", "Port": 22,
+                                              "RequestInterval": %d}
+                      }
+                    }%s
+                  }
+                }
+                """.formatted(policy, requestInterval, broken);
+    }
+
+    private void updateStack(String stackName, String template) {
+        given()
+            .contentType("application/x-www-form-urlencoded")
+            .header("Authorization", CFN_AUTH)
+            .formParam("Action", "UpdateStack")
+            .formParam("StackName", stackName)
+            .formParam("TemplateBody", template)
+        .when().post("/").then().statusCode(200);
+    }
+
+    private String physicalId(String stackName, String logicalId) {
+        return given()
+            .contentType("application/x-www-form-urlencoded")
+            .header("Authorization", CFN_AUTH)
+            .formParam("Action", "DescribeStackResource")
+            .formParam("StackName", stackName)
+            .formParam("LogicalResourceId", logicalId)
+        .when().post("/").then().statusCode(200)
+            .extract().xmlPath().getString("**.find { it.name() == 'PhysicalResourceId' }");
+    }
+
+    private Response healthCheckRequest(String id) {
+        return given().header("Authorization", ROUTE53_AUTH)
+            .when().get("/2013-04-01/healthcheck/" + id);
+    }
+
+    private String healthCheck(String id) {
+        return healthCheckRequest(id).then().statusCode(200).extract().asString();
     }
 
     private String listResourceRecordSets(String zoneId) {
