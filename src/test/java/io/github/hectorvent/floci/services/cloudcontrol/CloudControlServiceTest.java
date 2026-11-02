@@ -284,7 +284,7 @@ class CloudControlServiceTest {
                 mock(CfnResourceDispatcher.class), new ObjectMapper()));
 
         AwsException e = assertThrows(AwsException.class,
-                () -> service.listResources("us-east-1", "AWS::SQS::Queue"));
+                () -> service.listResources("us-east-1", "AWS::Logs::LogGroup"));
 
         assertEquals("UnsupportedActionException", e.getErrorCode());
         assertEquals(400, e.getHttpStatus());

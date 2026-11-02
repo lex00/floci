@@ -31,6 +31,12 @@ class CloudControlIntegrationTest {
             "AWS4-HMAC-SHA256 Credential=test/20260205/us-east-1/ec2/aws4_request";
     private static final String IAM_AUTH =
             "AWS4-HMAC-SHA256 Credential=test/20260227/us-east-1/iam/aws4_request";
+    private static final String SQS_AUTH =
+            "AWS4-HMAC-SHA256 Credential=test/20260227/us-east-1/sqs/aws4_request";
+    private static final String SNS_AUTH =
+            "AWS4-HMAC-SHA256 Credential=test/20260227/us-east-1/sns/aws4_request";
+    private static final String SSM_AUTH =
+            "AWS4-HMAC-SHA256 Credential=test/20260227/us-east-1/ssm/aws4_request";
     private static final String ACCOUNT_A_AUTH =
             "AWS4-HMAC-SHA256 Credential=111111111111/20260227/us-east-1/cloudcontrol/aws4_request";
     private static final String ACCOUNT_B_AUTH =
@@ -110,6 +116,49 @@ class CloudControlIntegrationTest {
         assertListed("AWS::EC2::SecurityGroup", groupId, "GroupName", "application/x-amz-json-1.0");
         assertListed("AWS::IAM::User", "cloudcontrol-user", "UserName");
         assertListed("AWS::IAM::Role", "CloudControlRole", "RoleName");
+    }
+
+    @Test
+    void listResourcesReturnsQueuesTopicsAndParametersWithTheirTags() throws JsonProcessingException {
+        String queueUrl = given()
+                .formParam("Action", "CreateQueue")
+                .formParam("QueueName", "cloudcontrol-queue")
+                .formParam("Tag.1.Key", "owner")
+                .formParam("Tag.1.Value", "cloudcontrol")
+                .header("Authorization", SQS_AUTH)
+                .when().post("/")
+                .then().statusCode(200)
+                .extract().xmlPath().getString("CreateQueueResponse.CreateQueueResult.QueueUrl");
+
+        String topicArn = given()
+                .formParam("Action", "CreateTopic")
+                .formParam("Name", "cloudcontrol-topic")
+                .formParam("Tags.member.1.Key", "owner")
+                .formParam("Tags.member.1.Value", "cloudcontrol")
+                .header("Authorization", SNS_AUTH)
+                .when().post("/")
+                .then().statusCode(200)
+                .extract().xmlPath().getString("CreateTopicResponse.CreateTopicResult.TopicArn");
+
+        given()
+                .config(config().encoderConfig(
+                        encoderConfig().encodeContentTypeAs("application/x-amz-json-1.1", TEXT)))
+                .contentType("application/x-amz-json-1.1")
+                .header("X-Amz-Target", "AmazonSSM.PutParameter")
+                .header("Authorization", SSM_AUTH)
+                .body("{\"Name\":\"/cloudcontrol/param\",\"Value\":\"v\",\"Type\":\"String\","
+                        + "\"Tags\":[{\"Key\":\"owner\",\"Value\":\"cloudcontrol\"}]}")
+                .when().post("/")
+                .then().statusCode(200);
+
+        assertListedWithTag("AWS::SQS::Queue", queueUrl, "owner", "cloudcontrol");
+        assertListed("AWS::SQS::Queue", queueUrl, "QueueName");
+        assertListedWithTag("AWS::SNS::Topic", topicArn, "owner", "cloudcontrol");
+        assertListed("AWS::SNS::Topic", topicArn, "TopicName");
+
+        JsonNode parameter = listedProperties("AWS::SSM::Parameter", "/cloudcontrol/param");
+        assertEquals("String", parameter.path("Type").asText());
+        assertEquals("cloudcontrol", parameter.path("Tags").path("owner").asText());
     }
 
     @Test
@@ -206,12 +255,10 @@ class CloudControlIntegrationTest {
 
     @Test
     void listResourcesRejectsUnsupportedTypesInsteadOfReturningEmpty() {
-        // AWS::SQS::Queue and AWS::Logs::LogGroup are real Cloud Control types that Floci backs
-        // through their own service APIs but does not enumerate on this read side. Returning an
-        // empty ResourceDescriptions for them was indistinguishable from "no queues exist".
+        // AWS::Logs::LogGroup is a real Cloud Control type that Floci backs through its own
+        // service API but does not enumerate on this read side. Returning an empty
+        // ResourceDescriptions for it was indistinguishable from "no log groups exist".
         String ct = "application/x-amz-json-1.0";
-        assertErrorCode(ct, "CloudApiService.ListResources",
-                "{\"TypeName\":\"AWS::SQS::Queue\"}", 400, "UnsupportedActionException");
         assertErrorCode(ct, "CloudApiService.ListResources",
                 "{\"TypeName\":\"AWS::Logs::LogGroup\"}", 400, "UnsupportedActionException");
 
@@ -416,6 +463,16 @@ class CloudControlIntegrationTest {
                         && tag.path("Key").isTextual()
                         && value.equals(tag.path("Value").asText())
                         && tag.path("Value").isTextual()));
+    }
+
+    private JsonNode listedProperties(String typeName, String identifier) throws JsonProcessingException {
+        JsonNode response = MAPPER.readTree(listResources(typeName, "application/x-amz-json-1.1"));
+        for (JsonNode candidate : response.path("ResourceDescriptions")) {
+            if (identifier.equals(candidate.path("Identifier").asText())) {
+                return MAPPER.readTree(candidate.path("Properties").asText());
+            }
+        }
+        throw new AssertionError(identifier + " is not listed under " + typeName);
     }
 
     private void assertListedWithAuth(String typeName, String identifier, String auth, String contentType) {

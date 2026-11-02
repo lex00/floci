@@ -29,6 +29,12 @@ import io.github.hectorvent.floci.services.iam.model.IamUser;
 import io.github.hectorvent.floci.services.iam.model.InstanceProfile;
 import io.github.hectorvent.floci.services.s3.S3Service;
 import io.github.hectorvent.floci.services.s3.model.Bucket;
+import io.github.hectorvent.floci.services.sns.SnsService;
+import io.github.hectorvent.floci.services.sns.model.Topic;
+import io.github.hectorvent.floci.services.sqs.SqsService;
+import io.github.hectorvent.floci.services.sqs.model.Queue;
+import io.github.hectorvent.floci.services.ssm.SsmService;
+import io.github.hectorvent.floci.services.ssm.model.Parameter;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -216,6 +222,15 @@ public class CloudControlService {
         return accountId + "|" + region + "|" + typeName + "|" + identifier;
     }
 
+
+    @Inject
+    jakarta.enterprise.inject.Instance<SqsService> sqsService;
+
+    @Inject
+    jakarta.enterprise.inject.Instance<SnsService> snsService;
+
+    @Inject
+    jakarta.enterprise.inject.Instance<SsmService> ssmService;
 
     @Inject
     public CloudControlService(S3Service s3Service, Ec2Service ec2Service,
@@ -656,6 +671,9 @@ public class CloudControlService {
             case "AWS::EC2::Instance" -> instances(region);
             case "AWS::EC2::LaunchTemplate" -> launchTemplates(region);
             case "AWS::IAM::InstanceProfile" -> instanceProfiles();
+            case "AWS::SQS::Queue" -> queues(region);
+            case "AWS::SNS::Topic" -> topics(region);
+            case "AWS::SSM::Parameter" -> parameters(region);
             default -> null;
         };
     }
@@ -731,6 +749,55 @@ public class CloudControlService {
             ObjectNode properties = mapper.createObjectNode();
             properties.put("BucketName", bucket.getName());
             resources.add(new ResourceDescription(bucket.getName(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    private List<ResourceDescription> queues(String region) {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (Queue queue : sqsService.get().listQueues(null, region)) {
+            ObjectNode properties = mapper.createObjectNode();
+            properties.put("QueueUrl", queue.getQueueUrl());
+            putIfPresent(properties, "QueueName", queue.getQueueName());
+            putIfPresent(properties, "Arn", queue.getAttributes().get("QueueArn"));
+            addTags(properties, queue.getTags());
+            resources.add(new ResourceDescription(queue.getQueueUrl(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    private List<ResourceDescription> topics(String region) {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (Topic topic : snsService.get().listTopics(region)) {
+            ObjectNode properties = mapper.createObjectNode();
+            properties.put("TopicArn", topic.getTopicArn());
+            putIfPresent(properties, "TopicName", topic.getName());
+            addTags(properties, topic.getTags());
+            resources.add(new ResourceDescription(topic.getTopicArn(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    /** The AWS::SSM::Parameter schema holds Tags as a map, unlike the Key and Value list of most types. */
+    private List<ResourceDescription> parameters(String region) {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (Parameter parameter : ssmService.get().describeParameters(region)) {
+            ObjectNode properties = mapper.createObjectNode();
+            properties.put("Name", parameter.getName());
+            putIfPresent(properties, "Type", parameter.getType());
+            if (!"SecureString".equals(parameter.getType())) {
+                putIfPresent(properties, "Value", parameter.getValue());
+            }
+            putIfPresent(properties, "Description", parameter.getDescription());
+            putIfPresent(properties, "Tier", parameter.getTier());
+            putIfPresent(properties, "DataType", parameter.getDataType());
+            putIfPresent(properties, "AllowedPattern", parameter.getAllowedPattern());
+            Map<String, String> tags = parameter.getTags();
+            if (tags != null && !tags.isEmpty()) {
+                ObjectNode tagMap = properties.putObject("Tags");
+                tags.forEach((key, value) -> tagMap.put(key, value == null ? "" : value));
+            }
+            resources.add(new ResourceDescription(parameter.getName(), propertiesString(properties)));
         }
         return resources;
     }
@@ -879,6 +946,17 @@ public class CloudControlService {
                     .put("Key", tag.getKey())
                     .put("Value", tag.getValue() == null ? "" : tag.getValue());
         }
+    }
+
+    /** Tags kept as a map, in the Key and Value list Cloud Control reports. */
+    private void addTags(ObjectNode properties, Map<String, String> tags) {
+        if (tags == null || tags.isEmpty()) {
+            return;
+        }
+        ArrayNode tagArray = properties.putArray("Tags");
+        tags.forEach((key, value) -> tagArray.addObject()
+                .put("Key", key)
+                .put("Value", value == null ? "" : value));
     }
 
     public record ResourceDescription(String identifier, String properties) {}
