@@ -11,17 +11,29 @@ import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RequestScopes;
 import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
+import io.github.hectorvent.floci.services.apigateway.ApiGatewayService;
+import io.github.hectorvent.floci.services.apigateway.model.ApiKey;
+import io.github.hectorvent.floci.services.apigateway.model.RestApi;
+import io.github.hectorvent.floci.services.apigateway.model.UsagePlan;
+import io.github.hectorvent.floci.services.apigatewayv2.ApiGatewayV2Service;
+import io.github.hectorvent.floci.services.apigatewayv2.model.Api;
+import io.github.hectorvent.floci.services.batch.BatchService;
 import io.github.hectorvent.floci.services.cloudformation.model.StackResource;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.CfnResourceDispatcher;
+import io.github.hectorvent.floci.services.cloudwatch.logs.CloudWatchLogsService;
+import io.github.hectorvent.floci.services.cloudwatch.logs.model.LogGroup;
 import io.github.hectorvent.floci.services.ec2.Ec2Service;
 import io.github.hectorvent.floci.services.ec2.model.GroupIdentifier;
 import io.github.hectorvent.floci.services.ec2.model.Instance;
+import io.github.hectorvent.floci.services.ec2.model.InternetGateway;
 import io.github.hectorvent.floci.services.ec2.model.LaunchTemplate;
 import io.github.hectorvent.floci.services.ec2.model.Reservation;
 import io.github.hectorvent.floci.services.ec2.model.SecurityGroup;
 import io.github.hectorvent.floci.services.ec2.model.Subnet;
 import io.github.hectorvent.floci.services.ec2.model.Tag;
 import io.github.hectorvent.floci.services.ec2.model.Vpc;
+import io.github.hectorvent.floci.services.ecs.EcsService;
+import io.github.hectorvent.floci.services.ecs.model.TaskDefinition;
 import io.github.hectorvent.floci.services.iam.IamService;
 import io.github.hectorvent.floci.services.iam.model.IamPolicy;
 import io.github.hectorvent.floci.services.iam.model.IamRole;
@@ -29,6 +41,8 @@ import io.github.hectorvent.floci.services.iam.model.IamUser;
 import io.github.hectorvent.floci.services.iam.model.InstanceProfile;
 import io.github.hectorvent.floci.services.s3.S3Service;
 import io.github.hectorvent.floci.services.s3.model.Bucket;
+import io.github.hectorvent.floci.services.secretsmanager.SecretsManagerService;
+import io.github.hectorvent.floci.services.secretsmanager.model.Secret;
 import io.github.hectorvent.floci.services.sns.SnsService;
 import io.github.hectorvent.floci.services.sns.model.Topic;
 import io.github.hectorvent.floci.services.sqs.SqsService;
@@ -44,6 +58,7 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -231,6 +246,24 @@ public class CloudControlService {
 
     @Inject
     jakarta.enterprise.inject.Instance<SsmService> ssmService;
+
+    @Inject
+    jakarta.enterprise.inject.Instance<ApiGatewayService> apiGatewayService;
+
+    @Inject
+    jakarta.enterprise.inject.Instance<ApiGatewayV2Service> apiGatewayV2Service;
+
+    @Inject
+    jakarta.enterprise.inject.Instance<BatchService> batchService;
+
+    @Inject
+    jakarta.enterprise.inject.Instance<CloudWatchLogsService> logsService;
+
+    @Inject
+    jakarta.enterprise.inject.Instance<EcsService> ecsService;
+
+    @Inject
+    jakarta.enterprise.inject.Instance<SecretsManagerService> secretsManagerService;
 
     @Inject
     public CloudControlService(S3Service s3Service, Ec2Service ec2Service,
@@ -674,6 +707,15 @@ public class CloudControlService {
             case "AWS::SQS::Queue" -> queues(region);
             case "AWS::SNS::Topic" -> topics(region);
             case "AWS::SSM::Parameter" -> parameters(region);
+            case "AWS::ApiGateway::RestApi" -> restApis(region);
+            case "AWS::ApiGateway::ApiKey" -> apiKeys(region);
+            case "AWS::ApiGateway::UsagePlan" -> usagePlans(region);
+            case "AWS::ApiGatewayV2::Api" -> httpApis(region);
+            case "AWS::Batch::JobQueue" -> jobQueues(region);
+            case "AWS::Logs::LogGroup" -> logGroups(region);
+            case "AWS::ECS::TaskDefinition" -> taskDefinitions(region);
+            case "AWS::EC2::InternetGateway" -> internetGateways(region);
+            case "AWS::SecretsManager::Secret" -> secrets(region);
             default -> null;
         };
     }
@@ -792,12 +834,168 @@ public class CloudControlService {
             putIfPresent(properties, "Tier", parameter.getTier());
             putIfPresent(properties, "DataType", parameter.getDataType());
             putIfPresent(properties, "AllowedPattern", parameter.getAllowedPattern());
-            Map<String, String> tags = parameter.getTags();
-            if (tags != null && !tags.isEmpty()) {
-                ObjectNode tagMap = properties.putObject("Tags");
-                tags.forEach((key, value) -> tagMap.put(key, value == null ? "" : value));
-            }
+            putTagMap(properties, parameter.getTags());
             resources.add(new ResourceDescription(parameter.getName(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    private List<ResourceDescription> restApis(String region) {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (RestApi api : apiGatewayService.get().getRestApis(region)) {
+            ObjectNode properties = mapper.createObjectNode();
+            properties.put("RestApiId", api.getId());
+            putIfPresent(properties, "Name", api.getName());
+            putIfPresent(properties, "Description", api.getDescription());
+            putIfPresent(properties, "RootResourceId", api.getRootResourceId());
+            addTags(properties, api.getTags());
+            resources.add(new ResourceDescription(api.getId(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    private List<ResourceDescription> apiKeys(String region) {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (ApiKey key : apiGatewayService.get().getApiKeys(region)) {
+            ObjectNode properties = mapper.createObjectNode();
+            properties.put("APIKeyId", key.getId());
+            putIfPresent(properties, "Name", key.getName());
+            putIfPresent(properties, "Description", key.getDescription());
+            putIfPresent(properties, "CustomerId", key.getCustomerId());
+            addTags(properties, key.getTags());
+            resources.add(new ResourceDescription(key.getId(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    private List<ResourceDescription> usagePlans(String region) {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (UsagePlan plan : apiGatewayService.get().getUsagePlans(region)) {
+            ObjectNode properties = mapper.createObjectNode();
+            properties.put("Id", plan.getId());
+            putIfPresent(properties, "UsagePlanName", plan.getName());
+            putIfPresent(properties, "Description", plan.getDescription());
+            addTags(properties, plan.getTags());
+            resources.add(new ResourceDescription(plan.getId(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    /** The AWS::ApiGatewayV2::Api schema holds Tags as a map. */
+    private List<ResourceDescription> httpApis(String region) {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (Api api : apiGatewayV2Service.get().getApis(region)) {
+            ObjectNode properties = mapper.createObjectNode();
+            properties.put("ApiId", api.getApiId());
+            putIfPresent(properties, "Name", api.getName());
+            putIfPresent(properties, "ProtocolType", api.getProtocolType());
+            putIfPresent(properties, "ApiEndpoint", api.getApiEndpoint());
+            putIfPresent(properties, "Description", api.getDescription());
+            putTagMap(properties, api.getTags());
+            resources.add(new ResourceDescription(api.getApiId(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    /** Batch keeps one job queue store for every region, so the queue's ARN names its region. */
+    private List<ResourceDescription> jobQueues(String region) {
+        List<ResourceDescription> resources = new ArrayList<>();
+        String nextToken = null;
+        do {
+            ObjectNode request = mapper.createObjectNode();
+            if (nextToken != null) {
+                request.put("nextToken", nextToken);
+            }
+            JsonNode page = batchService.get().describeJobQueues(request);
+            for (JsonNode queue : page.path("jobQueues")) {
+                String arn = queue.path("jobQueueArn").asText(null);
+                if (arn == null || !region.equals(arn.split(":", 5)[3])) {
+                    continue;
+                }
+                ObjectNode properties = mapper.createObjectNode();
+                properties.put("JobQueueArn", arn);
+                putIfPresent(properties, "JobQueueName", queue.path("jobQueueName").asText(null));
+                putIfPresent(properties, "State", queue.path("state").asText(null));
+                if (queue.has("priority")) {
+                    properties.put("Priority", queue.path("priority").asInt());
+                }
+                Map<String, String> tags = new LinkedHashMap<>();
+                queue.path("tags").properties().forEach(e -> tags.put(e.getKey(), e.getValue().asText()));
+                putTagMap(properties, tags);
+                resources.add(new ResourceDescription(arn, propertiesString(properties)));
+            }
+            nextToken = page.path("nextToken").asText(null);
+        } while (nextToken != null);
+        return resources;
+    }
+
+    private List<ResourceDescription> logGroups(String region) {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (LogGroup group : logsService.get().describeLogGroups(null, region)) {
+            ObjectNode properties = mapper.createObjectNode();
+            properties.put("LogGroupName", group.getLogGroupName());
+            if (group.getRetentionInDays() != null) {
+                properties.put("RetentionInDays", group.getRetentionInDays());
+            }
+            putIfPresent(properties, "KmsKeyId", group.getKmsKeyId());
+            addTags(properties, group.getTags());
+            resources.add(new ResourceDescription(group.getLogGroupName(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    /** Active revisions only, as ListTaskDefinitions answers by default. */
+    private List<ResourceDescription> taskDefinitions(String region) {
+        EcsService ecs = ecsService.get();
+        List<ResourceDescription> resources = new ArrayList<>();
+        String nextToken = null;
+        do {
+            EcsService.ListPage page = ecs.listTaskDefinitions(region, null, null, null, null, nextToken);
+            for (String arn : page.arns()) {
+                TaskDefinition definition = ecs.describeTaskDefinition(arn, region);
+                ObjectNode properties = mapper.createObjectNode();
+                properties.put("TaskDefinitionArn", arn);
+                putIfPresent(properties, "Family", definition.getFamily());
+                putIfPresent(properties, "Cpu", definition.getCpu());
+                putIfPresent(properties, "Memory", definition.getMemory());
+                putIfPresent(properties, "TaskRoleArn", definition.getTaskRoleArn());
+                resources.add(new ResourceDescription(arn, propertiesString(properties)));
+            }
+            nextToken = page.nextToken();
+        } while (nextToken != null);
+        return resources;
+    }
+
+    private List<ResourceDescription> internetGateways(String region) {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (InternetGateway gateway : ec2Service.describeInternetGateways(region, List.of(), Map.of())) {
+            ObjectNode properties = mapper.createObjectNode();
+            properties.put("InternetGatewayId", gateway.getInternetGatewayId());
+            addTags(properties, gateway.getTags());
+            resources.add(new ResourceDescription(gateway.getInternetGatewayId(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    /** Identified by ARN, the AWS::SecretsManager::Secret primary identifier. */
+    private List<ResourceDescription> secrets(String region) {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (Secret secret : secretsManagerService.get().listSecrets(region)) {
+            ObjectNode properties = mapper.createObjectNode();
+            properties.put("Id", secret.getArn());
+            putIfPresent(properties, "Name", secret.getName());
+            putIfPresent(properties, "Description", secret.getDescription());
+            putIfPresent(properties, "KmsKeyId", secret.getKmsKeyId());
+            if (secret.getTags() != null && !secret.getTags().isEmpty()) {
+                ArrayNode tagArray = properties.putArray("Tags");
+                for (Secret.Tag tag : secret.getTags()) {
+                    if (tag != null && tag.key() != null && !tag.key().isBlank()) {
+                        tagArray.addObject().put("Key", tag.key())
+                                .put("Value", tag.value() == null ? "" : tag.value());
+                    }
+                }
+            }
+            resources.add(new ResourceDescription(secret.getArn(), propertiesString(properties)));
         }
         return resources;
     }
@@ -946,6 +1144,15 @@ public class CloudControlService {
                     .put("Key", tag.getKey())
                     .put("Value", tag.getValue() == null ? "" : tag.getValue());
         }
+    }
+
+    /** Tags in the map form a few schemas use in place of the Key and Value list. */
+    private void putTagMap(ObjectNode properties, Map<String, String> tags) {
+        if (tags == null || tags.isEmpty()) {
+            return;
+        }
+        ObjectNode tagMap = properties.putObject("Tags");
+        tags.forEach((key, value) -> tagMap.put(key, value == null ? "" : value));
     }
 
     /** Tags kept as a map, in the Key and Value list Cloud Control reports. */

@@ -12,6 +12,9 @@ import io.restassured.specification.RequestSpecification;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.Map;
+
 import static io.restassured.RestAssured.given;
 import static io.restassured.config.EncoderConfig.encoderConfig;
 import static io.restassured.config.RestAssuredConfig.config;
@@ -20,6 +23,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -162,6 +166,60 @@ class CloudControlIntegrationTest {
     }
 
     @Test
+    void listResourcesNamesWhatCreateResourceMadeForEachListedType() throws InterruptedException {
+        for (String typeName : List.of("AWS::ApiGateway::RestApi", "AWS::ApiGateway::ApiKey",
+                "AWS::ApiGateway::UsagePlan", "AWS::ApiGatewayV2::Api", "AWS::Logs::LogGroup",
+                "AWS::ECS::TaskDefinition", "AWS::EC2::InternetGateway", "AWS::SecretsManager::Secret")) {
+            String identifier = createThroughCloudControl(typeName, "{}");
+            assertListedWithAuth(typeName, identifier, ACCOUNT_A_AUTH, "application/x-amz-json-1.0");
+        }
+
+        String environment = createThroughCloudControl("AWS::Batch::ComputeEnvironment",
+                "{\"Type\":\"UNMANAGED\"}");
+        String queue = createThroughCloudControl("AWS::Batch::JobQueue",
+                "{\"Priority\":1,\"ComputeEnvironmentOrder\":[{\"Order\":1,\"ComputeEnvironment\":\""
+                        + environment + "\"}]}");
+        assertListedWithAuth("AWS::Batch::JobQueue", queue, ACCOUNT_A_AUTH, "application/x-amz-json-1.0");
+    }
+
+    private String createThroughCloudControl(String typeName, String desiredState) throws InterruptedException {
+        String ct = "application/x-amz-json-1.0";
+        String body;
+        try {
+            body = MAPPER.writeValueAsString(Map.of("TypeName", typeName, "DesiredState", desiredState));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(e);
+        }
+        String token = given()
+                .config(config().encoderConfig(encoderConfig().encodeContentTypeAs(ct, TEXT)))
+                .contentType(ct)
+                .header("Authorization", ACCOUNT_A_AUTH)
+                .header("X-Amz-Target", "CloudApiService.CreateResource")
+                .body(body)
+                .when().post("/")
+                .then().statusCode(200)
+                .extract().path("ProgressEvent.RequestToken");
+        for (int i = 0; i < 50; i++) {
+            ExtractableResponse<Response> pe = given()
+                    .config(config().encoderConfig(encoderConfig().encodeContentTypeAs(ct, TEXT)))
+                    .contentType(ct)
+                    .header("Authorization", ACCOUNT_A_AUTH)
+                    .header("X-Amz-Target", "CloudApiService.GetResourceRequestStatus")
+                    .body("{\"RequestToken\":\"" + token + "\"}")
+                    .when().post("/")
+                    .then().statusCode(200)
+                    .extract();
+            String status = pe.path("ProgressEvent.OperationStatus");
+            if ("SUCCESS".equals(status)) {
+                return pe.path("ProgressEvent.Identifier");
+            }
+            assertNotEquals("FAILED", status, typeName + ": " + pe.path("ProgressEvent.StatusMessage"));
+            Thread.sleep(100);
+        }
+        throw new AssertionError(typeName + " did not finish creating");
+    }
+
+    @Test
     void createResourceProvisionsViaCloudControlAndTokenRoundTrips() throws InterruptedException {
         String ct = "application/x-amz-json-1.0";
         // CreateResource AWS::EC2::VPC — Cloud Control is how Formae drives AWS. It is async:
@@ -255,12 +313,12 @@ class CloudControlIntegrationTest {
 
     @Test
     void listResourcesRejectsUnsupportedTypesInsteadOfReturningEmpty() {
-        // AWS::Logs::LogGroup is a real Cloud Control type that Floci backs through its own
-        // service API but does not enumerate on this read side. Returning an empty
-        // ResourceDescriptions for it was indistinguishable from "no log groups exist".
+        // AWS::KinesisFirehose::DeliveryStream is a real Cloud Control type that Floci backs
+        // through its own service API but does not enumerate on this read side. Returning an empty
+        // ResourceDescriptions for it was indistinguishable from "no delivery streams exist".
         String ct = "application/x-amz-json-1.0";
         assertErrorCode(ct, "CloudApiService.ListResources",
-                "{\"TypeName\":\"AWS::Logs::LogGroup\"}", 400, "UnsupportedActionException");
+                "{\"TypeName\":\"AWS::KinesisFirehose::DeliveryStream\"}", 400, "UnsupportedActionException");
 
         // A type name that does not exist in AWS at all reports the same error: Floci has no
         // CloudFormation type registry to tell a real-but-unbacked type from an invented one.
