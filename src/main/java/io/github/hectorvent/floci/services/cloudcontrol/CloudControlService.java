@@ -16,11 +16,18 @@ import io.github.hectorvent.floci.services.cloudformation.provisioners.CfnResour
 import io.github.hectorvent.floci.services.ec2.Ec2Service;
 import io.github.hectorvent.floci.services.ec2.model.GroupIdentifier;
 import io.github.hectorvent.floci.services.ec2.model.Instance;
+import io.github.hectorvent.floci.services.ec2.model.IpPermission;
+import io.github.hectorvent.floci.services.ec2.model.IpRange;
+import io.github.hectorvent.floci.services.ec2.model.Ipv6Range;
 import io.github.hectorvent.floci.services.ec2.model.LaunchTemplate;
+import io.github.hectorvent.floci.services.ec2.model.PrefixListId;
+import io.github.hectorvent.floci.services.ec2.model.ReferencedSecurityGroup;
 import io.github.hectorvent.floci.services.ec2.model.Reservation;
 import io.github.hectorvent.floci.services.ec2.model.SecurityGroup;
+import io.github.hectorvent.floci.services.ec2.model.SecurityGroupRule;
 import io.github.hectorvent.floci.services.ec2.model.Subnet;
 import io.github.hectorvent.floci.services.ec2.model.Tag;
+import io.github.hectorvent.floci.services.ec2.model.UserIdGroupPair;
 import io.github.hectorvent.floci.services.ec2.model.Vpc;
 import io.github.hectorvent.floci.services.iam.IamService;
 import io.github.hectorvent.floci.services.iam.model.IamRole;
@@ -646,6 +653,8 @@ public class CloudControlService {
             case "AWS::EC2::VPC" -> vpcs(region);
             case "AWS::EC2::Subnet" -> subnets(region);
             case "AWS::EC2::SecurityGroup" -> securityGroups(region);
+            case "AWS::EC2::SecurityGroupIngress" -> securityGroupRules(region, false);
+            case "AWS::EC2::SecurityGroupEgress" -> securityGroupRules(region, true);
             case "AWS::IAM::Role" -> roles();
             case "AWS::IAM::User" -> users();
             case "AWS::EC2::Instance" -> instances(region);
@@ -765,8 +774,99 @@ public class CloudControlService {
             properties.put("GroupName", group.getGroupName());
             properties.put("GroupDescription", group.getDescription());
             properties.put("VpcId", group.getVpcId());
+            putPermissions(properties, "SecurityGroupIngress", group.getIpPermissions(), false);
+            putPermissions(properties, "SecurityGroupEgress", group.getIpPermissionsEgress(), true);
             addTags(properties, group.getTags());
             resources.add(new ResourceDescription(group.getGroupId(), propertiesString(properties)));
+        }
+        return resources;
+    }
+
+    /**
+     * A security group's rules in the {@code AWS::EC2::SecurityGroup} schema shape: one entry per
+     * CIDR, IPv6 CIDR, referenced group or prefix list, as CloudFormation declares them, rather
+     * than EC2's grouped {@code IpPermissions}.
+     */
+    private void putPermissions(ObjectNode properties, String name, List<IpPermission> permissions, boolean egress) {
+        if (permissions == null || permissions.isEmpty()) {
+            return;
+        }
+        ArrayNode entries = properties.putArray(name);
+        for (IpPermission perm : permissions) {
+            int before = entries.size();
+            for (IpRange range : orEmpty(perm.getIpRanges())) {
+                putRule(entries.addObject(), perm, egress, range.getCidrIp(), null, null, null,
+                        range.getDescription());
+            }
+            for (Ipv6Range range : orEmpty(perm.getIpv6Ranges())) {
+                putRule(entries.addObject(), perm, egress, null, range.getCidrIpv6(), null, null,
+                        range.getDescription());
+            }
+            for (UserIdGroupPair pair : orEmpty(perm.getUserIdGroupPairs())) {
+                putRule(entries.addObject(), perm, egress, null, null, pair.getGroupId(), null,
+                        pair.getDescription());
+            }
+            for (PrefixListId prefixList : orEmpty(perm.getPrefixListIds())) {
+                putRule(entries.addObject(), perm, egress, null, null, null, prefixList.getPrefixListId(),
+                        prefixList.getDescription());
+            }
+            if (entries.size() == before) {
+                putRule(entries.addObject(), perm, egress, null, null, null, null, null);
+            }
+        }
+    }
+
+    private static <T> List<T> orEmpty(List<T> list) {
+        return list == null ? List.of() : list;
+    }
+
+    private static void putRule(ObjectNode entry, IpPermission perm, boolean egress, String cidrIp,
+                                String cidrIpv6, String groupId, String prefixListId, String description) {
+        putRuleFields(entry, egress, perm.getIpProtocol(), perm.getFromPort(), perm.getToPort(),
+                cidrIp, cidrIpv6, groupId, prefixListId, description);
+    }
+
+    /**
+     * The fields a security group rule shares across {@code AWS::EC2::SecurityGroup}'s rule arrays
+     * and the {@code AWS::EC2::SecurityGroupIngress}/{@code Egress} types. An all-traffic rule
+     * ({@code -1}) carries no ports in EC2; Cloud Control reports it as {@code -1} to {@code -1}.
+     */
+    private static void putRuleFields(ObjectNode entry, boolean egress, String ipProtocol, Integer fromPort,
+                                      Integer toPort, String cidrIp, String cidrIpv6, String groupId,
+                                      String prefixListId, String description) {
+        boolean allTraffic = "-1".equals(ipProtocol);
+        putIfPresent(entry, "IpProtocol", ipProtocol);
+        if (fromPort != null || allTraffic) {
+            entry.put("FromPort", fromPort == null ? -1 : fromPort);
+        }
+        if (toPort != null || allTraffic) {
+            entry.put("ToPort", toPort == null ? -1 : toPort);
+        }
+        putIfPresent(entry, "CidrIp", cidrIp);
+        putIfPresent(entry, "CidrIpv6", cidrIpv6);
+        putIfPresent(entry, egress ? "DestinationSecurityGroupId" : "SourceSecurityGroupId", groupId);
+        putIfPresent(entry, egress ? "DestinationPrefixListId" : "SourcePrefixListId", prefixListId);
+        putIfPresent(entry, "Description", description);
+    }
+
+    /**
+     * {@code AWS::EC2::SecurityGroupIngress} and {@code AWS::EC2::SecurityGroupEgress}: one resource
+     * per stored rule, identified by its {@code sgr-} id, which is the schema's {@code Id}.
+     */
+    private List<ResourceDescription> securityGroupRules(String region, boolean egress) {
+        List<ResourceDescription> resources = new ArrayList<>();
+        for (SecurityGroupRule rule : ec2Service.describeSecurityGroupRules(region, List.of(), List.of())) {
+            if (rule.isEgress() != egress) {
+                continue;
+            }
+            ObjectNode properties = mapper.createObjectNode();
+            properties.put("Id", rule.getSecurityGroupRuleId());
+            putIfPresent(properties, "GroupId", rule.getGroupId());
+            ReferencedSecurityGroup ref = rule.getReferencedGroupInfo();
+            putRuleFields(properties, egress, rule.getIpProtocol(), rule.getFromPort(), rule.getToPort(),
+                    rule.getCidrIpv4(), rule.getCidrIpv6(), ref == null ? null : ref.getGroupId(),
+                    rule.getPrefixListId(), rule.getDescription());
+            resources.add(new ResourceDescription(rule.getSecurityGroupRuleId(), propertiesString(properties)));
         }
         return resources;
     }
