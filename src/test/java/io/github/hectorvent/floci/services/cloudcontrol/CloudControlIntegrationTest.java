@@ -231,6 +231,118 @@ class CloudControlIntegrationTest {
                 .body("TypeName", equalTo("AWS::S3::Bucket"));
     }
 
+    @Test
+    void securityGroupModelCarriesItsRulesAndEachRuleIsItsOwnType() throws JsonProcessingException {
+        String vpcId = given()
+                .formParam("Action", "CreateVpc")
+                .formParam("CidrBlock", "10.43.0.0/16")
+                .header("Authorization", EC2_AUTH)
+                .when().post("/")
+                .then().statusCode(200)
+                .extract().path("CreateVpcResponse.vpc.vpcId");
+        String sourceGroupId = createSecurityGroup("cloudcontrol-rules-source", vpcId);
+        String groupId = createSecurityGroup("cloudcontrol-rules", vpcId);
+
+        String sshRuleId = given()
+                .formParam("Action", "AuthorizeSecurityGroupIngress")
+                .formParam("GroupId", groupId)
+                .formParam("IpPermissions.1.IpProtocol", "tcp")
+                .formParam("IpPermissions.1.FromPort", "22")
+                .formParam("IpPermissions.1.ToPort", "22")
+                .formParam("IpPermissions.1.IpRanges.1.CidrIp", "0.0.0.0/0")
+                .formParam("IpPermissions.1.IpRanges.1.Description", "ssh")
+                .header("Authorization", EC2_AUTH)
+                .when().post("/")
+                .then().statusCode(200)
+                .extract().path("AuthorizeSecurityGroupIngressResponse.securityGroupRuleSet.item.securityGroupRuleId");
+        given()
+                .formParam("Action", "AuthorizeSecurityGroupIngress")
+                .formParam("GroupId", groupId)
+                .formParam("IpPermissions.1.IpProtocol", "tcp")
+                .formParam("IpPermissions.1.FromPort", "5432")
+                .formParam("IpPermissions.1.ToPort", "5432")
+                .formParam("IpPermissions.1.Groups.1.GroupId", sourceGroupId)
+                .header("Authorization", EC2_AUTH)
+                .when().post("/")
+                .then().statusCode(200);
+
+        JsonNode model = MAPPER.readTree(getResource("AWS::EC2::SecurityGroup", groupId).path("Properties").asText());
+        JsonNode ingress = model.path("SecurityGroupIngress");
+        assertEquals(2, ingress.size());
+        JsonNode ssh = entryWith(ingress, "CidrIp", "0.0.0.0/0");
+        assertEquals("tcp", ssh.path("IpProtocol").asText());
+        assertTrue(ssh.path("FromPort").isInt());
+        assertEquals(22, ssh.path("FromPort").asInt());
+        assertEquals(22, ssh.path("ToPort").asInt());
+        assertEquals("ssh", ssh.path("Description").asText());
+        assertTrue(ssh.path("SourceSecurityGroupId").isMissingNode());
+        JsonNode fromGroup = entryWith(ingress, "SourceSecurityGroupId", sourceGroupId);
+        assertEquals(5432, fromGroup.path("FromPort").asInt());
+        assertTrue(fromGroup.path("CidrIp").isMissingNode());
+        assertTrue(fromGroup.path("Description").isMissingNode());
+
+        JsonNode egress = model.path("SecurityGroupEgress");
+        assertEquals(1, egress.size());
+        assertEquals("-1", egress.get(0).path("IpProtocol").asText());
+        assertEquals("0.0.0.0/0", egress.get(0).path("CidrIp").asText());
+        assertEquals(-1, egress.get(0).path("FromPort").asInt());
+        assertEquals(-1, egress.get(0).path("ToPort").asInt());
+
+        JsonNode sshRule = MAPPER.readTree(
+                getResource("AWS::EC2::SecurityGroupIngress", sshRuleId).path("Properties").asText());
+        assertEquals(sshRuleId, sshRule.path("Id").asText());
+        assertEquals(groupId, sshRule.path("GroupId").asText());
+        assertEquals("0.0.0.0/0", sshRule.path("CidrIp").asText());
+        assertEquals(22, sshRule.path("ToPort").asInt());
+
+        JsonNode egressRules = MAPPER.readTree(listResources("AWS::EC2::SecurityGroupEgress",
+                "application/x-amz-json-1.0")).path("ResourceDescriptions");
+        boolean defaultEgressListed = false;
+        for (JsonNode d : egressRules) {
+            JsonNode properties = MAPPER.readTree(d.path("Properties").asText());
+            if (groupId.equals(properties.path("GroupId").asText())) {
+                assertEquals(d.path("Identifier").asText(), properties.path("Id").asText());
+                assertEquals("0.0.0.0/0", properties.path("CidrIp").asText());
+                defaultEgressListed = true;
+            }
+        }
+        assertTrue(defaultEgressListed);
+    }
+
+    private String createSecurityGroup(String name, String vpcId) {
+        return given()
+                .formParam("Action", "CreateSecurityGroup")
+                .formParam("GroupName", name)
+                .formParam("GroupDescription", name)
+                .formParam("VpcId", vpcId)
+                .header("Authorization", EC2_AUTH)
+                .when().post("/")
+                .then().statusCode(200)
+                .extract().path("CreateSecurityGroupResponse.groupId");
+    }
+
+    private JsonNode getResource(String typeName, String identifier) throws JsonProcessingException {
+        String ct = "application/x-amz-json-1.0";
+        String body = given()
+                .config(config().encoderConfig(encoderConfig().encodeContentTypeAs(ct, TEXT)))
+                .contentType(ct)
+                .header("X-Amz-Target", "CloudApiService.GetResource")
+                .body("{\"TypeName\":\"" + typeName + "\",\"Identifier\":\"" + identifier + "\"}")
+                .when().post("/")
+                .then().statusCode(200)
+                .extract().asString();
+        return MAPPER.readTree(body).path("ResourceDescription");
+    }
+
+    private static JsonNode entryWith(JsonNode entries, String field, String value) {
+        for (JsonNode entry : entries) {
+            if (value.equals(entry.path(field).asText())) {
+                return entry;
+            }
+        }
+        throw new AssertionError("no entry with " + field + "=" + value + " in " + entries);
+    }
+
     private void assertErrorCode(String contentType, String target, String body) {
         assertErrorCode(contentType, target, body, 400, "InvalidRequestException");
     }

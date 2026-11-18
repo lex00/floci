@@ -34,12 +34,19 @@ Cloud Control.
   past that limit.
 - **`ListResources` / `GetResource` type coverage**: the read side lists
   `AWS::S3::Bucket`, `AWS::EC2::VPC`, `AWS::EC2::Subnet`, `AWS::EC2::SecurityGroup`,
+  `AWS::EC2::SecurityGroupIngress`, `AWS::EC2::SecurityGroupEgress`,
   `AWS::EC2::Instance`, `AWS::EC2::LaunchTemplate`, `AWS::IAM::Role`, `AWS::IAM::User`,
   and `AWS::IAM::InstanceProfile`. `CreateResource` accepts any type the underlying
   CloudFormation resource provisioner supports (the same set stacks can provision),
   which is broader than the read side. A resource created through Cloud Control but
   outside the read-side type list is still readable via `GetResource`, from
   create-time state, but will not appear in `ListResources`.
+- **Security group rules**: an `AWS::EC2::SecurityGroup` model carries its
+  `SecurityGroupIngress` and `SecurityGroupEgress` arrays, one entry per CIDR, IPv6
+  CIDR, referenced group or prefix list. An all-traffic rule (`IpProtocol` `-1`) reports
+  `FromPort` and `ToPort` as `-1`. Each rule is also its own
+  `AWS::EC2::SecurityGroupIngress` or `AWS::EC2::SecurityGroupEgress` resource,
+  identified by its `sgr-` id.
 - **`ListResources` on an unlisted type**: `TypeName` values outside the list above
   fail with `UnsupportedActionException` (HTTP 400) instead of returning an empty
   `ResourceDescriptions`. This applies to any type Floci does not enumerate on the
